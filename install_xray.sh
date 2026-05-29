@@ -9,6 +9,9 @@ GENERATE_SCRIPT="/usr/local/bin/generate_client_config"
 SUB_SERVER_SCRIPT="/usr/local/bin/xray_sub_server.py"
 INSTALL_LOG="/var/log/xray/install.log"
 
+# Объявление глобального ассоциативного массива для UUID
+declare -A UUIDs
+
 # === Проверка прав root ===
 if [ "$(id -u)" != "0" ]; then
     echo "❌ Этот скрипт должен запускаться с правами root"
@@ -665,9 +668,6 @@ setup_certificates() {
 generate_server_config() {
     echo "🧩 Генерация конфигурации Xray..."
     local config_file="$XRAY_CONFIG_DIR/config.json"
-    
-    # Объявление ассоциативного массива
-    declare -A UUIDs
     
     # Инициализация массивов для клиентов
     local vless_clients=()
@@ -1480,9 +1480,6 @@ setup_certificates
 
 # Определяем эмодзи страны
 FLAG_EMOJI=$(get_flag_emoji)
-
-# Объявление массива для хранения UUID
-declare -A UUIDs
 
 generate_server_config
 setup_subscription_server
