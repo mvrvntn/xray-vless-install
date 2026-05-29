@@ -1283,7 +1283,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp=firefox&alpn=h2,http/1.1#{encoded_remark_vision}"
         
         # Задаем комментарии с метаданными подписки (название, страница информации, анонсы)
-        sub_content = f"#profile-title: {client_name}\n#profile-web-page-url: https://github.com/mvrvntn/koridor\n#profile-notice: https://github.com/mvrvntn/koridor\n#profile-announce: https://github.com/mvrvntn/koridor\n#announce: https://github.com/mvrvntn/koridor\n{vless_vision}\n"
+        sub_content = f"#profile-title: {client_name}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#profile-notice: https://mvrvntn.github.io/koridor/\n#profile-announce: https://mvrvntn.github.io/koridor/\n#announce: https://mvrvntn.github.io/koridor/\n{vless_vision}\n"
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
         
         _routing = roscomvpn_resolver.get()
@@ -1294,14 +1294,14 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         # Передаем заголовки для отображения названия подписки и переходов по кнопкам
         self.send_header("profile-title", client_name)
         self.send_header("Profile-Title", "base64:" + base64.b64encode(client_name.encode('utf-8')).decode('utf-8'))
-        self.send_header("profile-web-page-url", "https://github.com/mvrvntn/koridor")
-        self.send_header("Profile-Web-Page-Url", "https://github.com/mvrvntn/koridor")
-        self.send_header("profile-notice", "https://github.com/mvrvntn/koridor")
-        self.send_header("Profile-Notice", "https://github.com/mvrvntn/koridor")
-        self.send_header("profile-announce", "https://github.com/mvrvntn/koridor")
-        self.send_header("Profile-Announce", "https://github.com/mvrvntn/koridor")
-        self.send_header("announce", "https://github.com/mvrvntn/koridor")
-        self.send_header("Announce", "https://github.com/mvrvntn/koridor")
+        self.send_header("profile-web-page-url", "https://mvrvntn.github.io/koridor/")
+        self.send_header("Profile-Web-Page-Url", "https://mvrvntn.github.io/koridor/")
+        self.send_header("profile-notice", "https://mvrvntn.github.io/koridor/")
+        self.send_header("Profile-Notice", "https://mvrvntn.github.io/koridor/")
+        self.send_header("profile-announce", "https://mvrvntn.github.io/koridor/")
+        self.send_header("Profile-Announce", "https://mvrvntn.github.io/koridor/")
+        self.send_header("announce", "https://mvrvntn.github.io/koridor/")
+        self.send_header("Announce", "https://mvrvntn.github.io/koridor/")
         if _routing:
             self.send_header("routing", _routing)
             self.send_header("routing-enable", "true")
