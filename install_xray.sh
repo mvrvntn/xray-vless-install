@@ -227,620 +227,6 @@ toggle_warp() {
     echo "✅ Статус WARP обновлен и Xray перезапущен!"
 }
 
-# === Проверка предыдущей установки (до запроса данных) ===
-if [ -f "$MARKER_FILE" ]; then
-    show_connections() {
-        echo -e "\n--- Активные подключения к Xray ---"
-        local conns=$(ss -tnp | grep -E ':443\s' | grep -v '127.0.0.1')
-        if [ -z "$conns" ]; then
-            echo "Нет активных подключений на порт 443."
-        else
-            echo "Состояние Локальный_Адрес Удаленный_Адрес Процесс"
-            echo "$conns" | awk '{print $1, $4, $5, $6}'
-        fi
-    }
-
-    show_logs() {
-        echo -e "\n--- Выберите лог для просмотра ---"
-        echo "1. Лог Xray (systemd)"
-        echo "2. Лог Сервера подписок (systemd)"
-        echo "3. Лог ошибок Xray (/var/log/xray/error.log)"
-        echo "4. Назад"
-        read -p "Выбор (1-4): " lchoice
-        case $lchoice in
-            1) journalctl -u xray -n 50 --no-pager ;;
-            2) journalctl -u xray-sub -n 50 --no-pager ;;
-            3) tail -n 50 /var/log/xray/error.log ;;
-            4) return ;;
-            *) echo "Неверный выбор" ;;
-        esac
-    }
-
-    run_diagnostics() {
-        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│             ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ         │${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
-        
-        # 1. Проверка конфликтов портов 443 и 80
-        echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
-        local port_443_process=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-        local port_80_process=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-        
-        if [ -n "$port_443_process" ]; then
-            echo -e " 🟢 Порт 443 (TCP) успешно занят процессом: ${GREEN}$port_443_process${NC}"
-            if [[ "$port_443_process" =~ "openvpn" ]]; then
-                echo -e "  ${RED}⚠️ ВНИМАНИЕ! Порт 443 занят процессом OpenVPN. Это приведет к неработоспособности Xray!${NC}"
-            fi
-        else
-            echo -e " 🔴 ${RED}Порт 443 (TCP) Свободен или Xray не запущен!${NC}"
-        fi
-        
-        if [ -n "$port_80_process" ]; then
-            echo -e " 🟢 Порт 80 (TCP) успешно занят процессом: ${GREEN}$port_80_process${NC}"
-        else
-            echo -e " 🟡 Порт 80 (TCP) свободен (требуется Certbot для обновления сертификатов)."
-        fi
-
-        # 2. Проверка служб
-        echo -e "\n${BOLD}[2] Статус системных служб:${NC}"
-        if systemctl is-active --quiet xray; then
-            echo -e " Xray Service: 🟢 ${GREEN}ACTIVE (Запущен)${NC}"
-        else
-            echo -e " Xray Service: 🔴 ${RED}INACTIVE (Остановлен)${NC}"
-            journalctl -u xray -n 10 --no-pager
-        fi
-        
-        if systemctl is-active --quiet xray-sub; then
-            echo -e " Sub Service:  🟢 ${GREEN}ACTIVE (Запущен)${NC}"
-        else
-            echo -e " Sub Service:  🔴 ${RED}INACTIVE (Остановлен)${NC}"
-            journalctl -u xray-sub -n 10 --no-pager
-        fi
-
-        # 3. Проверка резолва домена и подмены DNS (dnsmap)
-        echo -e "\n${BOLD}[3] Анализ DNS-маршрутизации и домена:${NC}"
-        local domain=$(get_installed_var "DOMAIN")
-        if [ -n "$domain" ]; then
-            echo -e " Текущий домен сервера: ${CYAN}$domain${NC}"
-            local resolved_ip=$(getent hosts "$domain" | awk '{print $1}' | head -n 1)
-            if [ -n "$resolved_ip" ]; then
-                echo -e " Домен резолвится локально в IP: ${GREEN}$resolved_ip${NC}"
-                if [[ "$resolved_ip" =~ ^10\.224\. ]]; then
-                    echo -e "  ${RED}⚠️ ВНИМАНИЕ! Обнаружена подмена IP через dnsmap (сеть 10.224.x.x от AntiZapret).${NC}"
-                    echo -e "  Xray использует локальный DNS хоста и может направлять трафик некорректно."
-                fi
-            else
-                echo -e " 🔴 ${RED}Ошибка: Домен не резолвится локально!${NC}"
-            fi
-        else
-            echo -e " 🔴 ${RED}Ошибка: Домен не зарегистрирован в системе маркеров.${NC}"
-        fi
-
-        # 4. Проверка интеграции Cloudflare WARP
-        echo -e "\n${BOLD}[4] Статус Cloudflare WARP:${NC}"
-        if [ "$(get_installed_var "WARP_INSTALLED")" == "true" ]; then
-            if ip link show warp >/dev/null 2>&1; then
-                echo -e " Интерфейс warp: 🟢 ${GREEN}UP (Поднят)${NC}"
-                echo -e " Выполняем тест пинга и маршрутизации через интерфейс warp..."
-                local warp_test=$(curl --interface warp -s --connect-timeout 4 https://www.cloudflare.com/cdn-cgi/trace | grep -E "(ip=|warp=)")
-                if [ -n "$warp_test" ]; then
-                    echo -e " 🟢 ${GREEN}Сеть WARP успешно отвечает:${NC}"
-                    echo "$warp_test" | sed 's/^/   /'
-                else
-                    echo -e " 🔴 ${RED}Сеть WARP не пропускает трафик! Проверьте wg-quick@warp.${NC}"
-                fi
-            else
-                echo -e " Интерфейс warp: 🔴 ${RED}DOWN (Сеть WireGuard отключена)${NC}"
-            fi
-        else
-            echo -e " Cloudflare WARP: 🔘 Не установлен."
-        fi
-
-        # 5. Проверка сертификатов SSL
-        echo -e "\n${BOLD}[5] Проверка SSL-сертификатов Let's Encrypt:${NC}"
-        if [ -f "$SSL_DIR/fullchain.cer" ] && [ -f "$SSL_DIR/private.key" ]; then
-            echo -e " Файлы SSL: 🟢 ${GREEN}Присутствуют в директории $SSL_DIR${NC}"
-            local end_date=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
-            echo -e " Срок действия сертификата до: ${YELLOW}$end_date${NC}"
-        else
-            echo -e " Файлы SSL: 🔴 ${RED}ОТСУТСТВУЮТ! Xray не сможет работать без TLS-сертификатов.${NC}"
-        fi
-
-        # 6. Проверка Фаерволов и Правил IPTables
-        echo -e "\n${BOLD}[6] Состояние системных фаерволов:${NC}"
-        if ufw status | grep -q "Status: active"; then
-            echo -e " UFW Firewall: 🟢 ${GREEN}ACTIVE (Включен)${NC}"
-            # Проверяем, есть ли правила AntiZapret
-            if iptables -t nat -S | grep -qi "antizapret"; then
-                echo -e "  ${YELLOW}⚠️ ПРЕДУПРЕЖДЕНИЕ: UFW активен одновременно с правилами NAT AntiZapret.${NC}"
-                echo -e "  Это может вызывать сбои маршрутизации. Рекомендуется выполнить: ${CYAN}ufw disable${NC}"
-            fi
-        else
-            echo -e " UFW Firewall: 🔘 ${YELLOW}DISABLED (Отключен)${NC}"
-            echo -e " Убедитесь, что порты 443 и 80 разрешены напрямую в ваших правилах iptables."
-        fi
-
-        echo -e "\n${BOLD}Диагностика завершена. Нажмите Enter, чтобы вернуться назад...${NC}"
-        read
-    }
-
-
-    add_client() {
-        echo -e "\n--- Добавление нового клиента ---"
-        read -p "Введите имя нового устройства (например: client_new): " new_name
-        new_name=$(echo "$new_name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        if [[ -z "$new_name" ]]; then
-            echo "❌ Имя не может быть пустым"
-            return
-        fi
-
-        local safe_filename=$(echo "$new_name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
-        if [[ -z "$safe_filename" ]]; then
-            safe_filename="client_new"
-        fi
-
-        if [ -f "$CLIENT_CONFIG_DIR/${safe_filename}.json" ]; then
-            echo "❌ Клиент с таким именем уже существует!"
-            return
-        fi
-
-        local new_uuid=$(xray uuid)
-        DOMAIN=$(get_installed_var "DOMAIN")
-
-        cat > "$CLIENT_CONFIG_DIR/${safe_filename}.json" <<EOF
-{
-  "remarks": "$new_name",
-  "id": "$new_uuid",
-  "outbounds": [{
-    "protocol": "vless",
-    "settings": {
-      "vnext": [{
-        "address": "$DOMAIN",
-        "port": 443,
-        "users": [{
-          "id": "$new_uuid",
-          "flow": "xtls-rprx-vision"
-        }]
-      }]
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "tls",
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    }
-  }]
-}
-EOF
-        # Устанавливаем права
-        chmod 644 "$CLIENT_CONFIG_DIR/${safe_filename}.json"
-        chown nobody:nogroup "$CLIENT_CONFIG_DIR/${safe_filename}.json"
-
-        # Обновляем конфиг сервера и перезапускаем xray
-        generate_server_config
-
-        # Обновляем маркер
-        local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
-        update_marker_val "NUM_DEVICES" "$current_num"
-
-        echo "✅ Клиент '$new_name' успешно добавлен!"
-    }
-
-    remove_client() {
-        echo -e "\n${BOLD}${RED}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${RED}│                  Удаление клиента                      │${NC}"
-        echo -e "${BOLD}${RED}└────────────────────────────────────────────────────────┘${NC}"
-        mapfile -t config_files < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
-        if [ ${#config_files[@]} -eq 0 ]; then
-            echo -e " ${RED}❌ Нет доступных клиентов для удаления${NC}"
-            return
-        fi
-
-        for i in "${!config_files[@]}"; do
-            remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "${config_files[$i]}" 2>/dev/null)
-            if [ -z "$remarks" ]; then
-                remarks="${config_files[$i]##*/}"
-                remarks="${remarks%.json}"
-            fi
-            echo -e " ${BOLD}${YELLOW}$((i+1)).${NC} $remarks"
-        done
-        echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Отмена и возврат назад"
-        echo -e "${RED}──────────────────────────────────────────────────────────${NC}"
-
-        read -p "Выберите клиента для удаления (1-${#config_files[@]}, или 0 для выхода): " choice
-        if [ "$choice" == "0" ] || [ -z "$choice" ]; then
-            return
-        fi
-
-        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#config_files[@]} ]; then
-            echo -e " ${RED}❌ Неверный выбор!${NC}"
-            return
-        fi
-
-        selected="${config_files[$((choice-1))]}"
-        remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$selected" 2>/dev/null)
-        if [ -z "$remarks" ]; then
-            remarks="${selected##*/}"
-            remarks="${remarks%.json}"
-        fi
-
-        read -p "Вы действительно хотите безвозвратно удалить '$remarks'? [y/N]: " confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            rm -f "$selected"
-            # Обновляем конфиг сервера и перезапускаем xray
-            generate_server_config
-
-            # Обновляем маркер
-            local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
-            update_marker_val "NUM_DEVICES" "$current_num"
-
-            echo -e " ${GREEN}✅ Клиент '$remarks' успешно удален из системы!${NC}"
-            sleep 1
-        else
-            echo "Отменено."
-        fi
-    }
-
-    show_status_dashboard() {
-        local domain=$(get_installed_var "DOMAIN")
-        local clients_count=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
-        
-        # Статусы системных служб
-        local xray_status="${RED}OFF${NC}"
-        systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}"
-        
-        local sub_status="${RED}OFF${NC}"
-        systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}ACTIVE${NC}"
-        
-        local warp_installed=$(get_installed_var "WARP_INSTALLED")
-        local warp_enabled=$(get_installed_var "WARP_ENABLED")
-        local warp_mode=$(get_installed_var "WARP_MODE")
-        [ -z "$warp_mode" ] && warp_mode="smart"
-        
-        local warp_status="${RED}NOT INSTALLED${NC}"
-        if [ "$warp_installed" == "true" ]; then
-            if [ "$warp_enabled" == "true" ]; then
-                if [ "$warp_mode" == "full" ]; then
-                    warp_status="${GREEN}ON (FULL)${NC}"
-                else
-                    warp_status="${GREEN}ON (SMART)${NC}"
-                fi
-            else
-                warp_status="${YELLOW}DISABLED${NC}"
-            fi
-        fi
-
-        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Сервер:${NC} ${GREEN}$domain${NC}"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Службы:${NC} Xray: [$xray_status] | Sub-Server: [$sub_status]"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}WARP:${NC}   [$warp_status]"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Клиенты:${NC} Активных устройств: ${BOLD}${YELLOW}$clients_count${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
-    }
-
-    main_menu() {
-        show_status_dashboard
-        echo -e "${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│                      ГЛАВНОЕ МЕНЮ                      │${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
-        echo -e " ${BOLD}${YELLOW}1.${NC} 📱 Показать QR-коды и ссылки подключения"
-        echo -e " ${BOLD}${YELLOW}2.${NC} 👤 Добавить нового пользователя / устройство"
-        echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить существующего пользователя"
-        echo -e " ${BOLD}${YELLOW}4.${NC} 🌀 Управление обходом Cloudflare WARP"
-        echo -e " ${BOLD}${YELLOW}5.${NC} 📰 Просмотреть системные логи служб"
-        echo -e " ${BOLD}${YELLOW}6.${NC} 📊 Мониторинг активных соединений (port 443)"
-        echo -e " ${BOLD}${YELLOW}7.${NC} 🛠️ Запустить полную диагностику системы (Troubleshooting)"
-        echo -e " ${BOLD}${RED}8. 🗑️ Полностью удалить всю установку Xray с сервера${NC}"
-        echo -e " ${BOLD}${CYAN}9.${NC} 🚪 Выйти из терминала"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        read -p "Выберите действие (1-9): " choice
-        case $choice in
-            1) "$GENERATE_SCRIPT" ; main_menu ;;
-            2) add_client ; main_menu ;;
-            3) remove_client ; main_menu ;;
-            4) warp_menu ;;
-            5) show_logs ; main_menu ;;
-            6) show_connections ; main_menu ;;
-            7) run_diagnostics ; main_menu ;;
-            8) 
-                echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации и WARP!${NC}"
-                read -p "Вы уверены? (y/n): " uconf
-                if [[ "$uconf" =~ ^[Yy]$ ]]; then
-                    uninstall_all
-                else
-                    main_menu
-                fi
-                ;;
-            9) exit 0 ;;
-            *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
-        esac
-    }
-
-    uninstall_warp() {
-        echo -e "\n${BOLD}${RED}🧹 Полное удаление Cloudflare WARP с сервера...${NC}"
-        
-        systemctl stop wg-quick@warp >/dev/null 2>&1
-        systemctl disable wg-quick@warp >/dev/null 2>&1
-        rm -f /etc/cron.d/warp-native
-        rm -rf /opt/warp-native
-        rm -f /usr/local/bin/warp
-        rm -f /etc/wireguard/warp.conf
-        rm -f /usr/local/bin/wgcf
-        rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
-        rm -f /etc/xray/geoblock.lst
-        
-        # Удаление задачи автообновления из cron
-        if crontab -l &>/dev/null; then
-            crontab -l | grep -v "update-geoblocks" | crontab -
-        fi
-        
-        update_marker_val "WARP_INSTALLED" "false"
-        update_marker_val "WARP_ENABLED" "false"
-        update_marker_val "WARP_MODE" "smart"
-        
-        DOMAIN=$(get_installed_var "DOMAIN")
-        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-        generate_server_config
-        
-        echo -e "${GREEN}✅ Cloudflare WARP успешно и полностью удален с сервера!${NC}"
-        sleep 1.5
-    }
-
-    warp_menu() {
-        local warp_installed=$(get_installed_var "WARP_INSTALLED")
-        local warp_enabled=$(get_installed_var "WARP_ENABLED")
-        local warp_mode=$(get_installed_var "WARP_MODE")
-        [ -z "$warp_mode" ] && warp_mode="smart"
-        
-        echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${PURPLE}│                  Управление WARP                       │${NC}"
-        echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
-        
-        if [ "$warp_installed" != "true" ]; then
-            echo -e " ${RED}Cloudflare WARP в данный момент не установлен на сервере.${NC}"
-            echo -e "\n ${BOLD}${YELLOW}1.${NC} 📥 Установить и активировать Cloudflare WARP"
-            echo -e " ${BOLD}${CYAN}2.${NC} ↩️ Вернуться в главное меню"
-            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-            read -p "Выберите действие (1-2): " wchoice
-            case $wchoice in
-                1)
-                    install_warp
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                    warp_menu
-                    ;;
-                2)
-                    main_menu
-                    ;;
-                *)
-                    echo -e "${RED}❌ Неверный выбор!${NC}"
-                    warp_menu
-                    ;;
-            esac
-        else
-            local status_text="${RED}Выключен${NC}"
-            [ "$warp_enabled" == "true" ] && status_text="${GREEN}Активен${NC}"
-            
-            local mode_text="${CYAN}Smart-обход (только заблокированные сайты)${NC}"
-            [ "$warp_mode" == "full" ] && mode_text="${PURPLE}Full-обход (весь исходящий трафик сервера)${NC}"
-            
-            echo -e " ${BOLD}Статус:${NC} $status_text"
-            echo -e " ${BOLD}Режим маршрутизации:${NC} $mode_text"
-            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-            
-            if [ "$warp_enabled" == "true" ]; then
-                echo -e " ${BOLD}${YELLOW}1.${NC} 📴 Отключить WARP (прямой выход в интернет)"
-            else
-                echo -e " ${BOLD}${YELLOW}1.${NC} 🌀 Включить и запустить WARP"
-            fi
-            echo -e " ${BOLD}${YELLOW}2.${NC} ⚙️ Переключить режим работы WARP (Smart / Full)"
-            echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Принудительно обновить список геоблокировок"
-            echo -e " ${BOLD}${YELLOW}4.${NC} ⚡ Переустановить/Обновить WireGuard профиль WARP"
-            echo -e " ${BOLD}${RED}5.${NC} 🗑️ Полностью удалить Cloudflare WARP с сервера"
-            echo -e " ${BOLD}${CYAN}6.${NC} ↩️ Назад в главное меню"
-            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-            read -p "Выберите действие (1-6): " wchoice
-            case $wchoice in
-                1)
-                    toggle_warp
-                    warp_menu
-                    ;;
-                2)
-                    echo -e "\n${BOLD}Выберите новый режим исходящего трафика:${NC}"
-                    echo -e " ${BOLD}${YELLOW}1.${NC} Smart-обход (маршрутизируются только сайты из списка блокировок)"
-                    echo -e " ${BOLD}${YELLOW}2.${NC} Full-обход (абсолютно весь трафик сервера оборачивается в WARP)"
-                    read -p "Режим (1-2): " mchoice
-                    if [ "$mchoice" == "1" ]; then
-                        update_marker_val "WARP_MODE" "smart"
-                        echo -e "${GREEN}✅ Успешно изменен на Smart-обход${NC}"
-                    elif [ "$mchoice" == "2" ]; then
-                        update_marker_val "WARP_MODE" "full"
-                        echo -e "${GREEN}✅ Успешно изменен на Full-обход${NC}"
-                    else
-                        echo -e "${RED}❌ Отменено: неверный выбор${NC}"
-                    fi
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                    warp_menu
-                    ;;
-                3)
-                    update_geoblock_list
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                    echo -e "${GREEN}✅ Список блокировок успешно обновлен!${NC}"
-                    sleep 1
-                    warp_menu
-                    ;;
-                4)
-                    install_warp
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                    warp_menu
-                    ;;
-                5)
-                    uninstall_warp
-                    warp_menu
-                    ;;
-                6)
-                    main_menu
-                    ;;
-                *)
-                    echo -e "${RED}❌ Неверный выбор!${NC}"
-                    warp_menu
-                    ;;
-            esac
-        fi
-    }
-
-    uninstall_all() {
-        echo "🧹 Удаление Xray и конфигураций..."
-        
-        systemctl stop xray-sub >/dev/null 2>&1
-        systemctl disable xray-sub >/dev/null 2>&1
-        rm -f /etc/systemd/system/xray-sub.service
-        systemctl daemon-reload >/dev/null 2>&1
-        rm -f "$SUB_SERVER_SCRIPT"
-
-        # Удаление Cloudflare WARP
-        systemctl stop wg-quick@warp >/dev/null 2>&1
-        systemctl disable wg-quick@warp >/dev/null 2>&1
-        rm -f /etc/cron.d/warp-native
-        rm -rf /opt/warp-native
-        rm -f /usr/local/bin/warp
-        rm -f /etc/wireguard/warp.conf
-        rm -f /usr/local/bin/wgcf
-        rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
-
-        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
-        rm -rf "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "$GENERATE_SCRIPT"
-        rm -f /var/log/xray/{access.log,error.log}
-        if crontab -l &>/dev/null; then
-            crontab -l | grep -v "certbot renew" | crontab -
-        fi
-        ufw delete allow 443/tcp > /dev/null
-        ufw delete allow 80/tcp > /dev/null
-        rm -f "$MARKER_FILE"
-        echo "✅ Удалено"
-    }
-
-    echo "⚠️ Xray уже установлен"
-    
-    # Самодиагностика и исправление пустых/отсутствующих UUID
-    local repaired=false
-    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
-        local repair_output=$(python3 -c '
-import json, sys, os, uuid, re
-domain = "domain.com"
-try:
-    if os.path.exists("/etc/xray/.installed"):
-        with open("/etc/xray/.installed", "r") as inf:
-            for l in inf:
-                if l.startswith("DOMAIN="):
-                    domain = l.split("=", 1)[1].strip()
-except Exception:
-    pass
-
-for filepath in sys.argv[1:]:
-    if not filepath.endswith(".json") or not os.path.exists(filepath):
-        continue
-    need_repair = False
-    data = {}
-    try:
-        with open(filepath, "r") as f:
-            data = json.load(f)
-        uid = data.get("id", "")
-        if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(uid), re.I):
-            need_repair = True
-    except Exception:
-        need_repair = True
-    
-    if not need_repair:
-        try:
-            if "outbounds" not in data or not isinstance(data["outbounds"], list) or len(data["outbounds"]) == 0:
-                need_repair = True
-            elif data["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] != data["id"]:
-                need_repair = True
-        except Exception:
-            need_repair = True
-            
-    if need_repair:
-        try:
-            new_uuid = data.get("id", "")
-            if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(new_uuid), re.I):
-                new_uuid = str(uuid.uuid4())
-            remarks = data.get("remarks", "")
-            if not remarks:
-                remarks = os.path.splitext(os.path.basename(filepath))[0]
-            
-            data = {
-              "remarks": remarks,
-              "id": new_uuid,
-              "outbounds": [{
-                "protocol": "vless",
-                "settings": {
-                  "vnext": [{
-                    "address": domain,
-                    "port": 443,
-                    "users": [{
-                      "id": new_uuid,
-                      "flow": "xtls-rprx-vision"
-                    }]
-                  }]
-                },
-                "streamSettings": {
-                  "network": "tcp",
-                  "security": "tls",
-                  "sockopt": {
-                    "tcpFastOpen": True
-                  }
-                }
-              }]
-            }
-            with open(filepath, "w") as f:
-                json.dump(data, f, indent=2)
-            print(f"REPAIRED:{filepath}")
-        except Exception:
-            pass
-' "$CLIENT_CONFIG_DIR"/*.json 2>/dev/null)
-
-        if [ -n "$repair_output" ]; then
-            repaired=true
-            echo "$repair_output" | while read -r line; do
-                if [[ "$line" =~ REPAIRED:(.+) ]]; then
-                    local path="${BASH_REMATCH[1]}"
-                    echo "⚙️ Восстановлен корректный UUID в $(basename "$path")"
-                    chown nobody:nogroup "$path"
-                    chmod 644 "$path"
-                fi
-            done
-        fi
-    fi
-
-    # Автоматически регистрируем быструю команду 'xry'
-    install_xry_command >/dev/null 2>&1
-
-    if [ "$repaired" = true ]; then
-        echo "🔄 Пересборка конфигурации сервера после исправления..."
-        DOMAIN=$(get_installed_var "DOMAIN")
-        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-        generate_server_config
-        install_generate_script
-        echo "✅ Восстановление успешно завершено!"
-    fi
-
-    main_menu
-    exit 0
-fi
-
-# === Логгирование ===
-mkdir -p /var/log/xray
-exec > >(tee -a "$INSTALL_LOG") 2>&1
-
 # === Проверка домена ===
 echo "🔍 Проверка резолва домена..."
 check_domain() {
@@ -1834,6 +1220,620 @@ EOF
 
     chmod +x "$GENERATE_SCRIPT"
 }
+
+# === Проверка предыдущей установки (до запроса данных) ===
+if [ -f "$MARKER_FILE" ]; then
+    show_connections() {
+        echo -e "\n--- Активные подключения к Xray ---"
+        local conns=$(ss -tnp | grep -E ':443\s' | grep -v '127.0.0.1')
+        if [ -z "$conns" ]; then
+            echo "Нет активных подключений на порт 443."
+        else
+            echo "Состояние Локальный_Адрес Удаленный_Адрес Процесс"
+            echo "$conns" | awk '{print $1, $4, $5, $6}'
+        fi
+    }
+
+    show_logs() {
+        echo -e "\n--- Выберите лог для просмотра ---"
+        echo "1. Лог Xray (systemd)"
+        echo "2. Лог Сервера подписок (systemd)"
+        echo "3. Лог ошибок Xray (/var/log/xray/error.log)"
+        echo "4. Назад"
+        read -p "Выбор (1-4): " lchoice
+        case $lchoice in
+            1) journalctl -u xray -n 50 --no-pager ;;
+            2) journalctl -u xray-sub -n 50 --no-pager ;;
+            3) tail -n 50 /var/log/xray/error.log ;;
+            4) return ;;
+            *) echo "Неверный выбор" ;;
+        esac
+    }
+
+    run_diagnostics() {
+        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${BOLD}${CYAN}│             ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ         │${NC}"
+        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        
+        # 1. Проверка конфликтов портов 443 и 80
+        echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
+        local port_443_process=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+        local port_80_process=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+        
+        if [ -n "$port_443_process" ]; then
+            echo -e " 🟢 Порт 443 (TCP) успешно занят процессом: ${GREEN}$port_443_process${NC}"
+            if [[ "$port_443_process" =~ "openvpn" ]]; then
+                echo -e "  ${RED}⚠️ ВНИМАНИЕ! Порт 443 занят процессом OpenVPN. Это приведет к неработоспособности Xray!${NC}"
+            fi
+        else
+            echo -e " 🔴 ${RED}Порт 443 (TCP) Свободен или Xray не запущен!${NC}"
+        fi
+        
+        if [ -n "$port_80_process" ]; then
+            echo -e " 🟢 Порт 80 (TCP) успешно занят процессом: ${GREEN}$port_80_process${NC}"
+        else
+            echo -e " 🟡 Порт 80 (TCP) свободен (требуется Certbot для обновления сертификатов)."
+        fi
+
+        # 2. Проверка служб
+        echo -e "\n${BOLD}[2] Статус системных служб:${NC}"
+        if systemctl is-active --quiet xray; then
+            echo -e " Xray Service: 🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+        else
+            echo -e " Xray Service: 🔴 ${RED}INACTIVE (Остановлен)${NC}"
+            journalctl -u xray -n 10 --no-pager
+        fi
+        
+        if systemctl is-active --quiet xray-sub; then
+            echo -e " Sub Service:  🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+        else
+            echo -e " Sub Service:  🔴 ${RED}INACTIVE (Остановлен)${NC}"
+            journalctl -u xray-sub -n 10 --no-pager
+        fi
+
+        # 3. Проверка резолва домена и подмены DNS (dnsmap)
+        echo -e "\n${BOLD}[3] Анализ DNS-маршрутизации и домена:${NC}"
+        local domain=$(get_installed_var "DOMAIN")
+        if [ -n "$domain" ]; then
+            echo -e " Текущий домен сервера: ${CYAN}$domain${NC}"
+            local resolved_ip=$(getent hosts "$domain" | awk '{print $1}' | head -n 1)
+            if [ -n "$resolved_ip" ]; then
+                echo -e " Домен резолвится локально в IP: ${GREEN}$resolved_ip${NC}"
+                if [[ "$resolved_ip" =~ ^10\.224\. ]]; then
+                    echo -e "  ${RED}⚠️ ВНИМАНИЕ! Обнаружена подмена IP через dnsmap (сеть 10.224.x.x от AntiZapret).${NC}"
+                    echo -e "  Xray использует локальный DNS хоста и может направлять трафик некорректно."
+                fi
+            else
+                echo -e " 🔴 ${RED}Ошибка: Домен не резолвится локально!${NC}"
+            fi
+        else
+            echo -e " 🔴 ${RED}Ошибка: Домен не зарегистрирован в системе маркеров.${NC}"
+        fi
+
+        # 4. Проверка интеграции Cloudflare WARP
+        echo -e "\n${BOLD}[4] Статус Cloudflare WARP:${NC}"
+        if [ "$(get_installed_var "WARP_INSTALLED")" == "true" ]; then
+            if ip link show warp >/dev/null 2>&1; then
+                echo -e " Интерфейс warp: 🟢 ${GREEN}UP (Поднят)${NC}"
+                echo -e " Выполняем тест пинга и маршрутизации через интерфейс warp..."
+                local warp_test=$(curl --interface warp -s --connect-timeout 4 https://www.cloudflare.com/cdn-cgi/trace | grep -E "(ip=|warp=)")
+                if [ -n "$warp_test" ]; then
+                    echo -e " 🟢 ${GREEN}Сеть WARP успешно отвечает:${NC}"
+                    echo "$warp_test" | sed 's/^/   /'
+                else
+                    echo -e " 🔴 ${RED}Сеть WARP не пропускает трафик! Проверьте wg-quick@warp.${NC}"
+                fi
+            else
+                echo -e " Интерфейс warp: 🔴 ${RED}DOWN (Сеть WireGuard отключена)${NC}"
+            fi
+        else
+            echo -e " Cloudflare WARP: 🔘 Не установлен."
+        fi
+
+        # 5. Проверка сертификатов SSL
+        echo -e "\n${BOLD}[5] Проверка SSL-сертификатов Let's Encrypt:${NC}"
+        if [ -f "$SSL_DIR/fullchain.cer" ] && [ -f "$SSL_DIR/private.key" ]; then
+            echo -e " Файлы SSL: 🟢 ${GREEN}Присутствуют в директории $SSL_DIR${NC}"
+            local end_date=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
+            echo -e " Срок действия сертификата до: ${YELLOW}$end_date${NC}"
+        else
+            echo -e " Файлы SSL: 🔴 ${RED}ОТСУТСТВУЮТ! Xray не сможет работать без TLS-сертификатов.${NC}"
+        fi
+
+        # 6. Проверка Фаерволов и Правил IPTables
+        echo -e "\n${BOLD}[6] Состояние системных фаерволов:${NC}"
+        if ufw status | grep -q "Status: active"; then
+            echo -e " UFW Firewall: 🟢 ${GREEN}ACTIVE (Включен)${NC}"
+            # Проверяем, есть ли правила AntiZapret
+            if iptables -t nat -S | grep -qi "antizapret"; then
+                echo -e "  ${YELLOW}⚠️ ПРЕДУПРЕЖДЕНИЕ: UFW активен одновременно с правилами NAT AntiZapret.${NC}"
+                echo -e "  Это может вызывать сбои маршрутизации. Рекомендуется выполнить: ${CYAN}ufw disable${NC}"
+            fi
+        else
+            echo -e " UFW Firewall: 🔘 ${YELLOW}DISABLED (Отключен)${NC}"
+            echo -e " Убедитесь, что порты 443 и 80 разрешены напрямую в ваших правилах iptables."
+        fi
+
+        echo -e "\n${BOLD}Диагностика завершена. Нажмите Enter, чтобы вернуться назад...${NC}"
+        read
+    }
+
+
+    add_client() {
+        echo -e "\n--- Добавление нового клиента ---"
+        read -p "Введите имя нового устройства (например: client_new): " new_name
+        new_name=$(echo "$new_name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        if [[ -z "$new_name" ]]; then
+            echo "❌ Имя не может быть пустым"
+            return
+        fi
+
+        local safe_filename=$(echo "$new_name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
+        if [[ -z "$safe_filename" ]]; then
+            safe_filename="client_new"
+        fi
+
+        if [ -f "$CLIENT_CONFIG_DIR/${safe_filename}.json" ]; then
+            echo "❌ Клиент с таким именем уже существует!"
+            return
+        fi
+
+        local new_uuid=$(xray uuid)
+        DOMAIN=$(get_installed_var "DOMAIN")
+
+        cat > "$CLIENT_CONFIG_DIR/${safe_filename}.json" <<EOF
+{
+  "remarks": "$new_name",
+  "id": "$new_uuid",
+  "outbounds": [{
+    "protocol": "vless",
+    "settings": {
+      "vnext": [{
+        "address": "$DOMAIN",
+        "port": 443,
+        "users": [{
+          "id": "$new_uuid",
+          "flow": "xtls-rprx-vision"
+        }]
+      }]
+    },
+    "streamSettings": {
+      "network": "tcp",
+      "security": "tls",
+      "sockopt": {
+        "tcpFastOpen": true
+      }
+    }
+  }]
+}
+EOF
+        # Устанавливаем права
+        chmod 644 "$CLIENT_CONFIG_DIR/${safe_filename}.json"
+        chown nobody:nogroup "$CLIENT_CONFIG_DIR/${safe_filename}.json"
+
+        # Обновляем конфиг сервера и перезапускаем xray
+        generate_server_config
+
+        # Обновляем маркер
+        local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
+        update_marker_val "NUM_DEVICES" "$current_num"
+
+        echo "✅ Клиент '$new_name' успешно добавлен!"
+    }
+
+    remove_client() {
+        echo -e "\n${BOLD}${RED}┌────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${BOLD}${RED}│                  Удаление клиента                      │${NC}"
+        echo -e "${BOLD}${RED}└────────────────────────────────────────────────────────┘${NC}"
+        mapfile -t config_files < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
+        if [ ${#config_files[@]} -eq 0 ]; then
+            echo -e " ${RED}❌ Нет доступных клиентов для удаления${NC}"
+            return
+        fi
+
+        for i in "${!config_files[@]}"; do
+            remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "${config_files[$i]}" 2>/dev/null)
+            if [ -z "$remarks" ]; then
+                remarks="${config_files[$i]##*/}"
+                remarks="${remarks%.json}"
+            fi
+            echo -e " ${BOLD}${YELLOW}$((i+1)).${NC} $remarks"
+        done
+        echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Отмена и возврат назад"
+        echo -e "${RED}──────────────────────────────────────────────────────────${NC}"
+
+        read -p "Выберите клиента для удаления (1-${#config_files[@]}, или 0 для выхода): " choice
+        if [ "$choice" == "0" ] || [ -z "$choice" ]; then
+            return
+        fi
+
+        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#config_files[@]} ]; then
+            echo -e " ${RED}❌ Неверный выбор!${NC}"
+            return
+        fi
+
+        selected="${config_files[$((choice-1))]}"
+        remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$selected" 2>/dev/null)
+        if [ -z "$remarks" ]; then
+            remarks="${selected##*/}"
+            remarks="${remarks%.json}"
+        fi
+
+        read -p "Вы действительно хотите безвозвратно удалить '$remarks'? [y/N]: " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            rm -f "$selected"
+            # Обновляем конфиг сервера и перезапускаем xray
+            generate_server_config
+
+            # Обновляем маркер
+            local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
+            update_marker_val "NUM_DEVICES" "$current_num"
+
+            echo -e " ${GREEN}✅ Клиент '$remarks' успешно удален из системы!${NC}"
+            sleep 1
+        else
+            echo "Отменено."
+        fi
+    }
+
+    show_status_dashboard() {
+        local domain=$(get_installed_var "DOMAIN")
+        local clients_count=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
+        
+        # Статусы системных служб
+        local xray_status="${RED}OFF${NC}"
+        systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}"
+        
+        local sub_status="${RED}OFF${NC}"
+        systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}ACTIVE${NC}"
+        
+        local warp_installed=$(get_installed_var "WARP_INSTALLED")
+        local warp_enabled=$(get_installed_var "WARP_ENABLED")
+        local warp_mode=$(get_installed_var "WARP_MODE")
+        [ -z "$warp_mode" ] && warp_mode="smart"
+        
+        local warp_status="${RED}NOT INSTALLED${NC}"
+        if [ "$warp_installed" == "true" ]; then
+            if [ "$warp_enabled" == "true" ]; then
+                if [ "$warp_mode" == "full" ]; then
+                    warp_status="${GREEN}ON (FULL)${NC}"
+                else
+                    warp_status="${GREEN}ON (SMART)${NC}"
+                fi
+            else
+                warp_status="${YELLOW}DISABLED${NC}"
+            fi
+        fi
+
+        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Сервер:${NC} ${GREEN}$domain${NC}"
+        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Службы:${NC} Xray: [$xray_status] | Sub-Server: [$sub_status]"
+        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}WARP:${NC}   [$warp_status]"
+        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Клиенты:${NC} Активных устройств: ${BOLD}${YELLOW}$clients_count${NC}"
+        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+    }
+
+    main_menu() {
+        show_status_dashboard
+        echo -e "${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${BOLD}${CYAN}│                      ГЛАВНОЕ МЕНЮ                      │${NC}"
+        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e " ${BOLD}${YELLOW}1.${NC} 📱 Показать QR-коды и ссылки подключения"
+        echo -e " ${BOLD}${YELLOW}2.${NC} 👤 Добавить нового пользователя / устройство"
+        echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить существующего пользователя"
+        echo -e " ${BOLD}${YELLOW}4.${NC} 🌀 Управление обходом Cloudflare WARP"
+        echo -e " ${BOLD}${YELLOW}5.${NC} 📰 Просмотреть системные логи служб"
+        echo -e " ${BOLD}${YELLOW}6.${NC} 📊 Мониторинг активных соединений (port 443)"
+        echo -e " ${BOLD}${YELLOW}7.${NC} 🛠️ Запустить полную диагностику системы (Troubleshooting)"
+        echo -e " ${BOLD}${RED}8. 🗑️ Полностью удалить всю установку Xray с сервера${NC}"
+        echo -e " ${BOLD}${CYAN}9.${NC} 🚪 Выйти из терминала"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        read -p "Выберите действие (1-9): " choice
+        case $choice in
+            1) "$GENERATE_SCRIPT" ; main_menu ;;
+            2) add_client ; main_menu ;;
+            3) remove_client ; main_menu ;;
+            4) warp_menu ;;
+            5) show_logs ; main_menu ;;
+            6) show_connections ; main_menu ;;
+            7) run_diagnostics ; main_menu ;;
+            8) 
+                echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации и WARP!${NC}"
+                read -p "Вы уверены? (y/n): " uconf
+                if [[ "$uconf" =~ ^[Yy]$ ]]; then
+                    uninstall_all
+                else
+                    main_menu
+                fi
+                ;;
+            9) exit 0 ;;
+            *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
+        esac
+    }
+
+    uninstall_warp() {
+        echo -e "\n${BOLD}${RED}🧹 Полное удаление Cloudflare WARP с сервера...${NC}"
+        
+        systemctl stop wg-quick@warp >/dev/null 2>&1
+        systemctl disable wg-quick@warp >/dev/null 2>&1
+        rm -f /etc/cron.d/warp-native
+        rm -rf /opt/warp-native
+        rm -f /usr/local/bin/warp
+        rm -f /etc/wireguard/warp.conf
+        rm -f /usr/local/bin/wgcf
+        rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
+        rm -f /etc/xray/geoblock.lst
+        
+        # Удаление задачи автообновления из cron
+        if crontab -l &>/dev/null; then
+            crontab -l | grep -v "update-geoblocks" | crontab -
+        fi
+        
+        update_marker_val "WARP_INSTALLED" "false"
+        update_marker_val "WARP_ENABLED" "false"
+        update_marker_val "WARP_MODE" "smart"
+        
+        DOMAIN=$(get_installed_var "DOMAIN")
+        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+        generate_server_config
+        
+        echo -e "${GREEN}✅ Cloudflare WARP успешно и полностью удален с сервера!${NC}"
+        sleep 1.5
+    }
+
+    warp_menu() {
+        local warp_installed=$(get_installed_var "WARP_INSTALLED")
+        local warp_enabled=$(get_installed_var "WARP_ENABLED")
+        local warp_mode=$(get_installed_var "WARP_MODE")
+        [ -z "$warp_mode" ] && warp_mode="smart"
+        
+        echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${BOLD}${PURPLE}│                  Управление WARP                       │${NC}"
+        echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
+        
+        if [ "$warp_installed" != "true" ]; then
+            echo -e " ${RED}Cloudflare WARP в данный момент не установлен на сервере.${NC}"
+            echo -e "\n ${BOLD}${YELLOW}1.${NC} 📥 Установить и активировать Cloudflare WARP"
+            echo -e " ${BOLD}${CYAN}2.${NC} ↩️ Вернуться в главное меню"
+            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
+            read -p "Выберите действие (1-2): " wchoice
+            case $wchoice in
+                1)
+                    install_warp
+                    DOMAIN=$(get_installed_var "DOMAIN")
+                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                    generate_server_config
+                    warp_menu
+                    ;;
+                2)
+                    main_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    warp_menu
+                    ;;
+            esac
+        else
+            local status_text="${RED}Выключен${NC}"
+            [ "$warp_enabled" == "true" ] && status_text="${GREEN}Активен${NC}"
+            
+            local mode_text="${CYAN}Smart-обход (только заблокированные сайты)${NC}"
+            [ "$warp_mode" == "full" ] && mode_text="${PURPLE}Full-обход (весь исходящий трафик сервера)${NC}"
+            
+            echo -e " ${BOLD}Статус:${NC} $status_text"
+            echo -e " ${BOLD}Режим маршрутизации:${NC} $mode_text"
+            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
+            
+            if [ "$warp_enabled" == "true" ]; then
+                echo -e " ${BOLD}${YELLOW}1.${NC} 📴 Отключить WARP (прямой выход в интернет)"
+            else
+                echo -e " ${BOLD}${YELLOW}1.${NC} 🌀 Включить и запустить WARP"
+            fi
+            echo -e " ${BOLD}${YELLOW}2.${NC} ⚙️ Переключить режим работы WARP (Smart / Full)"
+            echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Принудительно обновить список геоблокировок"
+            echo -e " ${BOLD}${YELLOW}4.${NC} ⚡ Переустановить/Обновить WireGuard профиль WARP"
+            echo -e " ${BOLD}${RED}5.${NC} 🗑️ Полностью удалить Cloudflare WARP с сервера"
+            echo -e " ${BOLD}${CYAN}6.${NC} ↩️ Назад в главное меню"
+            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
+            read -p "Выберите действие (1-6): " wchoice
+            case $wchoice in
+                1)
+                    toggle_warp
+                    warp_menu
+                    ;;
+                2)
+                    echo -e "\n${BOLD}Выберите новый режим исходящего трафика:${NC}"
+                    echo -e " ${BOLD}${YELLOW}1.${NC} Smart-обход (маршрутизируются только сайты из списка блокировок)"
+                    echo -e " ${BOLD}${YELLOW}2.${NC} Full-обход (абсолютно весь трафик сервера оборачивается в WARP)"
+                    read -p "Режим (1-2): " mchoice
+                    if [ "$mchoice" == "1" ]; then
+                        update_marker_val "WARP_MODE" "smart"
+                        echo -e "${GREEN}✅ Успешно изменен на Smart-обход${NC}"
+                    elif [ "$mchoice" == "2" ]; then
+                        update_marker_val "WARP_MODE" "full"
+                        echo -e "${GREEN}✅ Успешно изменен на Full-обход${NC}"
+                    else
+                        echo -e "${RED}❌ Отменено: неверный выбор${NC}"
+                    fi
+                    DOMAIN=$(get_installed_var "DOMAIN")
+                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                    generate_server_config
+                    warp_menu
+                    ;;
+                3)
+                    update_geoblock_list
+                    DOMAIN=$(get_installed_var "DOMAIN")
+                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                    generate_server_config
+                    echo -e "${GREEN}✅ Список блокировок успешно обновлен!${NC}"
+                    sleep 1
+                    warp_menu
+                    ;;
+                4)
+                    install_warp
+                    DOMAIN=$(get_installed_var "DOMAIN")
+                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                    generate_server_config
+                    warp_menu
+                    ;;
+                5)
+                    uninstall_warp
+                    warp_menu
+                    ;;
+                6)
+                    main_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    warp_menu
+                    ;;
+            esac
+        fi
+    }
+
+    uninstall_all() {
+        echo "🧹 Удаление Xray и конфигураций..."
+        
+        systemctl stop xray-sub >/dev/null 2>&1
+        systemctl disable xray-sub >/dev/null 2>&1
+        rm -f /etc/systemd/system/xray-sub.service
+        systemctl daemon-reload >/dev/null 2>&1
+        rm -f "$SUB_SERVER_SCRIPT"
+
+        # Удаление Cloudflare WARP
+        systemctl stop wg-quick@warp >/dev/null 2>&1
+        systemctl disable wg-quick@warp >/dev/null 2>&1
+        rm -f /etc/cron.d/warp-native
+        rm -rf /opt/warp-native
+        rm -f /usr/local/bin/warp
+        rm -f /etc/wireguard/warp.conf
+        rm -f /usr/local/bin/wgcf
+        rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
+
+        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
+        rm -rf "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "$GENERATE_SCRIPT"
+        rm -f /var/log/xray/{access.log,error.log}
+        if crontab -l &>/dev/null; then
+            crontab -l | grep -v "certbot renew" | crontab -
+        fi
+        ufw delete allow 443/tcp > /dev/null
+        ufw delete allow 80/tcp > /dev/null
+        rm -f "$MARKER_FILE"
+        echo "✅ Удалено"
+    }
+
+    echo "⚠️ Xray уже установлен"
+    
+    # Самодиагностика и исправление пустых/отсутствующих UUID
+    local repaired=false
+    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
+        local repair_output=$(python3 -c '
+import json, sys, os, uuid, re
+domain = "domain.com"
+try:
+    if os.path.exists("/etc/xray/.installed"):
+        with open("/etc/xray/.installed", "r") as inf:
+            for l in inf:
+                if l.startswith("DOMAIN="):
+                    domain = l.split("=", 1)[1].strip()
+except Exception:
+    pass
+
+for filepath in sys.argv[1:]:
+    if not filepath.endswith(".json") or not os.path.exists(filepath):
+        continue
+    need_repair = False
+    data = {}
+    try:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+        uid = data.get("id", "")
+        if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(uid), re.I):
+            need_repair = True
+    except Exception:
+        need_repair = True
+    
+    if not need_repair:
+        try:
+            if "outbounds" not in data or not isinstance(data["outbounds"], list) or len(data["outbounds"]) == 0:
+                need_repair = True
+            elif data["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] != data["id"]:
+                need_repair = True
+        except Exception:
+            need_repair = True
+            
+    if need_repair:
+        try:
+            new_uuid = data.get("id", "")
+            if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(new_uuid), re.I):
+                new_uuid = str(uuid.uuid4())
+            remarks = data.get("remarks", "")
+            if not remarks:
+                remarks = os.path.splitext(os.path.basename(filepath))[0]
+            
+            data = {
+              "remarks": remarks,
+              "id": new_uuid,
+              "outbounds": [{
+                "protocol": "vless",
+                "settings": {
+                  "vnext": [{
+                    "address": domain,
+                    "port": 443,
+                    "users": [{
+                      "id": new_uuid,
+                      "flow": "xtls-rprx-vision"
+                    }]
+                  }]
+                },
+                "streamSettings": {
+                  "network": "tcp",
+                  "security": "tls",
+                  "sockopt": {
+                    "tcpFastOpen": True
+                  }
+                }
+              }]
+            }
+            with open(filepath, "w") as f:
+                json.dump(data, f, indent=2)
+            print(f"REPAIRED:{filepath}")
+        except Exception:
+            pass
+' "$CLIENT_CONFIG_DIR"/*.json 2>/dev/null)
+
+        if [ -n "$repair_output" ]; then
+            repaired=true
+            echo "$repair_output" | while read -r line; do
+                if [[ "$line" =~ REPAIRED:(.+) ]]; then
+                    local path="${BASH_REMATCH[1]}"
+                    echo "⚙️ Восстановлен корректный UUID в $(basename "$path")"
+                    chown nobody:nogroup "$path"
+                    chmod 644 "$path"
+                fi
+            done
+        fi
+    fi
+
+    # Автоматически регистрируем быструю команду 'xry'
+    install_xry_command >/dev/null 2>&1
+
+    if [ "$repaired" = true ]; then
+        echo "🔄 Пересборка конфигурации сервера после исправления..."
+        DOMAIN=$(get_installed_var "DOMAIN")
+        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+        generate_server_config
+        install_generate_script
+        echo "✅ Восстановление успешно завершено!"
+    fi
+
+    main_menu
+    exit 0
+fi
+
+# === Логгирование ===
+mkdir -p /var/log/xray
+exec > >(tee -a "$INSTALL_LOG") 2>&1
 
 # === Обработка флага автоматического обновления геоблокировок ===
 if [ "$1" == "--update-geoblocks" ]; then
