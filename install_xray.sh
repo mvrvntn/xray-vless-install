@@ -63,8 +63,8 @@ mkdir -p /var/log/xray
 exec > >(tee -a "$INSTALL_LOG") 2>&1
 
 # === Проверка домена ===
+echo "🔍 Проверка резолва домена..."
 check_domain() {
-    echo "🔍 Проверка резолва домена..."
     if ! getent hosts "$DOMAIN" >/dev/null; then
         echo "❌ Домен '$DOMAIN' не резолвится. Проверьте DNS-записи (A-запись должна указывать на IP этого сервера)."
         exit 1
@@ -92,9 +92,11 @@ check_port_conflicts() {
 # === Получение эмодзи флага страны ===
 get_flag_emoji() {
     local country_code
-    country_code=$(curl -s --connect-timeout 3 https://ipapi.co/country/ | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+    # Сначала пробуем наиболее точный ipinfo.io
+    country_code=$(curl -s --connect-timeout 3 https://ipinfo.io/country | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
     if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-        country_code=$(curl -s --connect-timeout 3 https://ipinfo.io/country | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        # В качестве резерва используем ipapi.co
+        country_code=$(curl -s --connect-timeout 3 https://ipapi.co/country/ | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
     fi
     if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
         country_code="UN"
@@ -102,8 +104,8 @@ get_flag_emoji() {
 
     local c1=${country_code:0:1}
     local c2=${country_code:1:1}
-    local val1=$(( $(printf "%d" "'$c1") - 65 + 127462 ))
-    local val2=$(( $(printf "%d" "'$c2") - 65 + 127462 ))
+    local val1=$(( $(printf "%d" "$c1") - 65 + 127462 ))
+    local val2=$(( $(printf "%d" "$c2") - 65 + 127462 ))
     
     local flag
     printf -v flag "\\U$(printf "%08x" $val1)\\U$(printf "%08x" $val2)"
@@ -355,26 +357,32 @@ import json
 
 PORT = 10080
 CONFIG_DIR = "/etc/xray/client_configs"
+INSTALLED_FILE = "/etc/xray/.installed"
 
-# Чтение домена и эмодзи
-domain = ""
-emoji = ""
-try:
-    with open("/etc/xray/.installed", "r") as f:
-        for line in f:
-            if line.startswith("DOMAIN="):
-                domain = line.split("=", 1)[1].strip()
-            elif line.startswith("EMOJI="):
-                emoji = line.split("=", 1)[1].strip()
-except Exception:
-    pass
+def get_domain_and_emoji():
+    domain = ""
+    emoji = ""
+    try:
+        if os.path.exists(INSTALLED_FILE):
+            with open(INSTALLED_FILE, "r") as f:
+                for line in f:
+                    if line.startswith("DOMAIN="):
+                        domain = line.split("=", 1)[1].strip()
+                    elif line.startswith("EMOJI="):
+                        emoji = line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return domain, emoji
 
 class SubHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
     def do_GET(self):
-        parts = self.path.strip("/").split("/")
+        # Парсим URL, чтобы убрать query-параметры (например, ?flag=1)
+        parsed_url = urllib.parse.urlparse(self.path)
+        parts = parsed_url.path.strip("/").split("/")
+        
         if len(parts) != 2 or parts[0] != "sub":
             self.send_response(404)
             self.end_headers()
@@ -401,7 +409,11 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         
-        # Генерация ссылок по новой структуре:
+        domain, emoji = get_domain_and_emoji()
+        if not domain:
+            domain = self.headers.get('Host', '').split(':')[0]
+
+        # Генерация ссылок по структуре:
         # ФЛАГ🌐 VLESS-TCP (имя)
         # ФЛАГ🛡️ XHTTP (имя)
         # ФЛАГ⚡ HYSTERIA2 (имя)
