@@ -25,7 +25,7 @@ ufw enable
 
 #### Удаленное выполнение:
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mvrvntn/vless-server-install/refs/heads/main/install_xray.sh)"
+sudo bash <(curl -fsSL "https://raw.githubusercontent.com/mvrvntn/vless-server-install/main/install_xray.sh?v=$(date +%s)")
 ```
 
 #### Локальное выполнение:
