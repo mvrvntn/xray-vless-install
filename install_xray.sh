@@ -438,8 +438,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         encoded_remark_xhttp = urllib.parse.quote(remark_xhttp)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         
-        vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp=chrome#{encoded_remark_vision}"
-        vless_xhttp = f"vless://{uuid_param}@{domain}:443?security=tls&type=xhttp&mode=auto&path=%2Fxhttppath%2F&fp=chrome#{encoded_remark_xhttp}"
+        vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp=firefox#{encoded_remark_vision}"
+        vless_xhttp = f"vless://{uuid_param}@{domain}:443?security=tls&type=xhttp&mode=auto&path=%2Fxhttppath%2F&fp=firefox#{encoded_remark_xhttp}"
         hysteria2 = f"hysteria2://{uuid_param}@{domain}:443/?sni={domain}&alpn=h3#{encoded_remark_hy2}"
         
         sub_content = f"{vless_vision}\n{vless_xhttp}\n{hysteria2}\n"
@@ -489,7 +489,7 @@ CONFIG_DIR="/etc/xray/client_configs"
 DOMAIN=$(grep DOMAIN /etc/xray/.installed | cut -d= -f2)
 EMOJI=$(grep EMOJI /etc/xray/.installed | cut -d= -f2)
 FLOW="xtls-rprx-vision"
-FINGERPRINT="chrome"
+FINGERPRINT="firefox"
 PORT=443
 
 mapfile -t config_files < <(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
