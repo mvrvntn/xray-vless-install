@@ -719,37 +719,28 @@ EOF
 
 # === Генерация клиентских конфигов ===
 generate_client_configs() {
-    echo "📤 Генерация клиентских конфигов..."
+    echo "📦 Генерация клиентских конфигов..."
     mkdir -p "$CLIENT_CONFIG_DIR"
+    
+    local DOMAIN=$(get_installed_var "DOMAIN")
+    local FINGERPRINT=$(get_installed_var "FINGERPRINT")
+    if [ -z "$FINGERPRINT" ]; then FINGERPRINT="chrome"; fi
 
-    for i in $(seq 1 "$NUM_DEVICES"); do
-        local name="${DEVICE_NAMES[$i]}"
-        local uuid="${UUIDs[$i]}"
-        
-        if [[ -z "$uuid" || -z "$name" ]]; then
-            if [ -f "$CLIENT_CONFIG_DIR/client_$i.json" ]; then
-                [[ -z "$uuid" ]] && uuid=$(grep -oP '"id": "\K[^"]+' "$CLIENT_CONFIG_DIR/client_$i.json" | head -1)
-                [[ -z "$name" ]] && name=$(grep -oP '"remarks": "\K[^"]+' "$CLIENT_CONFIG_DIR/client_$i.json" | head -1)
-            else
-                local conf=$(ls -1 "$CLIENT_CONFIG_DIR"/*.json 2>/dev/null | sed -n ${i}p)
-                if [ -n "$conf" ] && [ -f "$conf" ]; then
-                    [[ -z "$uuid" ]] && uuid=$(grep -oP '"id": "\K[^"]+' "$conf" | head -1)
-                    [[ -z "$name" ]] && name=$(grep -oP '"remarks": "\K[^"]+' "$conf" | head -1)
-                fi
+    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
+        # Обновляем существующие конфиги (идемпотентность)
+        for filepath in "$CLIENT_CONFIG_DIR"/*.json; do
+            [ -e "$filepath" ] || continue
+            
+            local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
+            local name=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$filepath" 2>/dev/null)
+            
+            if [ -z "$uuid" ] || [ "$uuid" == "null" ]; then continue; fi
+            if [ -z "$name" ] || [ "$name" == "null" ]; then
+                name="${filepath##*/}"
+                name="${name%.json}"
             fi
-            [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
-            [[ -z "$name" ]] && name="Device_$i"
-            UUIDs[$i]="$uuid"
-            DEVICE_NAMES[$i]="$name"
-        fi
 
-        local filename="client_$i"
-        local safe_filename=$(echo "$name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
-        if [[ -n "$safe_filename" ]]; then
-            filename="$safe_filename"
-        fi
-
-        cat > "$CLIENT_CONFIG_DIR/${filename}.json" <<EOF
+            cat > "$filepath" <<EOF
 {
   "remarks": "$name",
   "id": "$uuid",
@@ -769,13 +760,68 @@ generate_client_configs() {
       "network": "tcp",
       "security": "tls",
       "tlsSettings": {
-        "fingerprint": "randomized"
+        "fingerprint": "$FINGERPRINT"
       },
       "sockopt": {
         "tcpFastOpen": true
       }
     }
   }]
+}
+EOF
+        done
+    else
+        # Генерация первичных конфигов (установка с нуля)
+        for i in $(seq 1 "$NUM_DEVICES"); do
+            local name="${DEVICE_NAMES[$i]}"
+            local uuid="${UUIDs[$i]}"
+            
+            [[ -z "$uuid" ]] && uuid=$(cat /proc/sys/kernel/random/uuid)
+            [[ -z "$name" ]] && name="Device_$i"
+
+            local filename="client_$i"
+            local safe_filename=$(echo "$name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
+            if [[ -n "$safe_filename" ]]; then
+                filename="$safe_filename"
+            fi
+
+            cat > "$CLIENT_CONFIG_DIR/${filename}.json" <<EOF
+{
+  "remarks": "$name",
+  "id": "$uuid",
+  "outbounds": [{
+    "protocol": "vless",
+    "settings": {
+      "vnext": [{
+        "address": "$DOMAIN",
+        "port": 443,
+        "users": [{
+          "id": "$uuid",
+          "flow": "xtls-rprx-vision"
+        }]
+      }]
+    },
+    "streamSettings": {
+      "network": "tcp",
+      "security": "tls",
+      "tlsSettings": {
+        "fingerprint": "$FINGERPRINT"
+      },
+      "sockopt": {
+        "tcpFastOpen": true
+      }
+    }
+  }]
+}
+EOF
+        done
+    fi
+
+    # Обеспечиваем доступ на чтение для сервиса подписок (работающего под nobody)
+    chmod 755 /etc/xray
+    chown -R nobody:nogroup "$CLIENT_CONFIG_DIR"
+    chmod 755 "$CLIENT_CONFIG_DIR"
+    chmod 644 "$CLIENT_CONFIG_DIR"/*.json
 }
 EOF
     done
@@ -1408,6 +1454,8 @@ if [ -f "$MARKER_FILE" ]; then
 
         local new_uuid=$(xray uuid)
         DOMAIN=$(get_installed_var "DOMAIN")
+        local FINGERPRINT=$(get_installed_var "FINGERPRINT")
+        if [ -z "$FINGERPRINT" ]; then FINGERPRINT="chrome"; fi
 
         cat > "$CLIENT_CONFIG_DIR/${safe_filename}.json" <<EOF
 {
