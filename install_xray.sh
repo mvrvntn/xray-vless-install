@@ -1142,9 +1142,9 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             domain = self.headers.get('Host', '').split(':')[0]
 
         if emoji:
-            remark_vision = f"{emoji}🌐 VLESS-TCP"
+            remark_vision = f"{emoji}"
         else:
-            remark_vision = f"🌐 VLESS-TCP"
+            remark_vision = f"🌐"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         
