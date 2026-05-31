@@ -1164,7 +1164,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         support_url = "https://t.me/mavrtunbot" # Замените на реальный линк, если нужно
 
         # Задаем комментарии с метаданными подписки (название, страница информации, анонсы)
-        sub_content = f"#profile-title: {client_display}\n#profile-update-interval: 12\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {announce_text}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{vless_vision}\n"
+        sub_content = f"#profile-title: {client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {announce_text}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{vless_vision}\n"
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
         
         _routing = roscomvpn_resolver.get()
@@ -1175,7 +1175,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         
         # Передаем заголовки для отображения названия подписки и переходов по кнопкам
         self.send_header("profile-title", b64_client_display)
-        self.send_header("profile-update-interval", "12")
+        self.send_header("profile-update-interval", "1")
         self.send_header("support-url", support_url)
         self.send_header("profile-web-page-url", "https://mvrvntn.github.io/koridor/")
         self.send_header("announce", b64_announce)
