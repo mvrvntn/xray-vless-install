@@ -679,8 +679,10 @@ generate_server_config() {
         "enabled": true,
         "destOverride": [
           "http",
-          "tls"
-        ]
+          "tls",
+          "quic"
+        ],
+        "routeOnly": true
       },
       "streamSettings": {
         "network": "tcp",
