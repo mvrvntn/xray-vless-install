@@ -744,7 +744,6 @@ generate_server_config() {
             "keyFile": "$SSL_DIR/private.key"
           }],
           "alpn": [
-            "h2",
             "http/1.1"
           ],
           "minVersion": "1.3"
@@ -1227,8 +1226,13 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         
         support_url = "https://t.me/mavrtunbot" # Замените на реальный линк, если нужно
 
-        # Задаем комментарии с метаданными подписки (название, страница информации, анонсы)
-        sub_content = f"#profile-title: {client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {announce_text}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{sub_content_links}"
+        user_agent = self.headers.get("User-Agent", "").lower()
+        if "v2ray" in user_agent or "clash" in user_agent:
+            sub_content = sub_content_links
+        else:
+            # Задаем комментарии с метаданными подписки (название, страница информации, анонсы)
+            sub_content = f"#profile-title: {client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {announce_text}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{sub_content_links}"
+            
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
         
         _routing = roscomvpn_resolver.get()
