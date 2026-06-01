@@ -438,6 +438,7 @@ generate_server_config() {
     
     # Инициализация массивов для клиентов
     local vless_clients=()
+    local vless_xhttp_clients=()
     
     # Проверяем, есть ли уже клиенты
     if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
@@ -449,6 +450,10 @@ generate_server_config() {
                 vless_clients+=("{
                   \"id\": \"$uuid\",
                   \"flow\": \"xtls-rprx-vision\",
+                  \"email\": \"client-$idx\"
+                }")
+                vless_xhttp_clients+=("{
+                  \"id\": \"$uuid\",
                   \"email\": \"client-$idx\"
                 }")
                 idx=$((idx + 1))
@@ -465,10 +470,15 @@ generate_server_config() {
               \"flow\": \"xtls-rprx-vision\",
               \"email\": \"client-$i\"
             }")
+            vless_xhttp_clients+=("{
+              \"id\": \"$uuid\",
+              \"email\": \"client-$i\"
+            }")
         done
     fi
     
     local vless_clients_str=$(IFS=,; echo "${vless_clients[*]}")
+    local vless_xhttp_clients_str=$(IFS=,; echo "${vless_xhttp_clients[*]}")
     
     # Проверяем статус WARP
     local warp_enabled=$(get_installed_var "WARP_ENABLED")
@@ -650,6 +660,55 @@ generate_server_config() {
   ]'
     fi
     
+    # Читаем CDN_DOMAIN
+    local cdn_domain=$(get_installed_var "CDN_DOMAIN")
+    [ -z "$cdn_domain" ] && cdn_domain="none"
+
+    local fallbacks_str='[
+          {
+            "path": "/sub/",
+            "dest": "127.0.0.1:10080"
+          },
+          {
+            "dest": "127.0.0.1:10080"
+          }
+        ]'
+    local extra_inbound=""
+    if [ "$cdn_domain" != "none" ] && [ -n "$cdn_domain" ]; then
+        fallbacks_str='[
+          {
+            "path": "/sub/",
+            "dest": "127.0.0.1:10080"
+          },
+          {
+            "path": "/xh",
+            "dest": "127.0.0.1:10085",
+            "xver": 1
+          },
+          {
+            "dest": "127.0.0.1:10080"
+          }
+        ]'
+        extra_inbound=",
+    {
+      \"port\": 10085,
+      \"listen\": \"127.0.0.1\",
+      \"protocol\": \"vless\",
+      \"settings\": {
+        \"clients\": [$vless_xhttp_clients_str],
+        \"decryption\": \"none\"
+      },
+      \"streamSettings\": {
+        \"network\": \"xhttp\",
+        \"xhttpSettings\": {
+          \"path\": \"/xh\",
+          \"mode\": \"packet-up\",
+          \"acceptProxyProtocol\": true
+        }
+      }
+    }"
+    fi
+
     # Генерация конфигурационного файла с VLESS TCP
     cat > "$config_file" <<EOF
 {
@@ -665,15 +724,7 @@ generate_server_config() {
       "settings": {
         "clients": [$vless_clients_str],
         "decryption": "none",
-        "fallbacks": [
-          {
-            "path": "/sub/",
-            "dest": "127.0.0.1:10080"
-          },
-          {
-            "dest": "127.0.0.1:10080"
-          }
-        ]
+        "fallbacks": $fallbacks_str
       },
       "sniffing": {
         "enabled": true,
@@ -701,7 +752,7 @@ generate_server_config() {
           "tcpKeepAliveIdle": 300
         }
       }
-    }
+    }${extra_inbound}
   ],
   "outbounds": $outbounds_str,
   "routing": {
@@ -1091,6 +1142,7 @@ def get_domain_emoji_fp():
     domain = ""
     emoji = ""
     fp = "chrome"
+    cdn_domain = ""
     try:
         if os.path.exists(INSTALLED_FILE):
             with open(INSTALLED_FILE, "r") as f:
@@ -1101,11 +1153,13 @@ def get_domain_emoji_fp():
                         emoji = line.split("=", 1)[1].strip()
                     elif line.startswith("FINGERPRINT="):
                         fp = line.split("=", 1)[1].strip()
+                    elif line.startswith("CDN_DOMAIN="):
+                        cdn_domain = line.split("=", 1)[1].strip()
     except Exception:
         pass
     if not fp:
         fp = "chrome"
-    return domain, emoji, fp
+    return domain, emoji, fp, cdn_domain
 
 class SubHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -1139,19 +1193,26 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(DECOY_HTML.encode("utf-8"))
             return
         
-        domain, emoji, fp = get_domain_emoji_fp()
+        domain, emoji, fp, cdn_domain = get_domain_emoji_fp()
         if not domain:
             domain = self.headers.get('Host', '').split(':')[0]
 
         if emoji:
-            remark_vision = f"{emoji} {domain}"
+            remark_vision = f"{emoji} VLESS-TCP"
+            remark_xhttp = f"⚡ {emoji} VLESS-XHTTP"
         else:
-            remark_vision = f"🌐 {domain}"
+            remark_vision = "🌐 VLESS-TCP"
+            remark_xhttp = "⚡ VLESS-XHTTP"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
-        
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
         
+        sub_content_links = vless_vision + "\n"
+        if cdn_domain and cdn_domain != "none" and cdn_domain != "":
+            encoded_remark_xhttp = urllib.parse.quote(remark_xhttp)
+            vless_xhttp = f"vless://{uuid_param}@{cdn_domain}:443?security=tls&type=xhttp&fp={fp}&alpn=h2&path=%2Fxh&mode=packet-up#{encoded_remark_xhttp}"
+            sub_content_links += vless_xhttp + "\n"
+            
         client_display = f"{client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
@@ -1164,7 +1225,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         support_url = "https://t.me/mavrtunbot" # Замените на реальный линк, если нужно
 
         # Задаем комментарии с метаданными подписки (название, страница информации, анонсы)
-        sub_content = f"#profile-title: {client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {announce_text}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{vless_vision}\n"
+        sub_content = f"#profile-title: {client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {announce_text}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{sub_content_links}"
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
         
         _routing = roscomvpn_resolver.get()
@@ -1243,6 +1304,7 @@ RED='\033[0;31m'
 
   CONFIG_DIR="/etc/xray/client_configs"
   DOMAIN=$(grep DOMAIN /etc/xray/.installed | cut -d= -f2)
+  CDN_DOMAIN=$(grep CDN_DOMAIN /etc/xray/.installed | cut -d= -f2 2>/dev/null)
   EMOJI=$(grep EMOJI /etc/xray/.installed | cut -d= -f2)
   FLOW="xtls-rprx-vision"
   FINGERPRINT=$(grep FINGERPRINT /etc/xray/.installed | cut -d= -f2)
@@ -1285,9 +1347,11 @@ fi
 
 # Генерация названий с новыми эмодзи-символами и скобками
 if [ -n "$EMOJI" ]; then
-  remark_vision="${EMOJI}🌐 VLESS-TCP"
+  remark_vision="${EMOJI} VLESS-TCP"
+  remark_xhttp="⚡ ${EMOJI} VLESS-XHTTP"
 else
   remark_vision="🌐 VLESS-TCP"
+  remark_xhttp="⚡ VLESS-XHTTP"
 fi
 
 urlencode() {
@@ -1295,6 +1359,7 @@ urlencode() {
 }
 
 encoded_remark_vision=$(urlencode "$remark_vision")
+encoded_remark_xhttp=$(urlencode "$remark_xhttp")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
@@ -1303,9 +1368,18 @@ SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
 echo -e "${BOLD}${PURPLE}│                Ссылки для подключения                  │${NC}"
 echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
-echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Стандарт):${NC}"
+echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Стандарт, напрямую):${NC}"
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
-echo -e "\n ${BOLD}${YELLOW}2. Ссылка подписки (импорт в клиент):${NC}"
+
+has_cdn=false
+if [ -n "$CDN_DOMAIN" ] && [ "$CDN_DOMAIN" != "none" ] && [ "$CDN_DOMAIN" != "" ]; then
+  has_cdn=true
+  VLESS_XHTTP="vless://${UUID}@${CDN_DOMAIN}:${PORT}?security=tls&type=xhttp&fp=${FINGERPRINT}&alpn=h2&path=%2Fxh&mode=packet-up#${encoded_remark_xhttp}"
+  echo -e "\n ${BOLD}${YELLOW}2. VLESS XHTTP (Подключение через CDN):${NC}"
+  echo -e "    ${GREEN}$VLESS_XHTTP${NC}"
+fi
+
+echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 
@@ -1314,14 +1388,27 @@ echo -e "${BOLD}${CYAN}│                   Генерация QR-кода     
 echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
 echo -e " Выберите, для чего отобразить QR-код:"
 echo -e " ${BOLD}${YELLOW}1.${NC} 📱 VLESS TCP Vision"
-echo -e " ${BOLD}${YELLOW}2.${NC} 🔄 Ссылка подписки (импорт в клиент)"
-echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-read -p "Ваш выбор (1-2): " qr_choice
-case "$qr_choice" in
-  1) qrencode -t UTF8 "$VLESS_VISION" ;;
-  2) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
-  *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
-esac
+if [ "$has_cdn" = true ]; then
+  echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ VLESS XHTTP"
+  echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Ссылка подписки"
+  echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+  read -p "Ваш выбор (1-3): " qr_choice
+  case "$qr_choice" in
+    1) qrencode -t UTF8 "$VLESS_VISION" ;;
+    2) qrencode -t UTF8 "$VLESS_XHTTP" ;;
+    3) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
+  esac
+else
+  echo -e " ${BOLD}${YELLOW}2.${NC} 🔄 Ссылка подписки"
+  echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+  read -p "Ваш выбор (1-2): " qr_choice
+  case "$qr_choice" in
+    1) qrencode -t UTF8 "$VLESS_VISION" ;;
+    2) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
+  esac
+fi
 EOF
 
     chmod +x "$GENERATE_SCRIPT"
@@ -1670,6 +1757,177 @@ EOF
         sleep 2
     }
 
+    domain_management_menu() {
+        local current_domain=$(get_installed_var "DOMAIN")
+        local current_cdn=$(get_installed_var "CDN_DOMAIN")
+        [ -z "$current_cdn" ] && current_cdn="none"
+
+        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${BOLD}${CYAN}│                 Управление доменами                    │${NC}"
+        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e " Текущий домен (Direct TCP): ${GREEN}$current_domain${NC}"
+        if [ "$current_cdn" == "none" ] || [ -z "$current_cdn" ]; then
+            echo -e " CDN-домен (XHTTP):          ${RED}Не настроен${NC}"
+            echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
+            echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Добавить/Настроить CDN-домен (XHTTP)"
+        else
+            echo -e " CDN-домен (XHTTP):          ${GREEN}$current_cdn${NC}"
+            echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
+            echo -e " ${BOLD}${YELLOW}2.${NC} ⚙️ Изменить CDN-домен (XHTTP)"
+            echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить CDN-домен (отключить XHTTP)"
+        fi
+        echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Вернуться в главное меню"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        
+        local max_choice=2
+        if [ "$current_cdn" != "none" ] && [ -n "$current_cdn" ]; then
+            max_choice=3
+        fi
+        
+        read -p "Выберите действие (0-$max_choice): " dchoice
+        case $dchoice in
+            0) main_menu ;;
+            1)
+                echo -e "\n${BOLD}--- Смена основного домена ---${NC}"
+                echo -e "Для смены домена потребуется перевыпустить SSL сертификат."
+                echo -e "Убедитесь, что новый домен направлен A-записью на IP вашего сервера."
+                read -p "Введите новый домен (например, vless.mydomain.com): " new_domain
+                new_domain=$(echo "$new_domain" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
+                if [[ -z "$new_domain" ]]; then
+                    echo -e "${RED}❌ Домен не может быть пустым.${NC}"
+                    sleep 1
+                    domain_management_menu
+                    return
+                fi
+                if [ "$new_domain" == "$current_domain" ]; then
+                    echo -e "${YELLOW}Этот домен уже является основным.${NC}"
+                    sleep 1
+                    domain_management_menu
+                    return
+                fi
+                
+                # Проверим резолв нового домена
+                local DOMAIN="$new_domain"
+                check_domain
+                
+                # Временно остановим xray, чтобы освободить 80 порт для certbot
+                echo "🛑 Останавливаем xray для перевыпуска SSL..."
+                systemctl stop xray
+                
+                local EMAIL=$(get_installed_var "EMAIL")
+                echo "🔐 Запуск Certbot для получения нового сертификата..."
+                if certbot certonly --standalone -d "$new_domain" --email "$EMAIL" --agree-tos --non-interactive --key-type ecdsa; then
+                    echo "✅ SSL-сертификат получен успешно!"
+                    
+                    # Копируем сертификаты
+                    cp "/etc/letsencrypt/live/$new_domain/fullchain.pem" "$SSL_DIR/fullchain.cer"
+                    cp "/etc/letsencrypt/live/$new_domain/privkey.pem" "$SSL_DIR/private.key"
+                    
+                    chown -R nobody:nogroup "$SSL_DIR"
+                    chmod 644 "$SSL_DIR/fullchain.cer"
+                    chmod 600 "$SSL_DIR/private.key"
+                    
+                    # Обновляем крон для автопродления
+                    (crontab -l 2>/dev/null | grep -v 'certbot renew'; \
+                     echo "0 3 * * * certbot renew --quiet --post-hook \"cp /etc/letsencrypt/live/$new_domain/fullchain.pem $SSL_DIR/fullchain.cer && cp /etc/letsencrypt/live/$new_domain/privkey.pem $SSL_DIR/private.key && chown -R nobody:nogroup $SSL_DIR && chmod 644 $SSL_DIR/fullchain.cer && chmod 600 $SSL_DIR/private.key && systemctl restart xray\"") | crontab -
+                    
+                    # Обновляем маркер
+                    update_marker_val "DOMAIN" "$new_domain"
+                    
+                    # Обновляем конфигурации
+                    DOMAIN="$new_domain"
+                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                    generate_server_config
+                    setup_subscription_server
+                    generate_client_configs
+                    install_generate_script
+                    
+                    echo -e "${GREEN}✅ Основной домен успешно изменен на $new_domain!${NC}"
+                    sleep 2
+                else
+                    echo -e "${RED}❌ Не удалось перевыпустить SSL-сертификат для $new_domain.${NC}"
+                    echo "Возвращаем запуск Xray с прежним доменом..."
+                    systemctl start xray
+                    sleep 2
+                fi
+                domain_management_menu
+                ;;
+            2)
+                echo -e "\n${BOLD}--- Настройка CDN-домена (XHTTP) ---${NC}"
+                echo -e "CDN-домен используется для обхода жестких блокировок по IP/протоколу."
+                echo -e "Требования:"
+                echo -e "1. Создайте дополнительный поддомен (например, cf-$current_domain)."
+                echo -e "2. В Cloudflare (или другой CDN) включите для него проксирование (Proxied - оранжевое облако)."
+                echo -e "3. Направьте этот поддомен A-записью на IP этого сервера."
+                echo -e "4. Настройки TLS в Cloudflare: режим 'Полный' (Full) или 'Полный (строгий)' (Full strict)."
+                echo -e "5. В настройках Cloudflare -> Network (Сеть) обязательно включите поддержку gRPC."
+                echo -e "⚠️ ВНИМАНИЕ: Основной домен ($current_domain) при этом должен оставаться в режиме DNS Only (серое облако)!"
+                echo -e "Подробную инструкцию см. в README.md."
+                echo -e "──────────────────────────────────────────────────────────"
+                read -p "Введите поддомен CDN (например, cf-$current_domain): " new_cdn
+                new_cdn=$(echo "$new_cdn" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
+                if [[ -z "$new_cdn" ]]; then
+                    echo -e "${RED}❌ Домен не может быть пустым.${NC}"
+                    sleep 1
+                    domain_management_menu
+                    return
+                fi
+                if [ "$new_cdn" == "$current_domain" ]; then
+                    echo -e "${RED}❌ CDN-домен не должен совпадать с основным доменом!${NC}"
+                    sleep 2
+                    domain_management_menu
+                    return
+                fi
+                
+                # Обновляем маркер
+                update_marker_val "CDN_DOMAIN" "$new_cdn"
+                
+                # Перегенерируем конфигурацию
+                DOMAIN="$current_domain"
+                NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                generate_server_config
+                setup_subscription_server
+                generate_client_configs
+                install_generate_script
+                
+                echo -e "${GREEN}✅ CDN-домен успешно настроен: $new_cdn${NC}"
+                echo -e "${YELLOW}Не забудьте обновить подписку или конфигурации на ваших устройствах!${NC}"
+                sleep 3
+                domain_management_menu
+                ;;
+            3)
+                if [ "$max_choice" -lt 3 ]; then
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    domain_management_menu
+                    return
+                fi
+                echo -e "\n${BOLD}--- Отключение CDN-домена (XHTTP) ---${NC}"
+                read -p "Вы уверены, что хотите удалить CDN-домен и отключить XHTTP? [y/N]: " confirm_del
+                if [[ "$confirm_del" =~ ^[Yy]$ ]]; then
+                    update_marker_val "CDN_DOMAIN" "none"
+                    
+                    # Перегенерируем конфигурацию
+                    DOMAIN="$current_domain"
+                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                    generate_server_config
+                    setup_subscription_server
+                    generate_client_configs
+                    install_generate_script
+                    
+                    echo -e "${GREEN}✅ CDN-домен удален, протокол VLESS XHTTP отключен.${NC}"
+                    sleep 2
+                fi
+                domain_management_menu
+                ;;
+            *)
+                echo -e "${RED}❌ Неверный выбор!${NC}"
+                sleep 1
+                domain_management_menu
+                ;;
+        esac
+    }
+
     main_menu() {
         show_status_dashboard
         echo -e "${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
@@ -1684,10 +1942,11 @@ EOF
         echo -e " ${BOLD}${YELLOW}7.${NC} 🛠️ Запустить полную диагностику системы (Troubleshooting)"
         echo -e " ${BOLD}${YELLOW}8.${NC} 🔄 Обновить скрипт с GitHub и применить новые фиксы"
         echo -e " ${BOLD}${YELLOW}9.${NC} 🌐 Изменить отпечаток TLS (Fingerprint)"
-        echo -e " ${BOLD}${RED}10. 🗑️ Полностью удалить всю установку Xray с сервера${NC}"
-        echo -e " ${BOLD}${CYAN}11.${NC} 🚪 Выйти из терминала"
+        echo -e " ${BOLD}${YELLOW}10.${NC} 🌐 Управление доменами (Прямое подключение / CDN)"
+        echo -e " ${BOLD}${RED}11. 🗑️ Полностью удалить всю установку Xray с сервера${NC}"
+        echo -e " ${BOLD}${CYAN}12.${NC} 🚪 Выйти из терминала"
         echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        read -p "Выберите действие (1-11): " choice
+        read -p "Выберите действие (1-12): " choice
         case $choice in
             1) "$GENERATE_SCRIPT" ; main_menu ;;
             2) add_client ; main_menu ;;
@@ -1705,7 +1964,8 @@ EOF
                 exit 0
                 ;;
             9) change_fingerprint ; main_menu ;;
-            10) 
+            10) domain_management_menu ;;
+            11) 
                 echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации и WARP!${NC}"
                 read -p "Вы уверены? (y/n): " uconf
                 if [[ "$uconf" =~ ^[Yy]$ ]]; then
@@ -1714,7 +1974,7 @@ EOF
                     main_menu
                 fi
                 ;;
-            11) exit 0 ;;
+            12) exit 0 ;;
             *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
         esac
     }
@@ -2044,6 +2304,7 @@ if [ "$1" == "--headless" ]; then
     DOMAIN="$2"
     EMAIL="$3"
     NUM_DEVICES="$4"
+    CDN_DOMAIN="none"
     if [[ -z "$DOMAIN" || -z "$EMAIL" || -z "$NUM_DEVICES" ]]; then
         echo "Использование: $0 --headless <домен> <email> <кол-во устройств> [имена устройств...]"
         exit 1
@@ -2121,6 +2382,34 @@ else
             DEVICE_NAMES[$i]="$dev_name"
         fi
     done
+
+    echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${BOLD}${CYAN}│     🔌 Настройка VLESS XHTTP через CDN (Необязательно) │${NC}"
+    echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+    echo -e " Для использования VLESS XHTTP требуется дополнительный поддомен"
+    echo -e " в Cloudflare (или другой CDN) с включенным проксированием"
+    echo -e " (оранжевое облако - Proxied, например: cf-${DOMAIN})."
+    echo -e " Основной домен ($DOMAIN) должен оставаться DNS Only (серое облако)."
+    echo -e " Полные инструкции по настройке DNS, TLS и gRPC находятся в README.md."
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+    read -p " Хотите настроить CDN-домен для VLESS XHTTP сейчас? [y/N]: " setup_cdn
+    CDN_DOMAIN="none"
+    if [[ "$setup_cdn" =~ ^[Yy]$ ]]; then
+        while true; do
+            read -p " 🌐 Введите CDN-домен (например, cf-$DOMAIN): " cdn_input
+            cdn_input=$(echo "$cdn_input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
+            if [[ -n "$cdn_input" ]]; then
+                if [ "$cdn_input" == "$DOMAIN" ]; then
+                    echo -e " ${RED}❌ CDN-домен не должен совпадать с основным доменом!${NC}"
+                else
+                    CDN_DOMAIN="$cdn_input"
+                    break
+                fi
+            else
+                echo -e " ${RED}❌ Домен не может быть пустым. Пожалуйста, укажите валидный домен.${NC}"
+            fi
+        done
+    fi
     echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
     echo -e "${BOLD}${GREEN}⚙️ Запуск процесса автоматической сборки и установки...${NC}\n"
 fi
@@ -2142,7 +2431,7 @@ setup_subscription_server
 generate_client_configs
 install_generate_script
 
-echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI" > "$MARKER_FILE"
+echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCDN_DOMAIN=$CDN_DOMAIN" > "$MARKER_FILE"
 chmod 644 "$MARKER_FILE"
 
 # Регистрация быстрой команды xry
