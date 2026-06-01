@@ -743,7 +743,10 @@ generate_server_config() {
             "certificateFile": "$SSL_DIR/fullchain.cer",
             "keyFile": "$SSL_DIR/private.key"
           }],
-          "alpn": ["http/1.1"],
+          "alpn": [
+            "h2",
+            "http/1.1"
+          ],
           "minVersion": "1.3"
         },
         "sockopt": {
