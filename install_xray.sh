@@ -674,40 +674,41 @@ generate_server_config() {
           }
         ]'
     local extra_inbound=""
-    if [ "$cdn_domain" != "none" ] && [ -n "$cdn_domain" ]; then
-        fallbacks_str='[
-          {
-            "path": "/sub/",
-            "dest": "127.0.0.1:10080"
-          },
-          {
-            "path": "/xh",
-            "dest": "127.0.0.1:10085",
-            "xver": 1
-          },
-          {
-            "dest": "127.0.0.1:10080"
-          }
-        ]'
-        extra_inbound=",
-    {
-      \"port\": 10085,
-      \"listen\": \"127.0.0.1\",
-      \"protocol\": \"vless\",
-      \"settings\": {
-        \"clients\": [$vless_xhttp_clients_str],
-        \"decryption\": \"none\"
-      },
-      \"streamSettings\": {
-        \"network\": \"xhttp\",
-        \"acceptProxyProtocol\": true,
-        \"xhttpSettings\": {
-          \"path\": \"/xh\",
-          \"mode\": \"packet-up\"
-        }
-      }
-    }"
-    fi
+    # VLESS-XHTTP is disabled for now
+    # if [ "$cdn_domain" != "none" ] && [ -n "$cdn_domain" ]; then
+    #     fallbacks_str='[
+    #       {
+    #         "path": "/sub/",
+    #         "dest": "127.0.0.1:10080"
+    #       },
+    #       {
+    #         "path": "/xh",
+    #         "dest": "127.0.0.1:10085",
+    #         "xver": 1
+    #       },
+    #       {
+    #         "dest": "127.0.0.1:10080"
+    #       }
+    #     ]'
+    #     extra_inbound=",
+    # {
+    #   \"port\": 10085,
+    #   \"listen\": \"127.0.0.1\",
+    #   \"protocol\": \"vless\",
+    #   \"settings\": {
+    #     \"clients\": [$vless_xhttp_clients_str],
+    #     \"decryption\": \"none\"
+    #   },
+    #   \"streamSettings\": {
+    #     \"network\": \"xhttp\",
+    #     \"acceptProxyProtocol\": true,
+    #     \"xhttpSettings\": {
+    #       \"path\": \"/xh\",
+    #       \"mode\": \"packet-up\"
+    #     }
+    #   }
+    # }"
+    # fi
 
     # Генерация конфигурационного файла с VLESS TCP
     cat > "$config_file" <<EOF
@@ -1210,10 +1211,11 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
         
         sub_content_links = vless_vision + "\n"
-        if cdn_domain and cdn_domain != "none" and cdn_domain != "":
-            encoded_remark_xhttp = urllib.parse.quote(remark_xhttp)
-            vless_xhttp = f"vless://{uuid_param}@{cdn_domain}:443?security=tls&type=xhttp&fp={fp}&alpn=h2&path=%2Fxh&mode=packet-up#{encoded_remark_xhttp}"
-            sub_content_links += vless_xhttp + "\n"
+        # VLESS-XHTTP is disabled for now
+        # if cdn_domain and cdn_domain != "none" and cdn_domain != "":
+        #     encoded_remark_xhttp = urllib.parse.quote(remark_xhttp)
+        #     vless_xhttp = f"vless://{uuid_param}@{cdn_domain}:443?security=tls&type=xhttp&fp={fp}&alpn=h2&path=%2Fxh&mode=packet-up#{encoded_remark_xhttp}"
+        #     sub_content_links += vless_xhttp + "\n"
             
         client_display = f"{client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
@@ -1379,12 +1381,13 @@ echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Стандарт, напряму�
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
 
 has_cdn=false
-if [ -n "$CDN_DOMAIN" ] && [ "$CDN_DOMAIN" != "none" ] && [ "$CDN_DOMAIN" != "" ]; then
-  has_cdn=true
-  VLESS_XHTTP="vless://${UUID}@${CDN_DOMAIN}:${PORT}?security=tls&type=xhttp&fp=${FINGERPRINT}&alpn=h2&path=%2Fxh&mode=packet-up#${encoded_remark_xhttp}"
-  echo -e "\n ${BOLD}${YELLOW}2. VLESS XHTTP (Подключение через CDN, Тестовый режим):${NC}"
-  echo -e "    ${GREEN}$VLESS_XHTTP${NC}"
-fi
+# VLESS-XHTTP is disabled for now
+# if [ -n "$CDN_DOMAIN" ] && [ "$CDN_DOMAIN" != "none" ] && [ "$CDN_DOMAIN" != "" ]; then
+#   has_cdn=true
+#   VLESS_XHTTP="vless://${UUID}@${CDN_DOMAIN}:${PORT}?security=tls&type=xhttp&fp=${FINGERPRINT}&alpn=h2&path=%2Fxh&mode=packet-up#${encoded_remark_xhttp}"
+#   echo -e "\n ${BOLD}${YELLOW}2. VLESS XHTTP (Подключение через CDN, Тестовый режим):${NC}"
+#   echo -e "    ${GREEN}$VLESS_XHTTP${NC}"
+# fi
 
 echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
@@ -1773,23 +1776,11 @@ EOF
         echo -e "${BOLD}${CYAN}│                 Управление доменами                    │${NC}"
         echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
         echo -e " Текущий домен (Direct TCP): ${GREEN}$current_domain${NC}"
-        if [ "$current_cdn" == "none" ] || [ -z "$current_cdn" ]; then
-            echo -e " CDN-домен (XHTTP):          ${RED}Не настроен${NC}"
-            echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
-            echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Добавить/Настроить CDN-домен (XHTTP) ${YELLOW}(Тестовый режим)${NC}"
-        else
-            echo -e " CDN-домен (XHTTP):          ${GREEN}$current_cdn${NC} ${YELLOW}(Тестовый режим)${NC}"
-            echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
-            echo -e " ${BOLD}${YELLOW}2.${NC} ⚙️ Изменить CDN-домен (XHTTP) ${YELLOW}(Тестовый режим)${NC}"
-            echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить CDN-домен (отключить XHTTP)"
-        fi
+        echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
         echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Вернуться в главное меню"
         echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
         
-        local max_choice=2
-        if [ "$current_cdn" != "none" ] && [ -n "$current_cdn" ]; then
-            max_choice=3
-        fi
+        local max_choice=1
         
         read -p "Выберите действие (0-$max_choice): " dchoice
         case $dchoice in
