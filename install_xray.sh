@@ -661,8 +661,9 @@ generate_server_config() {
     fi
     
     # Читаем CDN_DOMAIN
-    local cdn_domain=$(get_installed_var "CDN_DOMAIN")
-    [ -z "$cdn_domain" ] && cdn_domain="none"
+    # local cdn_domain=$(get_installed_var "CDN_DOMAIN")
+    # [ -z "$cdn_domain" ] && cdn_domain="none"
+    local cdn_domain="none"
 
     local fallbacks_str='[
           {
@@ -1313,7 +1314,8 @@ RED='\033[0;31m'
 
   CONFIG_DIR="/etc/xray/client_configs"
   DOMAIN=$(grep DOMAIN /etc/xray/.installed | cut -d= -f2)
-  CDN_DOMAIN=$(grep CDN_DOMAIN /etc/xray/.installed | cut -d= -f2 2>/dev/null)
+  # CDN_DOMAIN=$(grep CDN_DOMAIN /etc/xray/.installed | cut -d= -f2 2>/dev/null)
+  CDN_DOMAIN="none"
   EMOJI=$(grep EMOJI /etc/xray/.installed | cut -d= -f2)
   FLOW="xtls-rprx-vision"
   FINGERPRINT=$(grep FINGERPRINT /etc/xray/.installed | cut -d= -f2)
