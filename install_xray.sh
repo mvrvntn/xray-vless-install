@@ -1771,20 +1771,16 @@ EOF
 
     domain_management_menu() {
         local current_domain=$(get_installed_var "DOMAIN")
-        local current_cdn=$(get_installed_var "CDN_DOMAIN")
-        [ -z "$current_cdn" ] && current_cdn="none"
 
         echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│                 Управление доменами                    │${NC}"
+        echo -e "${BOLD}${CYAN}│                 Смена основного домена                 │${NC}"
         echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
-        echo -e " Текущий домен (Direct TCP): ${GREEN}$current_domain${NC}"
-        echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
+        echo -e " Текущий домен: ${GREEN}$current_domain${NC}"
+        echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (с перевыпуском SSL)"
         echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Вернуться в главное меню"
         echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
         
-        local max_choice=1
-        
-        read -p "Выберите действие (0-$max_choice): " dchoice
+        read -p "Выберите действие (0-1): " dchoice
         case $dchoice in
             0) main_menu ;;
             1)
@@ -1852,74 +1848,6 @@ EOF
                 fi
                 domain_management_menu
                 ;;
-            2)
-                echo -e "\n${BOLD}--- Настройка CDN-домена (XHTTP) ---${NC}"
-                echo -e "CDN-домен используется для обхода жестких блокировок по IP/протоколу."
-                echo -e "Требования:"
-                echo -e "1. Создайте дополнительный поддомен (например, cf-$current_domain)."
-                echo -e "2. В Cloudflare (или другой CDN) включите для него проксирование (Proxied - оранжевое облако)."
-                echo -e "3. Направьте этот поддомен A-записью на IP этого сервера."
-                echo -e "4. Настройки TLS в Cloudflare: режим 'Полный' (Full) или 'Полный (строгий)' (Full strict)."
-                echo -e "5. В настройках Cloudflare -> Network (Сеть) обязательно включите поддержку gRPC."
-                echo -e "⚠️ ВНИМАНИЕ: Основной домен ($current_domain) при этом должен оставаться в режиме DNS Only (серое облако)!"
-                echo -e "Подробную инструкцию см. в README.md."
-                echo -e "──────────────────────────────────────────────────────────"
-                read -p "Введите поддомен CDN (например, cf-$current_domain): " new_cdn
-                new_cdn=$(echo "$new_cdn" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
-                if [[ -z "$new_cdn" ]]; then
-                    echo -e "${RED}❌ Домен не может быть пустым.${NC}"
-                    sleep 1
-                    domain_management_menu
-                    return
-                fi
-                if [ "$new_cdn" == "$current_domain" ]; then
-                    echo -e "${RED}❌ CDN-домен не должен совпадать с основным доменом!${NC}"
-                    sleep 2
-                    domain_management_menu
-                    return
-                fi
-                
-                # Обновляем маркер
-                update_marker_val "CDN_DOMAIN" "$new_cdn"
-                
-                # Перегенерируем конфигурацию
-                DOMAIN="$current_domain"
-                NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                generate_server_config
-                setup_subscription_server
-                generate_client_configs
-                install_generate_script
-                
-                echo -e "${GREEN}✅ CDN-домен успешно настроен: $new_cdn${NC}"
-                echo -e "${YELLOW}Не забудьте обновить подписку или конфигурации на ваших устройствах!${NC}"
-                sleep 3
-                domain_management_menu
-                ;;
-            3)
-                if [ "$max_choice" -lt 3 ]; then
-                    echo -e "${RED}❌ Неверный выбор!${NC}"
-                    sleep 1
-                    domain_management_menu
-                    return
-                fi
-                echo -e "\n${BOLD}--- Отключение CDN-домена (XHTTP) ---${NC}"
-                read -p "Вы уверены, что хотите удалить CDN-домен и отключить XHTTP? [y/N]: " confirm_del
-                if [[ "$confirm_del" =~ ^[Yy]$ ]]; then
-                    update_marker_val "CDN_DOMAIN" "none"
-                    
-                    # Перегенерируем конфигурацию
-                    DOMAIN="$current_domain"
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                    setup_subscription_server
-                    generate_client_configs
-                    install_generate_script
-                    
-                    echo -e "${GREEN}✅ CDN-домен удален, протокол VLESS XHTTP отключен.${NC}"
-                    sleep 2
-                fi
-                domain_management_menu
-                ;;
             *)
                 echo -e "${RED}❌ Неверный выбор!${NC}"
                 sleep 1
@@ -1942,7 +1870,7 @@ EOF
         echo -e " ${BOLD}${YELLOW}7.${NC} 🛠️ Запустить полную диагностику системы (Troubleshooting)"
         echo -e " ${BOLD}${YELLOW}8.${NC} 🔄 Обновить скрипт с GitHub и применить новые фиксы"
         echo -e " ${BOLD}${YELLOW}9.${NC} 🌐 Изменить отпечаток TLS (Fingerprint)"
-        echo -e " ${BOLD}${YELLOW}10.${NC} 🌐 Управление доменами (Прямое подключение / CDN)"
+        echo -e " ${BOLD}${YELLOW}10.${NC} 🌐 Смена основного домена (SSL)"
         echo -e " ${BOLD}${RED}11. 🗑️ Полностью удалить всю установку Xray с сервера${NC}"
         echo -e " ${BOLD}${CYAN}12.${NC} 🚪 Выйти из терминала"
         echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
