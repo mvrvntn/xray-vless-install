@@ -1810,7 +1810,7 @@ EOF
             8) 
                 echo -e "\n${BOLD}${GREEN}🔄 Загрузка последней версии скрипта...${NC}"
                 cd /root || exit
-                curl -s -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/vless-server-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
+                curl -s -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
                 echo -e "${GREEN}✅ Скрипт обновлен! Применяем обновления ядра и конфигурации...${NC}"
                 /root/install_xray.sh --update-core
                 exit 0

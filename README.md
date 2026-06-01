@@ -43,7 +43,7 @@
 Выполните одну простую команду в терминале вашего сервера для удаленного запуска установки:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/mvrvntn/vless-server-install/main/install_xray.sh?v=$(date +%s)" -o /tmp/install_xray.sh && sudo bash /tmp/install_xray.sh
+curl -fsSL "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$(date +%s)" -o /tmp/install_xray.sh && sudo bash /tmp/install_xray.sh
 ```
 
 ---
@@ -136,7 +136,7 @@ sudo bash install_xray.sh --update-geoblocks
 #### Шаг 2. Установка VLESS TCP
 Запустите команду установки нашего скрипта:
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/mvrvntn/vless-server-install/main/install_xray.sh?v=$(date +%s)" -o /tmp/install_xray.sh && sudo bash /tmp/install_xray.sh
+curl -fsSL "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$(date +%s)" -o /tmp/install_xray.sh && sudo bash /tmp/install_xray.sh
 ```
 Встроенный интеллектуальный инсталлятор сам проверит порты, обнаружит любые оставшиеся конфликты служб и поможет безопасно завершить настройку.
 
