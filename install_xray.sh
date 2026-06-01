@@ -700,10 +700,10 @@ generate_server_config() {
       },
       \"streamSettings\": {
         \"network\": \"xhttp\",
+        \"acceptProxyProtocol\": true,
         \"xhttpSettings\": {
           \"path\": \"/xh\",
-          \"mode\": \"packet-up\",
-          \"acceptProxyProtocol\": true
+          \"mode\": \"packet-up\"
         }
       }
     }"
@@ -1375,7 +1375,7 @@ has_cdn=false
 if [ -n "$CDN_DOMAIN" ] && [ "$CDN_DOMAIN" != "none" ] && [ "$CDN_DOMAIN" != "" ]; then
   has_cdn=true
   VLESS_XHTTP="vless://${UUID}@${CDN_DOMAIN}:${PORT}?security=tls&type=xhttp&fp=${FINGERPRINT}&alpn=h2&path=%2Fxh&mode=packet-up#${encoded_remark_xhttp}"
-  echo -e "\n ${BOLD}${YELLOW}2. VLESS XHTTP (Подключение через CDN):${NC}"
+  echo -e "\n ${BOLD}${YELLOW}2. VLESS XHTTP (Подключение через CDN, Тестовый режим):${NC}"
   echo -e "    ${GREEN}$VLESS_XHTTP${NC}"
 fi
 
@@ -1389,7 +1389,7 @@ echo -e "${BOLD}${CYAN}└──────────────────
 echo -e " Выберите, для чего отобразить QR-код:"
 echo -e " ${BOLD}${YELLOW}1.${NC} 📱 VLESS TCP Vision"
 if [ "$has_cdn" = true ]; then
-  echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ VLESS XHTTP"
+  echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ VLESS XHTTP (Тестовый режим)"
   echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Ссылка подписки"
   echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
   read -p "Ваш выбор (1-3): " qr_choice
@@ -1769,11 +1769,11 @@ EOF
         if [ "$current_cdn" == "none" ] || [ -z "$current_cdn" ]; then
             echo -e " CDN-домен (XHTTP):          ${RED}Не настроен${NC}"
             echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
-            echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Добавить/Настроить CDN-домен (XHTTP)"
+            echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Добавить/Настроить CDN-домен (XHTTP) ${YELLOW}(Тестовый режим)${NC}"
         else
-            echo -e " CDN-домен (XHTTP):          ${GREEN}$current_cdn${NC}"
+            echo -e " CDN-домен (XHTTP):          ${GREEN}$current_cdn${NC} ${YELLOW}(Тестовый режим)${NC}"
             echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (Direct TCP) с перевыпуском SSL"
-            echo -e " ${BOLD}${YELLOW}2.${NC} ⚙️ Изменить CDN-домен (XHTTP)"
+            echo -e " ${BOLD}${YELLOW}2.${NC} ⚙️ Изменить CDN-домен (XHTTP) ${YELLOW}(Тестовый режим)${NC}"
             echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить CDN-домен (отключить XHTTP)"
         fi
         echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Вернуться в главное меню"
@@ -2384,7 +2384,7 @@ else
     done
 
     echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${BOLD}${CYAN}│     🔌 Настройка VLESS XHTTP через CDN (Необязательно) │${NC}"
+    echo -e "${BOLD}${CYAN}│ 🔌 Настройка VLESS XHTTP через CDN (Тестовый режим)    │${NC}"
     echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
     echo -e " Для использования VLESS XHTTP требуется дополнительный поддомен"
     echo -e " в Cloudflare (или другой CDN) с включенным проксированием"
@@ -2392,7 +2392,7 @@ else
     echo -e " Основной домен ($DOMAIN) должен оставаться DNS Only (серое облако)."
     echo -e " Полные инструкции по настройке DNS, TLS и gRPC находятся в README.md."
     echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-    read -p " Хотите настроить CDN-домен для VLESS XHTTP сейчас? [y/N]: " setup_cdn
+    read -p " Хотите настроить CDN-домен для VLESS XHTTP сейчас? (Тестовый режим) [y/N]: " setup_cdn
     CDN_DOMAIN="none"
     if [[ "$setup_cdn" =~ ^[Yy]$ ]]; then
         while true; do
