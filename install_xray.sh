@@ -1694,8 +1694,19 @@ EOF
         local clients_count=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
         
         # Статусы системных служб
+        local xray_ver=""
+        if [ -f "/usr/local/bin/xray" ]; then
+            xray_ver=$(/usr/local/bin/xray version 2>/dev/null | head -n 1 | awk '{print $2}')
+        elif command -v xray >/dev/null 2>&1; then
+            xray_ver=$(xray version 2>/dev/null | head -n 1 | awk '{print $2}')
+        fi
+
         local xray_status="${RED}OFF${NC}"
-        systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}"
+        if [ -n "$xray_ver" ]; then
+            systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC} (v$xray_ver)" || xray_status="${RED}OFF${NC} (v$xray_ver)"
+        else
+            systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}" || xray_status="${RED}OFF${NC}"
+        fi
         
         local sub_status="${RED}OFF${NC}"
         systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}ACTIVE${NC}"
