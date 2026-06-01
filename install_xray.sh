@@ -1253,10 +1253,10 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 
   CONFIG_DIR="/etc/xray/client_configs"
-  DOMAIN=$(grep DOMAIN /etc/xray/.installed | cut -d= -f2)
-  EMOJI=$(grep EMOJI /etc/xray/.installed | cut -d= -f2)
+  DOMAIN=$(grep "^DOMAIN=" /etc/xray/.installed | cut -d= -f2)
+  EMOJI=$(grep "^EMOJI=" /etc/xray/.installed | cut -d= -f2)
   FLOW="xtls-rprx-vision"
-  FINGERPRINT=$(grep FINGERPRINT /etc/xray/.installed | cut -d= -f2)
+  FINGERPRINT=$(grep "^FINGERPRINT=" /etc/xray/.installed | cut -d= -f2)
   if [ -z "$FINGERPRINT" ]; then FINGERPRINT="ios"; fi
   PORT=443
 
