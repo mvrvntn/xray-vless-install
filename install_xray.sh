@@ -767,13 +767,13 @@ generate_hysteria_config() {
     
     local config_yaml="/etc/hysteria/config.yaml"
     
-    # Собираем пароли клиентов (их UUID-ы)
-    local passwords=()
+    # Собираем userpass для Hysteria 2 (каждый UUID сопоставляется с пустой строкой)
+    local userpass=()
     if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
         for filepath in $(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort); do
             local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
             if [ -n "$uuid" ] && [ "$uuid" != "null" ]; then
-                passwords+=("    - \"$uuid\"")
+                userpass+=("    \"$uuid\": \"\"")
             fi
         done
     else
@@ -781,12 +781,16 @@ generate_hysteria_config() {
         for i in $(seq 1 "$NUM_DEVICES"); do
             local uuid="${UUIDs[$i]}"
             if [ -n "$uuid" ]; then
-                passwords+=("    - \"$uuid\"")
+                userpass+=("    \"$uuid\": \"\"")
             fi
         done
     fi
     
-    local passwords_str=$(IFS=$'\n'; echo "${passwords[*]}")
+    if [ ${#userpass[@]} -eq 0 ]; then
+        userpass+=("    \"default\": \"\"")
+    fi
+    
+    local userpass_str=$(IFS=$'\n'; echo "${userpass[*]}")
     
     cat > "$config_yaml" <<EOF
 listen: :443
@@ -796,9 +800,15 @@ tls:
   key: $SSL_DIR/private.key
 
 auth:
-  type: password
-  passwords:
-$passwords_str
+  type: userpass
+  userpass:
+$userpass_str
+
+resolver:
+  type: udp
+  udp:
+    addr: 8.8.8.8:53
+    timeout: 4s
 
 masquerade:
   type: proxy
