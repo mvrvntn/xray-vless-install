@@ -1401,29 +1401,38 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             domain = self.headers.get('Host', '').split(':')[0]
 
         if emoji:
-            remark_vision = f"{emoji} VLESS-TCP"
-            remark_hy2 = f"{emoji} Hysteria2"
+            remark_vision = f"{emoji} VLESS-TCP (Основной)"
+            remark_zb = f"{emoji} VLESS-TCP (Резервный)"
+            remark_hy2 = f"{emoji} Hysteria2 (Быстрый)"
         else:
-            remark_vision = "🌐 VLESS-TCP"
-            remark_hy2 = "⚡ Hysteria2"
+            remark_vision = "🌐 VLESS-TCP (Основной)"
+            remark_zb = "🌐 VLESS-TCP (Резервный)"
+            remark_hy2 = "⚡ Hysteria2 (Быстрый)"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
+        encoded_remark_zb = urllib.parse.quote(remark_zb)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
-        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&mport=20000-50000#{encoded_remark_hy2}"
+        vless_zb = f"vless://{uuid_param}@{domain}:443?security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_zb}"
+        hy2_link = f"hysteria2://{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
         
-        sub_content_links = vless_vision + "\n" + hy2_link + "\n"
+        sub_content_links = vless_vision + "\n" + hy2_link + "\n" + vless_zb + "\n"
             
-        client_display = f"{client_name}"
+        client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
         announce_text = (
-            "➔ Нет соединения? Нажмите ↻ Обновить\n"
-            "➔ коридор: https://mvrvntn.github.io/koridor/"
+            f"Профиль: {client_name} [Безлимитный]\n"
+            f"Локации:\n"
+            f" - VLESS (Основной) — для мобильных и ПК (обход блокировок)\n"
+            f" - VLESS (Резервный) — для роутеров и старых клиентов\n"
+            f" - Hysteria2 (Быстрый) — максимальная скорость через UDP\n"
+            f"Нет соединения? ➔ Нажмите ↻ Обновить\n"
+            f"❯ коридор: https://mvrvntn.github.io/koridor/"
         )
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
-        support_url = "https://t.me/mavrtunbot" # Замените на реальный линк, если нужно
+        support_url = "https://t.me/mavrtunbot"
 
         user_agent = self.headers.get("User-Agent", "").lower()
         if "v2ray" in user_agent or "clash" in user_agent:
@@ -1552,11 +1561,13 @@ fi
 
 # Генерация названий с новыми эмодзи-символами и скобками
 if [ -n "$EMOJI" ]; then
-  remark_vision="${EMOJI} VLESS-TCP"
-  remark_hy2="${EMOJI} Hysteria2"
+  remark_vision="${EMOJI} VLESS-TCP (Основной)"
+  remark_zb="${EMOJI} VLESS-TCP (Резервный)"
+  remark_hy2="${EMOJI} Hysteria2 (Быстрый)"
 else
-  remark_vision="🌐 VLESS-TCP"
-  remark_hy2="⚡ Hysteria2"
+  remark_vision="🌐 VLESS-TCP (Основной)"
+  remark_zb="🌐 VLESS-TCP (Резервный)"
+  remark_hy2="⚡ Hysteria2 (Быстрый)"
 fi
 
 urlencode() {
@@ -1564,20 +1575,24 @@ urlencode() {
 }
 
 encoded_remark_vision=$(urlencode "$remark_vision")
+encoded_remark_zb=$(urlencode "$remark_zb")
 encoded_remark_hy2=$(urlencode "$remark_hy2")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
-HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&mport=20000-50000#${encoded_remark_hy2}"
+VLESS_ZB="vless://${UUID}@${DOMAIN}:${PORT}?security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_zb}"
+HY2_LINK="hysteria2://${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
 echo -e "${BOLD}${PURPLE}│                Ссылки для подключения                  │${NC}"
 echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
-echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Стандарт, напрямую):${NC}"
+echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и ПК):${NC}"
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
-echo -e " ${BOLD}${YELLOW}2. Hysteria 2 (UDP, для плохого интернета):${NC}"
+echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход):${NC}"
 echo -e "    ${GREEN}$HY2_LINK${NC}"
+echo -e " ${BOLD}${YELLOW}3. VLESS TCP (Для роутеров / Резерв):${NC}"
+echo -e "    ${GREEN}$VLESS_ZB${NC}"
 
 echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
@@ -1588,14 +1603,16 @@ echo -e "${BOLD}${CYAN}│                   Генерация QR-кода     
 echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
 echo -e " Выберите, для чего отобразить QR-код:"
 echo -e " ${BOLD}${YELLOW}1.${NC} 📱 VLESS TCP Vision"
-echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Hysteria 2"
-echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Ссылка подписки"
+echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Hysteria2"
+echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 VLESS TCP"
+echo -e " ${BOLD}${YELLOW}4.${NC} 🔄 Ссылка подписки"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-read -p "Ваш выбор (1-3): " qr_choice
+read -p "Ваш выбор (1-4): " qr_choice
 case "$qr_choice" in
   1) qrencode -t UTF8 "$VLESS_VISION" ;;
   2) qrencode -t UTF8 "$HY2_LINK" ;;
-  3) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+  3) qrencode -t UTF8 "$VLESS_ZB" ;;
+  4) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
   *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
 esac
 EOF
