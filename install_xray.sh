@@ -797,7 +797,7 @@ tls:
 
 auth:
   type: password
-  password:
+  passwords:
 $passwords_str
 
 masquerade:
