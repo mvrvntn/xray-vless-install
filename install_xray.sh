@@ -380,10 +380,28 @@ install_xray() {
     systemctl enable xray > /dev/null
 }
 
+# === Установка Hysteria 2 ===
+install_hysteria() {
+    echo "🚀 Установка Hysteria 2..."
+    local latest_ver=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [ -z "$latest_ver" ]; then
+        latest_ver="v2.6.0"
+    fi
+    echo "Загрузка Hysteria 2 ($latest_ver)..."
+    local download_url="https://github.com/apernet/hysteria/releases/download/${latest_ver}/hysteria-linux-amd64"
+    if curl -sSL -o /usr/local/bin/hysteria "$download_url"; then
+        chmod +x /usr/local/bin/hysteria
+        echo "✅ Hysteria 2 успешно установлена."
+    else
+        echo "❌ Ошибка при скачивании Hysteria 2."
+    fi
+}
+
 # === Настройка фаервола ===
 setup_firewall() {
     echo "🛡 Настройка UFW..."
     ufw allow 443/tcp > /dev/null
+    ufw allow 443/udp > /dev/null
     ufw allow 80/tcp > /dev/null
     
     # Динамически определяем запущенные и настроенные порты SSH, чтобы не заблокировать пользователя
@@ -735,6 +753,86 @@ generate_server_config() {
 EOF
 
     systemctl restart xray
+}
+
+# === Генерация конфигурации Hysteria 2 ===
+generate_hysteria_config() {
+    echo "🧩 Генерация конфигурации Hysteria 2..."
+    mkdir -p /etc/hysteria
+    
+    local DOMAIN=$(get_installed_var "DOMAIN")
+    if [ -z "$DOMAIN" ]; then
+        DOMAIN="$DOMAIN"
+    fi
+    
+    local config_yaml="/etc/hysteria/config.yaml"
+    
+    # Собираем пароли клиентов (их UUID-ы)
+    local passwords=()
+    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
+        for filepath in $(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort); do
+            local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
+            if [ -n "$uuid" ] && [ "$uuid" != "null" ]; then
+                passwords+=("    - \"$uuid\"")
+            fi
+        done
+    else
+        # Первоначальная генерация (когда json файлов на диске еще нет, но UUIDs заполнен)
+        for i in $(seq 1 "$NUM_DEVICES"); do
+            local uuid="${UUIDs[$i]}"
+            if [ -n "$uuid" ]; then
+                passwords+=("    - \"$uuid\"")
+            fi
+        done
+    fi
+    
+    local passwords_str=$(IFS=$'\n'; echo "${passwords[*]}")
+    
+    cat > "$config_yaml" <<EOF
+listen: :443
+
+tls:
+  cert: $SSL_DIR/fullchain.cer
+  key: $SSL_DIR/private.key
+
+auth:
+  type: password
+  password:
+$passwords_str
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://www.bing.com
+    rewriteHost: true
+EOF
+
+    # Управляем правами
+    chmod 600 "$config_yaml"
+    
+    # Создаём systemd service если не существует
+    if [ ! -f /etc/systemd/system/hysteria-server.service ]; then
+        cat > /etc/systemd/system/hysteria-server.service <<EOF
+[Unit]
+Description=Hysteria 2 Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/etc/hysteria
+ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/config.yaml
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+        systemctl enable hysteria-server >/dev/null 2>&1
+    fi
+    
+    systemctl restart hysteria-server
 }
 
 # === Генерация клиентских конфигов ===
@@ -1150,13 +1248,17 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
 
         if emoji:
             remark_vision = f"{emoji} VLESS-TCP"
+            remark_hy2 = f"{emoji} Hysteria2"
         else:
             remark_vision = "🌐 VLESS-TCP"
+            remark_hy2 = "⚡ Hysteria2"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
+        encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
+        hy2_link = f"hysteria2://{uuid_param}@{domain}:443?sni={domain}&obfs=none#{encoded_remark_hy2}"
         
-        sub_content_links = vless_vision + "\n"
+        sub_content_links = vless_vision + "\n" + hy2_link + "\n"
             
         client_display = f"{client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
@@ -1297,8 +1399,10 @@ fi
 # Генерация названий с новыми эмодзи-символами и скобками
 if [ -n "$EMOJI" ]; then
   remark_vision="${EMOJI} VLESS-TCP"
+  remark_hy2="${EMOJI} Hysteria2"
 else
   remark_vision="🌐 VLESS-TCP"
+  remark_hy2="⚡ Hysteria2"
 fi
 
 urlencode() {
@@ -1306,9 +1410,11 @@ urlencode() {
 }
 
 encoded_remark_vision=$(urlencode "$remark_vision")
+encoded_remark_hy2=$(urlencode "$remark_hy2")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
+HY2_LINK="hysteria2://${UUID}@${DOMAIN}:443?sni=${DOMAIN}&obfs=none#${encoded_remark_hy2}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
@@ -1316,6 +1422,8 @@ echo -e "${BOLD}${PURPLE}│                Ссылки для подключе
 echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
 echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Стандарт, напрямую):${NC}"
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
+echo -e " ${BOLD}${YELLOW}2. Hysteria 2 (UDP, для плохого интернета):${NC}"
+echo -e "    ${GREEN}$HY2_LINK${NC}"
 
 echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
@@ -1326,12 +1434,14 @@ echo -e "${BOLD}${CYAN}│                   Генерация QR-кода     
 echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
 echo -e " Выберите, для чего отобразить QR-код:"
 echo -e " ${BOLD}${YELLOW}1.${NC} 📱 VLESS TCP Vision"
-echo -e " ${BOLD}${YELLOW}2.${NC} 🔄 Ссылка подписки"
+echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Hysteria 2"
+echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Ссылка подписки"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-read -p "Ваш выбор (1-2): " qr_choice
+read -p "Ваш выбор (1-3): " qr_choice
 case "$qr_choice" in
   1) qrencode -t UTF8 "$VLESS_VISION" ;;
-  2) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+  2) qrencode -t UTF8 "$HY2_LINK" ;;
+  3) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
   *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
 esac
 EOF
@@ -1376,6 +1486,7 @@ if [ -f "$MARKER_FILE" ]; then
         # 1. Проверка конфликтов портов 443 и 80
         echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
         local port_443_process=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+        local port_443_udp_process=$(ss -ulnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
         local port_80_process=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
         
         if [ -n "$port_443_process" ]; then
@@ -1385,6 +1496,12 @@ if [ -f "$MARKER_FILE" ]; then
             fi
         else
             echo -e " 🔴 ${RED}Порт 443 (TCP) Свободен или Xray не запущен!${NC}"
+        fi
+
+        if [ -n "$port_443_udp_process" ]; then
+            echo -e " 🟢 Порт 443 (UDP) успешно занят процессом: ${GREEN}$port_443_udp_process${NC}"
+        else
+            echo -e " 🔴 ${RED}Порт 443 (UDP) Свободен или Hysteria 2 не запущена!${NC}"
         fi
         
         if [ -n "$port_80_process" ]; then
@@ -1400,6 +1517,13 @@ if [ -f "$MARKER_FILE" ]; then
         else
             echo -e " Xray Service: 🔴 ${RED}INACTIVE (Остановлен)${NC}"
             journalctl -u xray -n 10 --no-pager
+        fi
+        
+        if systemctl is-active --quiet hysteria-server; then
+            echo -e " Hysteria 2:   🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+        else
+            echo -e " Hysteria 2:   🔴 ${RED}INACTIVE (Остановлен)${NC}"
+            journalctl -u hysteria-server -n 10 --no-pager
         fi
         
         if systemctl is-active --quiet xray-sub; then
@@ -1537,8 +1661,9 @@ EOF
         chmod 644 "$CLIENT_CONFIG_DIR/${safe_filename}.json"
         chown nobody:nogroup "$CLIENT_CONFIG_DIR/${safe_filename}.json"
 
-        # Обновляем конфиг сервера и перезапускаем xray
+        # Обновляем конфиг сервера и перезапускаем xray и hysteria
         generate_server_config
+        generate_hysteria_config
 
         # Обновляем маркер
         local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
@@ -1588,8 +1713,9 @@ EOF
         read -p "Вы действительно хотите безвозвратно удалить '$remarks'? [y/N]: " confirm
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
             rm -f "$selected"
-            # Обновляем конфиг сервера и перезапускаем xray
+            # Обновляем конфиг сервера и перезапускаем xray и hysteria
             generate_server_config
+            generate_hysteria_config
 
             # Обновляем маркер
             local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
@@ -1624,6 +1750,9 @@ EOF
         local sub_status="${RED}OFF${NC}"
         systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}ACTIVE${NC}"
         
+        local hy2_status="${RED}OFF${NC}"
+        systemctl is-active hysteria-server >/dev/null 2>&1 && hy2_status="${GREEN}ACTIVE${NC}"
+        
         local warp_installed=$(get_installed_var "WARP_INSTALLED")
         local warp_enabled=$(get_installed_var "WARP_ENABLED")
         local warp_mode=$(get_installed_var "WARP_MODE")
@@ -1644,7 +1773,7 @@ EOF
 
         echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
         echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Сервер:${NC} ${GREEN}$domain${NC}"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Службы:${NC} Xray: [$xray_status] | Sub-Server: [$sub_status]"
+        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Службы:${NC} Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub-Server: [$sub_status]"
         echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}WARP:${NC}   [$warp_status]"
         echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Клиенты:${NC} Активных устройств: ${BOLD}${YELLOW}$clients_count${NC}"
         echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
@@ -1996,7 +2125,15 @@ EOF
         if crontab -l &>/dev/null; then
             crontab -l | grep -v "certbot renew" | crontab -
         fi
+        systemctl stop hysteria-server >/dev/null 2>&1
+        systemctl disable hysteria-server >/dev/null 2>&1
+        rm -f /etc/systemd/system/hysteria-server.service
+        rm -rf /etc/hysteria
+        rm -f /usr/local/bin/hysteria
+        systemctl daemon-reload >/dev/null 2>&1
+
         ufw delete allow 443/tcp > /dev/null
+        ufw delete allow 443/udp > /dev/null
         ufw delete allow 80/tcp > /dev/null
         rm -f "$MARKER_FILE"
         echo "✅ Удалено"
@@ -2103,6 +2240,7 @@ for filepath in sys.argv[1:]:
         DOMAIN=$(get_installed_var "DOMAIN")
         NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
         generate_server_config
+        generate_hysteria_config
         install_generate_script
         echo "✅ Восстановление успешно завершено!"
     fi
@@ -2142,7 +2280,9 @@ if [ "$1" == "--update-core" ]; then
     FLAG_EMOJI=$(get_flag_emoji)
     install_dependencies
     install_xray
+    install_hysteria
     generate_server_config
+    generate_hysteria_config
     setup_subscription_server
     generate_client_configs
     install_generate_script
@@ -2245,6 +2385,7 @@ check_port_conflicts
 create_directories
 install_dependencies
 install_xray
+install_hysteria
 setup_firewall
 setup_certificates
 
@@ -2252,6 +2393,7 @@ setup_certificates
 FLAG_EMOJI=$(get_flag_emoji)
 
 generate_server_config
+generate_hysteria_config
 setup_subscription_server
 generate_client_configs
 install_generate_script
