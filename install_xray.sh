@@ -388,12 +388,14 @@ install_xray() {
 # === Установка Hysteria 2 ===
 install_hysteria() {
     echo "🚀 Установка Hysteria 2..."
+    systemctl stop hysteria-server >/dev/null 2>&1 || true
     local latest_ver=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [ -z "$latest_ver" ]; then
         latest_ver="v2.6.0"
     fi
     echo "Загрузка Hysteria 2 ($latest_ver)..."
     local download_url="https://github.com/apernet/hysteria/releases/download/${latest_ver}/hysteria-linux-amd64"
+    rm -f /usr/local/bin/hysteria
     if curl -sSL -o /usr/local/bin/hysteria "$download_url"; then
         chmod +x /usr/local/bin/hysteria
         echo "✅ Hysteria 2 успешно установлена."
