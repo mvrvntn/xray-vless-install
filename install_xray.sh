@@ -1422,13 +1422,12 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
         announce_text = (
-            f"Профиль: {client_name} [Безлимитный]\n"
+            f"Профиль: {client_name} [Безлимитный] • коридор: https://mvrvntn.github.io/koridor/\n"
             f"Локации:\n"
-            f" - VLESS (Основной) — для мобильных и ПК (обход блокировок)\n"
+            f" - VLESS (Основной) — для мобильных и ПК\n"
             f" - VLESS (Резервный) — для роутеров и старых клиентов\n"
             f" - Hysteria2 (Быстрый) — максимальная скорость через UDP\n"
-            f"Нет соединения? ➔ Нажмите ↻ Обновить\n"
-            f"❯ коридор: https://mvrvntn.github.io/koridor/"
+            f"Нет соединения? ➔ Нажмите ↻ Обновить"
         )
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
