@@ -63,12 +63,33 @@ update_marker_val() {
 update_geoblock_list() {
     local list_file="/etc/xray/geoblock.lst"
     local temp_file=$(mktemp)
+    local temp_geoblock=$(mktemp)
+    local temp_google_ai=$(mktemp)
     
-    echo "📥 Обновление списка геоблокированных доменов..."
-    # Пытаемся скачать с GitHub
-    if curl -sSL --connect-timeout 8 "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/geoblock.lst" -o "$temp_file" && [ -s "$temp_file" ]; then
-        # Нормализуем переводы строк и убираем пробелы
+    echo "📥 Обновление списка геоблокированных доменов (itdog геоблок и google ai)..."
+    
+    # Пытаемся скачать оба списка с GitHub
+    local download_success=false
+    curl -sSL --connect-timeout 8 "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/geoblock.lst" -o "$temp_geoblock"
+    curl -sSL --connect-timeout 8 "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_ai.lst" -o "$temp_google_ai"
+    
+    # Если хотя бы один файл скачался успешно и не пуст, объединяем их
+    if [ -s "$temp_geoblock" ] || [ -s "$temp_google_ai" ]; then
+        cat "$temp_geoblock" "$temp_google_ai" 2>/dev/null > "$temp_file"
+        # Очищаем от Windows CRLF
         sed -i 's/\r//g' "$temp_file"
+        # Удаляем пустые строки и комментарии, сортируем и убираем дубликаты
+        grep -v '^[[:space:]]*$' "$temp_file" | grep -v '^[[:space:]]*#' | sort -u > "${temp_file}.clean"
+        mv "${temp_file}.clean" "$temp_file"
+        
+        if [ -s "$temp_file" ]; then
+            download_success=true
+        fi
+    fi
+    
+    rm -f "$temp_geoblock" "$temp_google_ai"
+    
+    if [ "$download_success" = true ]; then
         if ! cmp -s "$temp_file" "$list_file" 2>/dev/null; then
             mkdir -p /etc/xray
             mv "$temp_file" "$list_file"
@@ -76,8 +97,10 @@ update_geoblock_list() {
             rm -f "$temp_file"
             return 0
         fi
+        rm -f "$temp_file"
+    else
+        rm -f "$temp_file"
     fi
-    rm -f "$temp_file"
     
     # Если файла еще нет (первая установка), создаем базовый дефолтный список
     if [ ! -f "$list_file" ]; then
@@ -116,6 +139,10 @@ openrouter.ai
 trae.ai
 windsurf.com
 elevenlabs.io
+gemini.google.com
+generativelapis-pa.googleapis.com
+generativeai.googleapis.com
+proactivebackend-pa.googleapis.com
 EOF
         echo "✅ Создан базовый список геоблокированных доменов."
         return 0
