@@ -775,13 +775,13 @@ generate_hysteria_config() {
     
     local config_yaml="/etc/hysteria/config.yaml"
     
-    # Собираем userpass для Hysteria 2 (каждый UUID сопоставляется с пустой строкой)
+    # Собираем userpass для Hysteria 2 (UUID используется и как имя пользователя, и как пароль)
     local userpass=()
     if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
         for filepath in $(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort); do
             local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
             if [ -n "$uuid" ] && [ "$uuid" != "null" ]; then
-                userpass+=("    \"$uuid\": \"\"")
+                userpass+=("    \"$uuid\": \"$uuid\"")
             fi
         done
     else
@@ -789,13 +789,13 @@ generate_hysteria_config() {
         for i in $(seq 1 "$NUM_DEVICES"); do
             local uuid="${UUIDs[$i]}"
             if [ -n "$uuid" ]; then
-                userpass+=("    \"$uuid\": \"\"")
+                userpass+=("    \"$uuid\": \"$uuid\"")
             fi
         done
     fi
     
     if [ ${#userpass[@]} -eq 0 ]; then
-        userpass+=("    \"default\": \"\"")
+        userpass+=("    \"default\": \"default\"")
     fi
     
     local userpass_str=$(IFS=$'\n'; echo "${userpass[*]}")
@@ -1276,7 +1276,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
-        hy2_link = f"hysteria2://{uuid_param}@{domain}:443?sni={domain}&mport=20000-50000&obfs=none#{encoded_remark_hy2}"
+        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&mport=20000-50000&obfs=none#{encoded_remark_hy2}"
         
         sub_content_links = vless_vision + "\n" + hy2_link + "\n"
             
@@ -1434,7 +1434,7 @@ encoded_remark_hy2=$(urlencode "$remark_hy2")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
-HY2_LINK="hysteria2://${UUID}@${DOMAIN}:443?sni=${DOMAIN}&mport=20000-50000&obfs=none#${encoded_remark_hy2}"
+HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&mport=20000-50000&obfs=none#${encoded_remark_hy2}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
