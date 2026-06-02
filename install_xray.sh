@@ -811,12 +811,6 @@ auth:
   userpass:
 $userpass_str
 
-resolver:
-  type: udp
-  udp:
-    addr: 8.8.8.8:53
-    timeout: 4s
-
 masquerade:
   type: proxy
   proxy:
