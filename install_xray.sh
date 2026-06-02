@@ -227,6 +227,111 @@ toggle_warp() {
     echo "✅ Статус WARP обновлен и Xray перезапущен!"
 }
 
+install_opera_proxy() {
+    echo -e "\n${BOLD}${GREEN}🌀 Установка Opera Proxy...${NC}"
+    local arch=$(uname -m)
+    local binary_url
+    if [ "$arch" == "x86_64" ]; then
+        binary_url="https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy-linux-amd64"
+    elif [ "$arch" == "aarch64" ] || [ "$arch" == "arm64" ]; then
+        binary_url="https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy-linux-arm64"
+    else
+        echo -e "${RED}❌ Неподдерживаемая архитектура процессора: $arch${NC}"
+        return 1
+    fi
+
+    echo "📥 Скачивание бинарного файла Opera Proxy..."
+    if curl -sSL -L "$binary_url" -o /usr/local/bin/opera-proxy; then
+        chmod +x /usr/local/bin/opera-proxy
+        echo "✅ Бинарный файл успешно скачан и установлен."
+    else
+        echo -e "${RED}❌ Ошибка при скачивании Opera Proxy.${NC}"
+        return 1
+    fi
+
+    echo "⚙️ Создание службы systemd..."
+    cat > /etc/systemd/system/opera-proxy.service <<EOF
+[Unit]
+Description=Opera Proxy Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+ExecStart=/usr/local/bin/opera-proxy -bind 127.0.0.1:40001 -socks-mode
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable opera-proxy >/dev/null 2>&1
+    systemctl restart opera-proxy >/dev/null 2>&1
+
+    # Создание списка доменов
+    if [ ! -f "/etc/xray/opera.lst" ]; then
+        mkdir -p /etc/xray
+        cat > /etc/xray/opera.lst <<EOF
+openai.com
+chatgpt.com
+oaistatic.com
+oaiusercontent.com
+sentry.io
+EOF
+    fi
+
+    update_marker_val "OPERA_INSTALLED" "true"
+    update_marker_val "OPERA_ENABLED" "true"
+    
+    echo -e "${GREEN}✅ Opera Proxy успешно установлен и запущен!${NC}"
+    
+    DOMAIN=$(get_installed_var "DOMAIN")
+    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+    generate_server_config
+    return 0
+}
+
+toggle_opera_proxy() {
+    local current_status=$(get_installed_var "OPERA_ENABLED")
+    if [ "$current_status" == "true" ]; then
+        echo -e "\n${BOLD}${YELLOW}📴 Отключение Opera Proxy...${NC}"
+        update_marker_val "OPERA_ENABLED" "false"
+        systemctl stop opera-proxy >/dev/null 2>&1
+    else
+        echo -e "\n${BOLD}${GREEN}🌀 Включение Opera Proxy...${NC}"
+        if [ "$(get_installed_var "OPERA_INSTALLED")" != "true" ]; then
+            install_opera_proxy || return 1
+        fi
+        systemctl start opera-proxy >/dev/null 2>&1
+        update_marker_val "OPERA_ENABLED" "true"
+    fi
+
+    DOMAIN=$(get_installed_var "DOMAIN")
+    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+    generate_server_config
+    echo -e "${GREEN}✅ Статус Opera Proxy обновлен и Xray перезапущен!${NC}"
+}
+
+uninstall_opera_proxy() {
+    echo -e "\n${BOLD}${RED}🧹 Полное удаление Opera Proxy с сервера...${NC}"
+    systemctl stop opera-proxy >/dev/null 2>&1
+    systemctl disable opera-proxy >/dev/null 2>&1
+    rm -f /etc/systemd/system/opera-proxy.service
+    rm -f /usr/local/bin/opera-proxy
+    rm -f /etc/xray/opera.lst
+    systemctl daemon-reload
+
+    update_marker_val "OPERA_INSTALLED" "false"
+    update_marker_val "OPERA_ENABLED" "false"
+
+    DOMAIN=$(get_installed_var "DOMAIN")
+    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+    generate_server_config
+    echo -e "${GREEN}✅ Opera Proxy успешно удален!${NC}"
+}
+
 # === Проверка домена ===
 echo "🔍 Проверка резолва домена..."
 check_domain() {
@@ -466,7 +571,7 @@ generate_server_config() {
     local vless_clients=()
     
     # Проверяем, есть ли уже клиенты
-    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
+    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
         local idx=1
         for filepath in $(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort); do
             local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
@@ -496,139 +601,163 @@ generate_server_config() {
     
     local vless_clients_str=$(IFS=,; echo "${vless_clients[*]}")
     
-    # Проверяем статус WARP
+    # Проверяем статус WARP и Opera Proxy
     local warp_enabled=$(get_installed_var "WARP_ENABLED")
     local warp_mode=$(get_installed_var "WARP_MODE")
     [ -z "$warp_mode" ] && warp_mode="smart"
+    local opera_enabled=$(get_installed_var "OPERA_ENABLED")
     
-    local outbounds_str
-    local routing_rules_str=""
-    local warp_check_rules_str=""
+    local outbounds_list=()
+
+    # Сначала добавим DIRECT как первый outbound (или WARP, если warp_mode == "full")
+    if [ "$warp_enabled" == "true" ] && [ "$warp_mode" == "full" ]; then
+        outbounds_list+=('{
+      "tag": "WARP",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "interface": "warp",
+          "tcpFastOpen": true,
+          "tcpcongestion": "bbr",
+          "tcpKeepAliveIdle": 300
+        }
+      }
+    }')
+        outbounds_list+=('{
+      "tag": "DIRECT",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpcongestion": "bbr",
+          "tcpKeepAliveIdle": 300
+        }
+      }
+    }')
+    else
+        outbounds_list+=('{
+      "tag": "DIRECT",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpcongestion": "bbr",
+          "tcpKeepAliveIdle": 300
+        }
+      }
+    }')
+        if [ "$warp_enabled" == "true" ]; then
+            outbounds_list+=('{
+      "tag": "WARP",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "interface": "warp",
+          "tcpFastOpen": true,
+          "tcpcongestion": "bbr",
+          "tcpKeepAliveIdle": 300
+        }
+      }
+    }')
+        fi
+    fi
+
+    # Добавляем OPERA прокси, если включен
+    if [ "$opera_enabled" == "true" ]; then
+        outbounds_list+=('{
+      "tag": "OPERA",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "127.0.0.1",
+            "port": 40001
+          }
+        ]
+      }
+    }')
+    fi
+
+    # Всегда добавляем BLOCK в конец
+    outbounds_list+=('{
+      "tag": "BLOCK",
+      "protocol": "blackhole"
+    }')
+
+    local outbounds_str=$(IFS=,; echo "[${outbounds_list[*]}]")
     
-    if [ "$warp_enabled" == "true" ]; then
-        warp_check_rules_str=",
-      {
+    local routing_rules_list=()
+
+    # Базовые правила блокировки
+    routing_rules_list+=('{
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "BLOCK"
+      }')
+    routing_rules_list+=('{
+        "domain": [
+          "geosite:private"
+        ],
+        "outboundTag": "BLOCK"
+      }')
+    routing_rules_list+=('{
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "BLOCK"
+      }')
+
+    # Правило для Opera Proxy (приоритет выше, чем у WARP)
+    if [ "$opera_enabled" == "true" ]; then
+        local opera_domains=()
+        if [ -f "/etc/xray/opera.lst" ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+                line=$(echo "$line" | tr -d '\r' | xargs)
+                if [[ -z "$line" || "$line" =~ ^# ]]; then
+                    continue
+                fi
+                opera_domains+=("\"domain:$line\"")
+            done < "/etc/xray/opera.lst"
+        else
+            mkdir -p /etc/xray
+            cat > "/etc/xray/opera.lst" <<EOF
+openai.com
+chatgpt.com
+oaistatic.com
+oaiusercontent.com
+sentry.io
+EOF
+            opera_domains+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sentry.io\"")
+        fi
+        
+        opera_domains+=("\"geosite:openai\"")
+        
+        local opera_domains_joined=$(IFS=,; echo "${opera_domains[*]}")
+        routing_rules_list+=("{
         \"type\": \"field\",
         \"domain\": [
-          \"domain:whoer.net\",
-          \"domain:browserleaks.com\",
-          \"domain:2ip.io\",
-          \"domain:2ip.ru\",
-          \"domain:2ip.ua\",
-          \"domain:ipleak.net\",
-          \"domain:ipinfo.io\",
-          \"domain:whatismyip.com\",
-          \"domain:whatismyipaddress.com\",
-          \"domain:iplocation.net\",
-          \"domain:dnsleaktest.com\",
-          \"domain:dnsleak.com\",
-          \"domain:am.i.mullvad.net\",
-          \"domain:myip.com\",
-          \"domain:myip.ru\",
-          \"domain:ip.me\",
-          \"domain:ifconfig.me\",
-          \"domain:ident.me\",
-          \"domain:checkip.amazonaws.com\",
-          \"domain:ip-api.com\",
-          \"domain:ipify.org\",
-          \"domain:icanhazip.com\",
-          \"domain:ip-score.com\",
-          \"domain:doileak.com\",
-          \"domain:bash.ws\",
-          \"domain:f.vision\",
-          \"domain:amiunique.org\",
-          \"domain:deviceinfo.me\",
-          \"domain:coveryourtracks.eff.org\",
-          \"domain:showmyip.com\",
-          \"domain:ip8.com\",
-          \"domain:gemini.google.com\",
-          \"domain:generativelanguage.googleapis.com\",
-          \"domain:accounts.google.com\",
-          \"domain:googleapis.com\",
-          \"domain:gstatic.com\",
-          \"domain:googleusercontent.com\",
-          \"domain:webrtc.org\",
-          \"domain:stun.l.google.com\"
+          $opera_domains_joined
         ],
-        \"outboundTag\": \"WARP\"
-      }"
+        \"outboundTag\": \"OPERA\"
+      }")
     fi
-    
+
+    # Правила для WARP
     if [ "$warp_enabled" == "true" ]; then
-        if [ "$warp_mode" == "full" ]; then
-            outbounds_str='[
-    {
-      "tag": "WARP",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
-      "streamSettings": {
-        "sockopt": {
-          "interface": "warp",
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "DIRECT",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
-      "streamSettings": {
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "BLOCK",
-      "protocol": "blackhole"
-    }
-  ]'
-        else
-            outbounds_str='[
-    {
-      "tag": "DIRECT",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
-      "streamSettings": {
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "WARP",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
-      "streamSettings": {
-        "sockopt": {
-          "interface": "warp",
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "BLOCK",
-      "protocol": "blackhole"
-    }
-  ]'
-            
-            # Читаем список геоблока
+        if [ "$warp_mode" == "smart" ]; then
             local geoblocks=()
             if [ -f "/etc/xray/geoblock.lst" ]; then
                 while IFS= read -r line || [ -n "$line" ]; do
@@ -640,41 +769,36 @@ generate_server_config() {
                 done < "/etc/xray/geoblock.lst"
             fi
             
-            # Добавим встроенные правила Xray для надежности
-            geoblocks+=("\"geosite:openai\"" "\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"")
+            geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"")
+            if [ "$opera_enabled" != "true" ]; then
+                geoblocks+=("\"geosite:openai\"")
+            fi
             
             local geoblocks_joined=$(IFS=,; echo "${geoblocks[*]}")
-            routing_rules_str=",
-      {
+            routing_rules_list+=("{
         \"type\": \"field\",
         \"domain\": [
           $geoblocks_joined
         ],
         \"outboundTag\": \"WARP\"
-      }"
+      }")
         fi
-    else
-        outbounds_str='[
-    {
-      "tag": "DIRECT",
-      "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
-      "streamSettings": {
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "BLOCK",
-      "protocol": "blackhole"
-    }
-  ]'
+
+        local check_domains=()
+        for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me checkip.amazonaws.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com gemini.google.com generativelanguage.googleapis.com accounts.google.com googleapis.com gstatic.com googleusercontent.com webrtc.org stun.l.google.com; do
+            check_domains+=("\"domain:$dom\"")
+        done
+        local check_domains_joined=$(IFS=,; echo "${check_domains[*]}")
+        routing_rules_list+=("{
+        \"type\": \"field\",
+        \"domain\": [
+          $check_domains_joined
+        ],
+        \"outboundTag\": \"WARP\"
+      }")
     fi
+
+    local routing_rules_str=$(IFS=,; echo "${routing_rules_list[*]}")
     
     # Fallback-маршруты для VLESS TCP (перенаправление на сервер подписок)
     local fallbacks_str='[
@@ -737,24 +861,7 @@ generate_server_config() {
   "outbounds": $outbounds_str,
   "routing": {
     "rules": [
-      {
-        "ip": [
-          "geoip:private"
-        ],
-        "outboundTag": "BLOCK"
-      },
-      {
-        "domain": [
-          "geosite:private"
-        ],
-        "outboundTag": "BLOCK"
-      },
-      {
-        "protocol": [
-          "bittorrent"
-        ],
-        "outboundTag": "BLOCK"
-      }${routing_rules_str}${warp_check_rules_str}
+      $routing_rules_str
     ]
   }
 }
@@ -1276,7 +1383,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
-        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&mport=20000-50000&obfs=none#{encoded_remark_hy2}"
+        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&mport=20000-50000#{encoded_remark_hy2}"
         
         sub_content_links = vless_vision + "\n" + hy2_link + "\n"
             
@@ -1434,7 +1541,7 @@ encoded_remark_hy2=$(urlencode "$remark_hy2")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
-HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&mport=20000-50000&obfs=none#${encoded_remark_hy2}"
+HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&mport=20000-50000#${encoded_remark_hy2}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
@@ -1871,10 +1978,21 @@ EOF
             fi
         fi
 
+        local opera_installed=$(get_installed_var "OPERA_INSTALLED")
+        local opera_enabled=$(get_installed_var "OPERA_ENABLED")
+        local opera_status="${RED}NOT INSTALLED${NC}"
+        if [ "$opera_installed" == "true" ]; then
+            if [ "$opera_enabled" == "true" ]; then
+                opera_status="${GREEN}ON${NC}"
+            else
+                opera_status="${YELLOW}DISABLED${NC}"
+            fi
+        fi
+
         echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
         echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Сервер:${NC} ${GREEN}$domain${NC}"
         echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Службы:${NC} Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub-Server: [$sub_status]"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}WARP:${NC}   [$warp_status]"
+        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Обход:${NC}  WARP: [$warp_status] | Opera Proxy: [$opera_status]"
         echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Клиенты:${NC} Активных устройств: ${BOLD}${YELLOW}$clients_count${NC}"
         echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
     }
@@ -2017,9 +2135,9 @@ EOF
         echo -e " ${BOLD}${YELLOW}1.${NC} 📱 Показать QR-коды и ссылки подключения"
         echo -e " ${BOLD}${YELLOW}2.${NC} 👤 Добавить нового пользователя / устройство"
         echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить существующего пользователя"
-        echo -e " ${BOLD}${YELLOW}4.${NC} 🌀 Управление обходом Cloudflare WARP"
+        echo -e " ${BOLD}${YELLOW}4.${NC} 🌀 Управление обходами блокировок (WARP & Opera Proxy)"
         echo -e " ${BOLD}${YELLOW}5.${NC} 📰 Просмотреть системные логи служб"
-        echo -e " ${BOLD}${YELLOW}6.${NC} 📊 Мониторинг активных соединений (port 443)"
+        echo -e " ${BOLD}${YELLOW}6.${NC} 📊 Мониторинг active-соединений (port 443)"
         echo -e " ${BOLD}${YELLOW}7.${NC} 🛠️ Запустить полную диагностику системы (Troubleshooting)"
         echo -e " ${BOLD}${YELLOW}8.${NC} 🔄 Обновить скрипт с GitHub и применить новые фиксы"
         echo -e " ${BOLD}${YELLOW}9.${NC} 🌐 Изменить отпечаток TLS (Fingerprint)"
@@ -2032,7 +2150,7 @@ EOF
             1) "$GENERATE_SCRIPT" ; main_menu ;;
             2) add_client ; main_menu ;;
             3) remove_client ; main_menu ;;
-            4) warp_menu ;;
+            4) bypass_menu ;;
             5) show_logs ; main_menu ;;
             6) show_connections ; main_menu ;;
             7) run_diagnostics ; main_menu ;;
@@ -2047,7 +2165,7 @@ EOF
             9) change_fingerprint ; main_menu ;;
             10) domain_management_menu ;;
             11) 
-                echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации и WARP!${NC}"
+                echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
                 read -p "Вы уверены? (y/n): " uconf
                 if [[ "$uconf" =~ ^[Yy]$ ]]; then
                     uninstall_all
@@ -2090,114 +2208,172 @@ EOF
         sleep 1.5
     }
 
-    warp_menu() {
+    bypass_menu() {
         local warp_installed=$(get_installed_var "WARP_INSTALLED")
         local warp_enabled=$(get_installed_var "WARP_ENABLED")
         local warp_mode=$(get_installed_var "WARP_MODE")
         [ -z "$warp_mode" ] && warp_mode="smart"
-        
+
+        local opera_installed=$(get_installed_var "OPERA_INSTALLED")
+        local opera_enabled=$(get_installed_var "OPERA_ENABLED")
+
         echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${PURPLE}│                  Управление WARP                       │${NC}"
+        echo -e "${BOLD}${PURPLE}│           Управление обходами блокировок              │${NC}"
         echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
         
+        # Секция Cloudflare WARP
+        echo -e " ${BOLD}${CYAN}[ Cloudflare WARP ]${NC}"
         if [ "$warp_installed" != "true" ]; then
-            echo -e " ${RED}Cloudflare WARP в данный момент не установлен на сервере.${NC}"
-            echo -e "\n ${BOLD}${YELLOW}1.${NC} 📥 Установить и активировать Cloudflare WARP"
-            echo -e " ${BOLD}${CYAN}2.${NC} ↩️ Вернуться в главное меню"
-            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-            read -p "Выберите действие (1-2): " wchoice
-            case $wchoice in
-                1)
+            echo -e "  Статус: ${RED}Не установлен${NC}"
+            echo -e "  ${BOLD}${YELLOW}1.${NC} 📥 Установить и активировать Cloudflare WARP"
+        else
+            local warp_status="${RED}Выключен${NC}"
+            [ "$warp_enabled" == "true" ] && warp_status="${GREEN}Активен${NC}"
+            local mode_text="${CYAN}Smart-обход (блокированные сайты)${NC}"
+            [ "$warp_mode" == "full" ] && mode_text="${PURPLE}Full-обход (весь трафик)${NC}"
+            echo -e "  Статус: $warp_status"
+            echo -e "  Режим: $mode_text"
+            if [ "$warp_enabled" == "true" ]; then
+                echo -e "  ${BOLD}${YELLOW}1.${NC} 📴 Отключить WARP"
+            else
+                echo -e "  ${BOLD}${YELLOW}1.${NC} 🌀 Включить WARP"
+            fi
+            echo -e "  ${BOLD}${YELLOW}2.${NC} ⚙️ Изменить режим WARP (Smart / Full)"
+            echo -e "  ${BOLD}${YELLOW}3.${NC} 🔄 Обновить список геоблокировок WARP"
+            echo -e "  ${BOLD}${YELLOW}4.${NC} ⚡ Пересоздать/обновить WireGuard профиль WARP"
+            echo -e "  ${BOLD}${RED}5.${NC} 🗑️ Удалить Cloudflare WARP с сервера"
+        fi
+        
+        echo -e "\n ${BOLD}${CYAN}[ Opera Proxy (для OpenAI/ChatGPT) ]${NC}"
+        if [ "$opera_installed" != "true" ]; then
+            echo -e "  Статус: ${RED}Не установлен${NC}"
+            echo -e "  ${BOLD}${YELLOW}6.${NC} 📥 Установить и активировать Opera Proxy"
+        else
+            local opera_status="${RED}Выключен${NC}"
+            [ "$opera_enabled" == "true" ] && opera_status="${GREEN}Активен${NC}"
+            echo -e "  Статус: $opera_status"
+            if [ "$opera_enabled" == "true" ]; then
+                echo -e "  ${BOLD}${YELLOW}6.${NC} 📴 Отключить Opera Proxy"
+            else
+                echo -e "  ${BOLD}${YELLOW}6.${NC} 🌀 Включить Opera Proxy"
+            fi
+            echo -e "  ${BOLD}${YELLOW}7.${NC} 📝 Редактировать список доменов Opera Proxy"
+            echo -e "  ${BOLD}${RED}8.${NC} 🗑️ Удалить Opera Proxy с сервера"
+        fi
+        
+        echo -e "\n ${BOLD}${YELLOW}9.${NC} ↩️ Назад в главное меню"
+        echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
+        read -p "Выберите действие (1-9): " bchoice
+        case $bchoice in
+            1)
+                if [ "$warp_installed" != "true" ]; then
                     install_warp
                     DOMAIN=$(get_installed_var "DOMAIN")
                     NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
                     generate_server_config
-                    warp_menu
-                    ;;
-                2)
-                    main_menu
-                    ;;
-                *)
-                    echo -e "${RED}❌ Неверный выбор!${NC}"
-                    warp_menu
-                    ;;
-            esac
-        else
-            local status_text="${RED}Выключен${NC}"
-            [ "$warp_enabled" == "true" ] && status_text="${GREEN}Активен${NC}"
-            
-            local mode_text="${CYAN}Smart-обход (только заблокированные сайты)${NC}"
-            [ "$warp_mode" == "full" ] && mode_text="${PURPLE}Full-обход (весь исходящий трафик сервера)${NC}"
-            
-            echo -e " ${BOLD}Статус:${NC} $status_text"
-            echo -e " ${BOLD}Режим маршрутизации:${NC} $mode_text"
-            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-            
-            if [ "$warp_enabled" == "true" ]; then
-                echo -e " ${BOLD}${YELLOW}1.${NC} 📴 Отключить WARP (прямой выход в интернет)"
-            else
-                echo -e " ${BOLD}${YELLOW}1.${NC} 🌀 Включить и запустить WARP"
-            fi
-            echo -e " ${BOLD}${YELLOW}2.${NC} ⚙️ Переключить режим работы WARP (Smart / Full)"
-            echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Принудительно обновить список геоблокировок"
-            echo -e " ${BOLD}${YELLOW}4.${NC} ⚡ Переустановить/Обновить WireGuard профиль WARP"
-            echo -e " ${BOLD}${RED}5.${NC} 🗑️ Полностью удалить Cloudflare WARP с сервера"
-            echo -e " ${BOLD}${CYAN}6.${NC} ↩️ Назад в главное меню"
-            echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-            read -p "Выберите действие (1-6): " wchoice
-            case $wchoice in
-                1)
+                else
                     toggle_warp
-                    warp_menu
-                    ;;
-                2)
+                fi
+                bypass_menu
+                ;;
+            2)
+                if [ "$warp_installed" == "true" ]; then
                     echo -e "\n${BOLD}Выберите новый режим исходящего трафика:${NC}"
-                    echo -e " ${BOLD}${YELLOW}1.${NC} Smart-обход (маршрутизируются только сайты из списка блокировок)"
-                    echo -e " ${BOLD}${YELLOW}2.${NC} Full-обход (абсолютно весь трафик сервера оборачивается в WARP)"
+                    echo -e " ${BOLD}${YELLOW}1.${NC} Smart-обход"
+                    echo -e " ${BOLD}${YELLOW}2.${NC} Full-обход"
                     read -p "Режим (1-2): " mchoice
                     if [ "$mchoice" == "1" ]; then
                         update_marker_val "WARP_MODE" "smart"
-                        echo -e "${GREEN}✅ Успешно изменен на Smart-обход${NC}"
+                        echo -e "${GREEN}✅ Режим изменен на Smart-обход${NC}"
                     elif [ "$mchoice" == "2" ]; then
                         update_marker_val "WARP_MODE" "full"
-                        echo -e "${GREEN}✅ Успешно изменен на Full-обход${NC}"
+                        echo -e "${GREEN}✅ Режим изменен на Full-обход${NC}"
                     else
-                        echo -e "${RED}❌ Отменено: неверный выбор${NC}"
+                        echo -e "${RED}❌ Неверный выбор${NC}"
                     fi
                     DOMAIN=$(get_installed_var "DOMAIN")
                     NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
                     generate_server_config
-                    warp_menu
-                    ;;
-                3)
+                else
+                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                fi
+                sleep 1.5
+                bypass_menu
+                ;;
+            3)
+                if [ "$warp_installed" == "true" ]; then
                     update_geoblock_list
                     DOMAIN=$(get_installed_var "DOMAIN")
                     NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
                     generate_server_config
                     echo -e "${GREEN}✅ Список блокировок успешно обновлен!${NC}"
-                    sleep 1
-                    warp_menu
-                    ;;
-                4)
+                else
+                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                fi
+                sleep 1.5
+                bypass_menu
+                ;;
+            4)
+                if [ "$warp_installed" == "true" ]; then
                     install_warp
                     DOMAIN=$(get_installed_var "DOMAIN")
                     NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
                     generate_server_config
-                    warp_menu
-                    ;;
-                5)
+                else
+                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                fi
+                sleep 1.5
+                bypass_menu
+                ;;
+            5)
+                if [ "$warp_installed" == "true" ]; then
                     uninstall_warp
-                    warp_menu
-                    ;;
-                6)
-                    main_menu
-                    ;;
-                *)
-                    echo -e "${RED}❌ Неверный выбор!${NC}"
-                    warp_menu
-                    ;;
-            esac
-        fi
+                fi
+                sleep 1.5
+                bypass_menu
+                ;;
+            6)
+                if [ "$opera_installed" != "true" ]; then
+                    install_opera_proxy
+                else
+                    toggle_opera_proxy
+                fi
+                sleep 1.5
+                bypass_menu
+                ;;
+            7)
+                if [ "$opera_installed" == "true" ]; then
+                    if command -v nano &>/dev/null; then
+                        nano /etc/xray/opera.lst
+                    elif command -v vi &>/dev/null; then
+                        vi /etc/xray/opera.lst
+                    else
+                        echo -e "${RED}❌ Редактор не найден. Файл списка доменов находится в /etc/xray/opera.lst${NC}"
+                    fi
+                    DOMAIN=$(get_installed_var "DOMAIN")
+                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                    generate_server_config
+                else
+                    echo -e "${RED}❌ Установите Opera Proxy сначала!${NC}"
+                fi
+                bypass_menu
+                ;;
+            8)
+                if [ "$opera_installed" == "true" ]; then
+                    uninstall_opera_proxy
+                fi
+                sleep 1.5
+                bypass_menu
+                ;;
+            9)
+                main_menu
+                ;;
+            *)
+                echo -e "${RED}❌ Неверный выбор!${NC}"
+                sleep 1
+                bypass_menu
+                ;;
+        esac
     }
 
     uninstall_all() {
@@ -2218,6 +2394,13 @@ EOF
         rm -f /etc/wireguard/warp.conf
         rm -f /usr/local/bin/wgcf
         rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
+
+        # Удаление Opera Proxy
+        systemctl stop opera-proxy >/dev/null 2>&1
+        systemctl disable opera-proxy >/dev/null 2>&1
+        rm -f /etc/systemd/system/opera-proxy.service
+        rm -f /usr/local/bin/opera-proxy
+        rm -f /etc/xray/opera.lst
 
         bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
         rm -rf "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "$GENERATE_SCRIPT"
