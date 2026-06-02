@@ -360,6 +360,11 @@ install_dependencies() {
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
     fi
+    # Оптимизация буферов UDP для Hysteria 2 (QUIC)
+    if ! grep -q "net.core.rmem_max" /etc/sysctl.conf; then
+        echo "net.core.rmem_max=8388608" >> /etc/sysctl.conf
+        echo "net.core.wmem_max=8388608" >> /etc/sysctl.conf
+    fi
     # Включаем TCP Fast Open (значение 3 включает и на отправку, и на прием данных)
     if ! sysctl net.ipv4.tcp_fastopen | grep -q "3"; then
         echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.conf
