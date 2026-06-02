@@ -409,6 +409,7 @@ setup_firewall() {
     echo "🛡 Настройка UFW..."
     ufw allow 443/tcp > /dev/null
     ufw allow 443/udp > /dev/null
+    ufw allow 20000:50000/udp > /dev/null
     ufw allow 80/tcp > /dev/null
     
     # Динамически определяем запущенные и настроенные порты SSH, чтобы не заблокировать пользователя
@@ -821,17 +822,26 @@ EOF
     # Управляем правами
     chmod 600 "$config_yaml"
     
-    # Создаём systemd service если не существует
-    if [ ! -f /etc/systemd/system/hysteria-server.service ]; then
-        cat > /etc/systemd/system/hysteria-server.service <<EOF
+    # Создаём или обновляем systemd service
+    local iptables_path=$(which iptables 2>/dev/null || echo "/sbin/iptables")
+    local ip6tables_path=$(which ip6tables 2>/dev/null || echo "/sbin/ip6tables")
+
+    cat > /etc/systemd/system/hysteria-server.service <<EOF
 [Unit]
 Description=Hysteria 2 Server
 After=network.target
 
 [Service]
 Type=simple
+User=root
 WorkingDirectory=/etc/hysteria
+ExecStartPre=-$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
+ExecStartPre=-$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
+ExecStartPre=-$iptables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
+ExecStartPre=-$ip6tables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
 ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/config.yaml
+ExecStopPost=-$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
+ExecStopPost=-$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
@@ -839,9 +849,8 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-        systemctl enable hysteria-server >/dev/null 2>&1
-    fi
+    systemctl daemon-reload
+    systemctl enable hysteria-server >/dev/null 2>&1
     
     systemctl restart hysteria-server
 }
@@ -1267,7 +1276,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
-        hy2_link = f"hysteria2://{uuid_param}@{domain}:443?sni={domain}&obfs=none#{encoded_remark_hy2}"
+        hy2_link = f"hysteria2://{uuid_param}@{domain}:443?sni={domain}&mport=20000-50000&obfs=none#{encoded_remark_hy2}"
         
         sub_content_links = vless_vision + "\n" + hy2_link + "\n"
             
@@ -1425,7 +1434,7 @@ encoded_remark_hy2=$(urlencode "$remark_hy2")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
-HY2_LINK="hysteria2://${UUID}@${DOMAIN}:443?sni=${DOMAIN}&obfs=none#${encoded_remark_hy2}"
+HY2_LINK="hysteria2://${UUID}@${DOMAIN}:443?sni=${DOMAIN}&mport=20000-50000&obfs=none#${encoded_remark_hy2}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
@@ -1583,8 +1592,51 @@ if [ -f "$MARKER_FILE" ]; then
             echo -e " Cloudflare WARP: 🔘 Не установлен."
         fi
 
-        # 5. Проверка сертификатов SSL
-        echo -e "\n${BOLD}[5] Проверка SSL-сертификатов Let's Encrypt:${NC}"
+        # 5. Проверка разблокировки медиа-ресурсов
+        echo -e "\n${BOLD}[5] Разблокировка медиа-ресурсов (Netflix, YouTube, ChatGPT):${NC}"
+        check_media_unlock() {
+            local label="$1"
+            local iface="$2"
+            local curl_opts=""
+            if [ -n "$iface" ]; then
+                curl_opts="--interface $iface"
+            fi
+
+            # Netflix
+            local nf_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.netflix.com/title/80018499)
+            local nf_res="${RED}🔴 Заблокирован${NC}"
+            if [ "$nf_code" == "200" ]; then
+                nf_res="${GREEN}🟢 Доступен (Оригиналы + Каталог)${NC}"
+            elif [ "$nf_code" == "301" ] || [ "$nf_code" == "302" ]; then
+                nf_res="${YELLOW}🟡 Доступны только собственные релизы${NC}"
+            fi
+
+            # ChatGPT
+            local gpt_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com)
+            local gpt_res="${RED}🔴 Заблокирован${NC}"
+            if [ "$gpt_code" == "200" ] || [ "$gpt_code" == "302" ]; then
+                gpt_res="${GREEN}🟢 Доступен${NC}"
+            fi
+
+            # YouTube Region
+            local yt_region=$(curl $curl_opts -s --connect-timeout 4 https://www.youtube.com/premium 2>/dev/null | grep -o 'countryCode":"[^"]*"' | cut -d'"' -f3)
+            local yt_res="${RED}🔴 Не удалось определить регион${NC}"
+            if [ -n "$yt_region" ]; then
+                yt_res="${GREEN}🟢 Доступен (Регион: $yt_region)${NC}"
+            fi
+
+            echo -e "   👉 ${CYAN}$label:${NC}"
+            echo -e "      - Netflix: $nf_res"
+            echo -e "      - ChatGPT: $gpt_res"
+            echo -e "      - YouTube: $yt_res"
+        }
+        check_media_unlock "Основной IP сервера" ""
+        if [ "$(get_installed_var "WARP_INSTALLED")" == "true" ] && ip link show warp >/dev/null 2>&1; then
+            check_media_unlock "Через интерфейс WARP" "warp"
+        fi
+
+        # 6. Проверка сертификатов SSL
+        echo -e "\n${BOLD}[6] Проверка SSL-сертификатов Let's Encrypt:${NC}"
         if [ -f "$SSL_DIR/fullchain.cer" ] && [ -f "$SSL_DIR/private.key" ]; then
             echo -e " Файлы SSL: 🟢 ${GREEN}Присутствуют в директории $SSL_DIR${NC}"
             local end_date=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
@@ -1593,11 +1645,10 @@ if [ -f "$MARKER_FILE" ]; then
             echo -e " Файлы SSL: 🔴 ${RED}ОТСУТСТВУЮТ! Xray не сможет работать без TLS-сертификатов.${NC}"
         fi
 
-        # 6. Проверка Фаерволов и Правил IPTables
-        echo -e "\n${BOLD}[6] Состояние системных фаерволов:${NC}"
+        # 7. Проверка Фаерволов и Правил IPTables
+        echo -e "\n${BOLD}[7] Состояние системных фаерволов и Port Hopping:${NC}"
         if ufw status | grep -q "Status: active"; then
             echo -e " UFW Firewall: 🟢 ${GREEN}ACTIVE (Включен)${NC}"
-            # Проверяем, есть ли правила AntiZapret
             if iptables -t nat -S | grep -qi "antizapret"; then
                 echo -e "  ${YELLOW}⚠️ ПРЕДУПРЕЖДЕНИЕ: UFW активен одновременно с правилами NAT AntiZapret.${NC}"
                 echo -e "  Это может вызывать сбои маршрутизации. Рекомендуется выполнить: ${CYAN}ufw disable${NC}"
@@ -1605,6 +1656,44 @@ if [ -f "$MARKER_FILE" ]; then
         else
             echo -e " UFW Firewall: 🔘 ${YELLOW}DISABLED (Отключен)${NC}"
             echo -e " Убедитесь, что порты 443 и 80 разрешены напрямую в ваших правилах iptables."
+        fi
+
+        # Проверка правил Port Hopping
+        local ipt_path=$(which iptables 2>/dev/null || echo "/sbin/iptables")
+        if $ipt_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
+            echo -e " Port Hopping (IPv4 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
+        else
+            echo -e " Port Hopping (IPv4 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
+        fi
+        
+        local ipt6_path=$(which ip6tables 2>/dev/null || echo "/sbin/ip6tables")
+        if $ipt6_path -t nat -S &>/dev/null; then
+            if $ipt6_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
+                echo -e " Port Hopping (IPv6 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
+            else
+                echo -e " Port Hopping (IPv6 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
+            fi
+        fi
+
+        # 8. Использование системных ресурсов
+        echo -e "\n${BOLD}[8] Использование ресурсов процессами Xray и Hysteria 2:${NC}"
+        local xray_pid=$(systemctl show --property=MainPID --value xray)
+        local hysteria_pid=$(systemctl show --property=MainPID --value hysteria-server)
+        
+        if [ -n "$xray_pid" ] && [ "$xray_pid" -ne 0 ] && ps -p "$xray_pid" >/dev/null; then
+            local xray_mem=$(ps -o rss= -p "$xray_pid" | awk '{print int($1/1024)}')
+            local xray_cpu=$(ps -o %cpu= -p "$xray_pid")
+            echo -e " Xray (PID $xray_pid):   CPU: ${GREEN}${xray_cpu}%${NC} | Memory: ${GREEN}${xray_mem} MB${NC}"
+        else
+            echo -e " Xray: 🔴 Процесс не запущен"
+        fi
+        
+        if [ -n "$hysteria_pid" ] && [ "$hysteria_pid" -ne 0 ] && ps -p "$hysteria_pid" >/dev/null; then
+            local hysteria_mem=$(ps -o rss= -p "$hysteria_pid" | awk '{print int($1/1024)}')
+            local hysteria_cpu=$(ps -o %cpu= -p "$hysteria_pid")
+            echo -e " Hysteria 2 (PID $hysteria_pid): CPU: ${GREEN}${hysteria_cpu}%${NC} | Memory: ${GREEN}${hysteria_mem} MB${NC}"
+        else
+            echo -e " Hysteria 2: 🔴 Процесс не запущен"
         fi
 
         echo -e "\n${BOLD}Диагностика завершена. Нажмите Enter, чтобы вернуться назад...${NC}"
