@@ -1469,7 +1469,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
         hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
-        vless_xhttp = f"vless://{uuid_param}@{domain}:443?security=tls&type=xhttp&path=%2Fxhttp&sni={domain}&fp={fp}&alpn=h2#{encoded_remark_xhttp}"
+        vless_xhttp = f"vless://{uuid_param}@{domain}:443?encryption=none&security=tls&type=xhttp&host={domain}&path=%2Fxhttp&sni={domain}&fp={fp}&alpn=http/1.1&mode=auto#{encoded_remark_xhttp}"
         
         sub_content_links = vless_vision + "\n" + hy2_link + "\n" + vless_xhttp + "\n"
             
@@ -1627,7 +1627,7 @@ encoded_remark_xhttp=$(urlencode "$remark_xhttp")
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
 HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
-VLESS_XHTTP="vless://${UUID}@${DOMAIN}:${PORT}?security=tls&type=xhttp&path=%2Fxhttp&sni=${DOMAIN}&fp=${FINGERPRINT}&alpn=h2#${encoded_remark_xhttp}"
+VLESS_XHTTP="vless://${UUID}@${DOMAIN}:${PORT}?encryption=none&security=tls&type=xhttp&host=${DOMAIN}&path=%2Fxhttp&sni=${DOMAIN}&fp=${FINGERPRINT}&alpn=http/1.1&mode=auto#${encoded_remark_xhttp}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 echo -e "\n${BOLD}${PURPLE}🔗  ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ${NC}"
