@@ -1402,21 +1402,17 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
 
         if emoji:
             remark_vision = f"{emoji} VLESS-TCP (Основной)"
-            remark_zb = f"{emoji} VLESS-TCP (Резервный)"
             remark_hy2 = f"{emoji} Hysteria2 (Быстрый)"
         else:
             remark_vision = "🌐 VLESS-TCP (Основной)"
-            remark_zb = "🌐 VLESS-TCP (Резервный)"
             remark_hy2 = "⚡ Hysteria2 (Быстрый)"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
-        encoded_remark_zb = urllib.parse.quote(remark_zb)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
-        vless_zb = f"vless://{uuid_param}@{domain}:443?security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_zb}"
-        hy2_link = f"hysteria2://{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
+        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
         
-        sub_content_links = vless_vision + "\n" + hy2_link + "\n" + vless_zb + "\n"
+        sub_content_links = vless_vision + "\n" + hy2_link + "\n"
             
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
@@ -1425,7 +1421,6 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             f"Профиль: {client_name} [Безлимитный] • коридор: https://mvrvntn.github.io/koridor/\n"
             f"Локации:\n"
             f" - VLESS (Основной) — для мобильных и ПК\n"
-            f" - VLESS (Резервный) — для роутеров и старых клиентов\n"
             f" - Hysteria2 (Быстрый) — максимальная скорость через UDP\n"
             f"Нет соединения? ➔ Нажмите ↻ Обновить"
         )
@@ -1561,11 +1556,9 @@ fi
 # Генерация названий с новыми эмодзи-символами и скобками
 if [ -n "$EMOJI" ]; then
   remark_vision="${EMOJI} VLESS-TCP (Основной)"
-  remark_zb="${EMOJI} VLESS-TCP (Резервный)"
   remark_hy2="${EMOJI} Hysteria2 (Быстрый)"
 else
   remark_vision="🌐 VLESS-TCP (Основной)"
-  remark_zb="🌐 VLESS-TCP (Резервный)"
   remark_hy2="⚡ Hysteria2 (Быстрый)"
 fi
 
@@ -1574,13 +1567,11 @@ urlencode() {
 }
 
 encoded_remark_vision=$(urlencode "$remark_vision")
-encoded_remark_zb=$(urlencode "$remark_zb")
 encoded_remark_hy2=$(urlencode "$remark_hy2")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
-VLESS_ZB="vless://${UUID}@${DOMAIN}:${PORT}?security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_zb}"
-HY2_LINK="hysteria2://${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
+HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
@@ -1590,8 +1581,6 @@ echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и П
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
 echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход):${NC}"
 echo -e "    ${GREEN}$HY2_LINK${NC}"
-echo -e " ${BOLD}${YELLOW}3. VLESS TCP (Для роутеров / Резерв):${NC}"
-echo -e "    ${GREEN}$VLESS_ZB${NC}"
 
 echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
@@ -1603,15 +1592,13 @@ echo -e "${BOLD}${CYAN}└──────────────────
 echo -e " Выберите, для чего отобразить QR-код:"
 echo -e " ${BOLD}${YELLOW}1.${NC} 📱 VLESS TCP Vision"
 echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Hysteria2"
-echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 VLESS TCP"
-echo -e " ${BOLD}${YELLOW}4.${NC} 🔄 Ссылка подписки"
+echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Ссылка подписки"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-read -p "Ваш выбор (1-4): " qr_choice
+read -p "Ваш выбор (1-3): " qr_choice
 case "$qr_choice" in
   1) qrencode -t UTF8 "$VLESS_VISION" ;;
   2) qrencode -t UTF8 "$HY2_LINK" ;;
-  3) qrencode -t UTF8 "$VLESS_ZB" ;;
-  4) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+  3) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
   *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
 esac
 EOF
