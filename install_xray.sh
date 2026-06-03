@@ -1050,7 +1050,7 @@ generate_client_configs() {
     
     local DOMAIN=$(get_installed_var "DOMAIN")
     local FINGERPRINT=$(get_installed_var "FINGERPRINT")
-    if [ -z "$FINGERPRINT" ]; then FINGERPRINT="ios"; fi
+    if [ -z "$FINGERPRINT" ]; then FINGERPRINT="random"; fi
 
     if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
         # Обновляем существующие конфиги (идемпотентность)
@@ -1401,7 +1401,7 @@ roscomvpn_resolver = RoscomVPNResolver("default")
 def get_domain_emoji_fp():
     domain = ""
     emoji = ""
-    fp = "chrome"
+    fp = "random"
     try:
         if os.path.exists(INSTALLED_FILE):
             with open(INSTALLED_FILE, "r") as f:
@@ -1415,7 +1415,7 @@ def get_domain_emoji_fp():
     except Exception:
         pass
     if not fp:
-        fp = "chrome"
+        fp = "random"
     return domain, emoji, fp
 
 class SubHandler(http.server.BaseHTTPRequestHandler):
@@ -1569,7 +1569,7 @@ RED='\033[0;31m'
   EMOJI=$(grep "^EMOJI=" /etc/xray/.installed | cut -d= -f2)
   FLOW="xtls-rprx-vision"
   FINGERPRINT=$(grep "^FINGERPRINT=" /etc/xray/.installed | cut -d= -f2)
-  if [ -z "$FINGERPRINT" ]; then FINGERPRINT="ios"; fi
+  if [ -z "$FINGERPRINT" ]; then FINGERPRINT="random"; fi
   PORT=443
 
 mapfile -t config_files < <(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
@@ -1917,7 +1917,7 @@ if [ -f "$MARKER_FILE" ]; then
         local new_uuid=$(xray uuid)
         DOMAIN=$(get_installed_var "DOMAIN")
         local FINGERPRINT=$(get_installed_var "FINGERPRINT")
-        if [ -z "$FINGERPRINT" ]; then FINGERPRINT="ios"; fi
+        if [ -z "$FINGERPRINT" ]; then FINGERPRINT="random"; fi
 
         cat > "$CLIENT_CONFIG_DIR/${safe_filename}.json" <<EOF
 {
