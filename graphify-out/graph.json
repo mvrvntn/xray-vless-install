@@ -1,0 +1,1366 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "install_xray.sh",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1",
+      "id": "install_xray_sh",
+      "community": 0,
+      "norm_label": "install_xray.sh"
+    },
+    {
+      "label": "install_xry_command()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L26",
+      "id": "vless_server_instal_install_xray_install_xry_command",
+      "community": 0,
+      "norm_label": "install_xry_command()"
+    },
+    {
+      "label": "get_installed_var()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L43",
+      "id": "vless_server_instal_install_xray_get_installed_var",
+      "community": 0,
+      "norm_label": "get_installed_var()"
+    },
+    {
+      "label": "update_marker_val()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L50",
+      "id": "vless_server_instal_install_xray_update_marker_val",
+      "community": 0,
+      "norm_label": "update_marker_val()"
+    },
+    {
+      "label": "update_geoblock_list()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L63",
+      "id": "vless_server_instal_install_xray_update_geoblock_list",
+      "community": 0,
+      "norm_label": "update_geoblock_list()"
+    },
+    {
+      "label": "install_warp()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L154",
+      "id": "vless_server_instal_install_xray_install_warp",
+      "community": 0,
+      "norm_label": "install_warp()"
+    },
+    {
+      "label": "toggle_warp()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L235",
+      "id": "vless_server_instal_install_xray_toggle_warp",
+      "community": 0,
+      "norm_label": "toggle_warp()"
+    },
+    {
+      "label": "install_opera_proxy()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L257",
+      "id": "vless_server_instal_install_xray_install_opera_proxy",
+      "community": 0,
+      "norm_label": "install_opera_proxy()"
+    },
+    {
+      "label": "toggle_opera_proxy()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L323",
+      "id": "vless_server_instal_install_xray_toggle_opera_proxy",
+      "community": 0,
+      "norm_label": "toggle_opera_proxy()"
+    },
+    {
+      "label": "uninstall_opera_proxy()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L344",
+      "id": "vless_server_instal_install_xray_uninstall_opera_proxy",
+      "community": 0,
+      "norm_label": "uninstall_opera_proxy()"
+    },
+    {
+      "label": "check_domain()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L364",
+      "id": "vless_server_instal_install_xray_check_domain",
+      "community": 0,
+      "norm_label": "check_domain()"
+    },
+    {
+      "label": "check_port_conflicts()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L389",
+      "id": "vless_server_instal_install_xray_check_port_conflicts",
+      "community": 0,
+      "norm_label": "check_port_conflicts()"
+    },
+    {
+      "label": "get_flag_emoji()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L450",
+      "id": "vless_server_instal_install_xray_get_flag_emoji",
+      "community": 0,
+      "norm_label": "get_flag_emoji()"
+    },
+    {
+      "label": "create_directories()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L473",
+      "id": "vless_server_instal_install_xray_create_directories",
+      "community": 0,
+      "norm_label": "create_directories()"
+    },
+    {
+      "label": "install_dependencies()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L484",
+      "id": "vless_server_instal_install_xray_install_dependencies",
+      "community": 0,
+      "norm_label": "install_dependencies()"
+    },
+    {
+      "label": "install_xray()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L514",
+      "id": "vless_server_instal_install_xray_install_xray",
+      "community": 0,
+      "norm_label": "install_xray()"
+    },
+    {
+      "label": "install_hysteria()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L521",
+      "id": "vless_server_instal_install_xray_install_hysteria",
+      "community": 0,
+      "norm_label": "install_hysteria()"
+    },
+    {
+      "label": "setup_firewall()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L540",
+      "id": "vless_server_instal_install_xray_setup_firewall",
+      "community": 0,
+      "norm_label": "setup_firewall()"
+    },
+    {
+      "label": "setup_certificates()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L585",
+      "id": "vless_server_instal_install_xray_setup_certificates",
+      "community": 0,
+      "norm_label": "setup_certificates()"
+    },
+    {
+      "label": "generate_server_config()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L615",
+      "id": "vless_server_instal_install_xray_generate_server_config",
+      "community": 0,
+      "norm_label": "generate_server_config()"
+    },
+    {
+      "label": "generate_hysteria_config()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L924",
+      "id": "vless_server_instal_install_xray_generate_hysteria_config",
+      "community": 0,
+      "norm_label": "generate_hysteria_config()"
+    },
+    {
+      "label": "generate_client_configs()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1016",
+      "id": "vless_server_instal_install_xray_generate_client_configs",
+      "community": 0,
+      "norm_label": "generate_client_configs()"
+    },
+    {
+      "label": "setup_subscription_server()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1129",
+      "id": "vless_server_instal_install_xray_setup_subscription_server",
+      "community": 0,
+      "norm_label": "setup_subscription_server()"
+    },
+    {
+      "label": "body()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1161",
+      "id": "vless_server_instal_install_xray_body",
+      "community": 0,
+      "norm_label": "body()"
+    },
+    {
+      "label": "h2()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1180",
+      "id": "vless_server_instal_install_xray_h2",
+      "community": 0,
+      "norm_label": "h2()"
+    },
+    {
+      "label": "button()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1192",
+      "id": "vless_server_instal_install_xray_button",
+      "community": 0,
+      "norm_label": "button()"
+    },
+    {
+      "label": "detectLanguage()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1291",
+      "id": "vless_server_instal_install_xray_detectlanguage",
+      "community": 0,
+      "norm_label": "detectlanguage()"
+    },
+    {
+      "label": "install_generate_script()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1519",
+      "id": "vless_server_instal_install_xray_install_generate_script",
+      "community": 0,
+      "norm_label": "install_generate_script()"
+    },
+    {
+      "label": "urlencode()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1582",
+      "id": "vless_server_instal_install_xray_urlencode",
+      "community": 0,
+      "norm_label": "urlencode()"
+    },
+    {
+      "label": "show_connections()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1626",
+      "id": "vless_server_instal_install_xray_show_connections",
+      "community": 0,
+      "norm_label": "show_connections()"
+    },
+    {
+      "label": "show_logs()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1637",
+      "id": "vless_server_instal_install_xray_show_logs",
+      "community": 0,
+      "norm_label": "show_logs()"
+    },
+    {
+      "label": "run_diagnostics()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1653",
+      "id": "vless_server_instal_install_xray_run_diagnostics",
+      "community": 0,
+      "norm_label": "run_diagnostics()"
+    },
+    {
+      "label": "check_media_unlock()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1748",
+      "id": "vless_server_instal_install_xray_check_media_unlock",
+      "community": 0,
+      "norm_label": "check_media_unlock()"
+    },
+    {
+      "label": "add_client()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1855",
+      "id": "vless_server_instal_install_xray_add_client",
+      "community": 0,
+      "norm_label": "add_client()"
+    },
+    {
+      "label": "remove_client()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1926",
+      "id": "vless_server_instal_install_xray_remove_client",
+      "community": 0,
+      "norm_label": "remove_client()"
+    },
+    {
+      "label": "show_status_dashboard()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L1981",
+      "id": "vless_server_instal_install_xray_show_status_dashboard",
+      "community": 0,
+      "norm_label": "show_status_dashboard()"
+    },
+    {
+      "label": "change_fingerprint()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L2044",
+      "id": "vless_server_instal_install_xray_change_fingerprint",
+      "community": 0,
+      "norm_label": "change_fingerprint()"
+    },
+    {
+      "label": "domain_management_menu()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L2086",
+      "id": "vless_server_instal_install_xray_domain_management_menu",
+      "community": 0,
+      "norm_label": "domain_management_menu()"
+    },
+    {
+      "label": "main_menu()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L2172",
+      "id": "vless_server_instal_install_xray_main_menu",
+      "community": 0,
+      "norm_label": "main_menu()"
+    },
+    {
+      "label": "uninstall_warp()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L2222",
+      "id": "vless_server_instal_install_xray_uninstall_warp",
+      "community": 0,
+      "norm_label": "uninstall_warp()"
+    },
+    {
+      "label": "bypass_menu()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L2252",
+      "id": "vless_server_instal_install_xray_bypass_menu",
+      "community": 0,
+      "norm_label": "bypass_menu()"
+    },
+    {
+      "label": "uninstall_all()",
+      "file_type": "code",
+      "source_file": "install_xray.sh",
+      "source_location": "L2419",
+      "id": "vless_server_instal_install_xray_uninstall_all",
+      "community": 0,
+      "norm_label": "uninstall_all()"
+    },
+    {
+      "label": "clean_xhttp.py",
+      "file_type": "code",
+      "source_file": "scratch/clean_xhttp.py",
+      "source_location": "L1",
+      "id": "scratch_clean_xhttp_py",
+      "community": 4,
+      "norm_label": "clean_xhttp.py"
+    },
+    {
+      "label": "patch_graphify.py",
+      "file_type": "code",
+      "source_file": "scratch/patch_graphify.py",
+      "source_location": "L1",
+      "id": "scratch_patch_graphify_py",
+      "community": 5,
+      "norm_label": "patch_graphify.py"
+    },
+    {
+      "label": "patch_graphify_backspace.py",
+      "file_type": "code",
+      "source_file": "scratch/patch_graphify_backspace.py",
+      "source_location": "L1",
+      "id": "scratch_patch_graphify_backspace_py",
+      "community": 6,
+      "norm_label": "patch_graphify_backspace.py"
+    },
+    {
+      "label": "patch_graphify_exact.py",
+      "file_type": "code",
+      "source_file": "scratch/patch_graphify_exact.py",
+      "source_location": "L1",
+      "id": "scratch_patch_graphify_exact_py",
+      "community": 7,
+      "norm_label": "patch_graphify_exact.py"
+    },
+    {
+      "label": "patch_graphify_regex.py",
+      "file_type": "code",
+      "source_file": "scratch/patch_graphify_regex.py",
+      "source_location": "L1",
+      "id": "scratch_patch_graphify_regex_py",
+      "community": 8,
+      "norm_label": "patch_graphify_regex.py"
+    },
+    {
+      "label": "README.md",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L1",
+      "id": "readme_md",
+      "community": 1,
+      "norm_label": "readme.md"
+    },
+    {
+      "label": "\ud83c\udf10 \u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 Xray (VLESS TCP XTLS-Vision) & Hysteria 2 \u0441 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u043a\u043e\u0439 \u043f\u043e\u0434\u043f\u0438\u0441\u043e\u043a, WARP \u0438 Opera Proxy",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L1",
+      "id": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "community": 1,
+      "norm_label": "\ud83c\udf10 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 xray (vless tcp xtls-vision) & hysteria 2 \u0441 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u043a\u043e\u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u043e\u043a, warp \u0438 opera proxy"
+    },
+    {
+      "label": "\u2728 \u041a\u043b\u044e\u0447\u0435\u0432\u044b\u0435 \u0432\u043e\u0437\u043c\u043e\u0436\u043d\u043e\u0441\u0442\u0438 \u043f\u0440\u043e\u0435\u043a\u0442\u0430",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L17",
+      "id": "vless_server_instal_readme",
+      "community": 1,
+      "norm_label": "\u2728 \u043a\u043b\u044e\u0447\u0435\u0432\u044b\u0435 \u0432\u043e\u0437\u043c\u043e\u0436\u043d\u043e\u0441\u0442\u0438 \u043f\u0440\u043e\u0435\u043a\u0442\u0430"
+    },
+    {
+      "label": "\ud83d\udee0\ufe0f \u0411\u044b\u0441\u0442\u0440\u044b\u0439 \u0441\u0442\u0430\u0440\u0442 (\u0434\u043b\u044f \u043d\u043e\u0432\u0438\u0447\u043a\u043e\u0432)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L41",
+      "id": "vless_server_instal_readme_41",
+      "community": 1,
+      "norm_label": "\ud83d\udee0\ufe0f \u0431\u044b\u0441\u0442\u0440\u044b\u0438 \u0441\u0442\u0430\u0440\u0442 (\u0434\u043b\u044f \u043d\u043e\u0432\u0438\u0447\u043a\u043e\u0432)"
+    },
+    {
+      "label": "code:bash (curl -fsSL \"https://raw.githubusercontent.com/mvrvntn/xray-v)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L48",
+      "id": "vless_server_instal_readme_codeblock_1",
+      "community": 1,
+      "norm_label": "code:bash (curl -fssl \"https://raw.githubusercontent.com/mvrvntn/xray-v)"
+    },
+    {
+      "label": "\ud83d\udda5\ufe0f \u0423\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u0441\u0435\u0440\u0432\u0435\u0440\u043e\u043c \u0447\u0435\u0440\u0435\u0437 \u0438\u043d\u0442\u0435\u0440\u0430\u043a\u0442\u0438\u0432\u043d\u0443\u044e \u043a\u043e\u043d\u0441\u043e\u043b\u044c `xry`",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L54",
+      "id": "vless_server_instal_readme_xry",
+      "community": 1,
+      "norm_label": "\ud83d\udda5\ufe0f \u0443\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u0441\u0435\u0440\u0432\u0435\u0440\u043e\u043c \u0447\u0435\u0440\u0435\u0437 \u0438\u043d\u0442\u0435\u0440\u0430\u043a\u0442\u0438\u0432\u043d\u0443\u044e \u043a\u043e\u043d\u0441\u043e\u043b\u044c `xry`"
+    },
+    {
+      "label": "code:bash (xry)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L57",
+      "id": "vless_server_instal_readme_codeblock_2",
+      "community": 1,
+      "norm_label": "code:bash (xry)"
+    },
+    {
+      "label": "code:text (\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L63",
+      "id": "vless_server_instal_readme_codeblock_3",
+      "community": 1,
+      "norm_label": "code:text (\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510)"
+    },
+    {
+      "label": "\ud83d\udee0\ufe0f \u0414\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0440\u0435\u0436\u0438\u043c\u044b \u0437\u0430\u043f\u0443\u0441\u043a\u0430",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L91",
+      "id": "vless_server_instal_readme_91",
+      "community": 3,
+      "norm_label": "\ud83d\udee0\ufe0f \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0440\u0435\u0436\u0438\u043c\u044b \u0437\u0430\u043f\u0443\u0441\u043a\u0430"
+    },
+    {
+      "label": "1. Headless-\u0440\u0435\u0436\u0438\u043c (\u0431\u044b\u0441\u0442\u0440\u0430\u044f \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 \u043e\u0434\u043d\u043e\u0439 \u0441\u0442\u0440\u043e\u043a\u043e\u0439)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L93",
+      "id": "vless_server_instal_readme_1_headless",
+      "community": 3,
+      "norm_label": "1. headless-\u0440\u0435\u0436\u0438\u043c (\u0431\u044b\u0441\u0442\u0440\u0430\u044f \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 \u043e\u0434\u043d\u043e\u0438 \u0441\u0442\u0440\u043e\u043a\u043e\u0438)"
+    },
+    {
+      "label": "code:bash (sudo bash install_xray.sh --headless <\u0434\u043e\u043c\u0435\u043d> <email> <\u043a\u043e\u043b-\u0432\u043e)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L95",
+      "id": "vless_server_instal_readme_codeblock_4",
+      "community": 3,
+      "norm_label": "code:bash (sudo bash install_xray.sh --headless <\u0434\u043e\u043c\u0435\u043d> <email> <\u043a\u043e\u043b-\u0432\u043e)"
+    },
+    {
+      "label": "code:bash (sudo bash install_xray.sh --headless vpn.mysite.com admin@ma)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L99",
+      "id": "vless_server_instal_readme_codeblock_5",
+      "community": 3,
+      "norm_label": "code:bash (sudo bash install_xray.sh --headless vpn.mysite.com admin@ma)"
+    },
+    {
+      "label": "2. \u0420\u0443\u0447\u043d\u043e\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u0441\u043f\u0438\u0441\u043a\u043e\u0432 \u043e\u0431\u0445\u043e\u0434\u0430 \u0433\u0435\u043e\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043e\u043a",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L103",
+      "id": "vless_server_instal_readme_2",
+      "community": 3,
+      "norm_label": "2. \u0440\u0443\u0447\u043d\u043e\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u0441\u043f\u0438\u0441\u043a\u043e\u0432 \u043e\u0431\u0445\u043e\u0434\u0430 \u0433\u0435\u043e\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u043e\u043a"
+    },
+    {
+      "label": "code:bash (sudo bash install_xray.sh --update-geoblocks)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L104",
+      "id": "vless_server_instal_readme_codeblock_6",
+      "community": 3,
+      "norm_label": "code:bash (sudo bash install_xray.sh --update-geoblocks)"
+    },
+    {
+      "label": "3. \u0410\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u044f\u0434\u0440\u0430 \u0438 \u043a\u043e\u043d\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u0439 (\u0431\u0435\u0437 \u043f\u043e\u0442\u0435\u0440\u0438 \u0434\u0430\u043d\u043d\u044b\u0445)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L109",
+      "id": "vless_server_instal_readme_3",
+      "community": 3,
+      "norm_label": "3. \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0435 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u044f\u0434\u0440\u0430 \u0438 \u043a\u043e\u043d\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u0438 (\u0431\u0435\u0437 \u043f\u043e\u0442\u0435\u0440\u0438 \u0434\u0430\u043d\u043d\u044b\u0445)"
+    },
+    {
+      "label": "\ud83e\udd1d \u0421\u043e\u0432\u043c\u0435\u0441\u0442\u043d\u0430\u044f \u0440\u0430\u0431\u043e\u0442\u0430 \u0440\u044f\u0434\u043e\u043c \u0441 AntiZapret-VPN (\u043d\u0430 \u043e\u0434\u043d\u043e\u043c \u0441\u0435\u0440\u0432\u0435\u0440\u0435)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L119",
+      "id": "vless_server_instal_readme_antizapret_vpn",
+      "community": 2,
+      "norm_label": "\ud83e\udd1d \u0441\u043e\u0432\u043c\u0435\u0441\u0442\u043d\u0430\u044f \u0440\u0430\u0431\u043e\u0442\u0430 \u0440\u044f\u0434\u043e\u043c \u0441 antizapret-vpn (\u043d\u0430 \u043e\u0434\u043d\u043e\u043c \u0441\u0435\u0440\u0432\u0435\u0440\u0435)"
+    },
+    {
+      "label": "\u041f\u043e\u0447\u0435\u043c\u0443 \u043e\u043d\u0438 \u043d\u0435 \u043c\u0435\u0448\u0430\u044e\u0442 \u0434\u0440\u0443\u0433 \u0434\u0440\u0443\u0433\u0443?",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L123",
+      "id": "vless_server_instal_readme_123",
+      "community": 2,
+      "norm_label": "\u043f\u043e\u0447\u0435\u043c\u0443 \u043e\u043d\u0438 \u043d\u0435 \u043c\u0435\u0448\u0430\u044e\u0442 \u0434\u0440\u0443\u0433 \u0434\u0440\u0443\u0433\u0443?"
+    },
+    {
+      "label": "\ud83d\udcdd \u041f\u043e\u0448\u0430\u0433\u043e\u0432\u0430\u044f \u0438\u043d\u0441\u0442\u0440\u0443\u043a\u0446\u0438\u044f \u043f\u043e \u043f\u0430\u0440\u0430\u043b\u043b\u0435\u043b\u044c\u043d\u043e\u0439 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0435:",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L127",
+      "id": "vless_server_instal_readme_127",
+      "community": 2,
+      "norm_label": "\ud83d\udcdd \u043f\u043e\u0448\u0430\u0433\u043e\u0432\u0430\u044f \u0438\u043d\u0441\u0442\u0440\u0443\u043a\u0446\u0438\u044f \u043f\u043e \u043f\u0430\u0440\u0430\u043b\u043b\u0435\u043b\u044c\u043d\u043e\u0438 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0435:"
+    },
+    {
+      "label": "\u0428\u0430\u0433 1. \u041e\u0441\u0432\u043e\u0431\u043e\u0436\u0434\u0435\u043d\u0438\u0435 \u043f\u043e\u0440\u0442\u0430 443 TCP \u0432 AntiZapret",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L129",
+      "id": "vless_server_instal_readme_1_443_tcp_antizapret",
+      "community": 2,
+      "norm_label": "\u0448\u0430\u0433 1. \u043e\u0441\u0432\u043e\u0431\u043e\u0436\u0434\u0435\u043d\u0438\u0435 \u043f\u043e\u0440\u0442\u0430 443 tcp \u0432 antizapret"
+    },
+    {
+      "label": "code:bash (sudo systemctl stop openvpn-server@antizapret-tcp openvpn-se)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L133",
+      "id": "vless_server_instal_readme_codeblock_7",
+      "community": 2,
+      "norm_label": "code:bash (sudo systemctl stop openvpn-server@antizapret-tcp openvpn-se)"
+    },
+    {
+      "label": "\u0428\u0430\u0433 2. \u0423\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 VLESS TCP",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L139",
+      "id": "vless_server_instal_readme_2_vless_tcp",
+      "community": 2,
+      "norm_label": "\u0448\u0430\u0433 2. \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 vless tcp"
+    },
+    {
+      "label": "code:bash (curl -fsSL \"https://raw.githubusercontent.com/mvrvntn/xray-v)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L141",
+      "id": "vless_server_instal_readme_codeblock_8",
+      "community": 2,
+      "norm_label": "code:bash (curl -fssl \"https://raw.githubusercontent.com/mvrvntn/xray-v)"
+    },
+    {
+      "label": "\u0428\u0430\u0433 3. \u0418\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a\u043e\u043d\u0444\u043b\u0438\u043a\u0442\u0430 \u0444\u0430\u0435\u0440\u0432\u043e\u043b\u043e\u0432",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L146",
+      "id": "vless_server_instal_readme_3_146",
+      "community": 2,
+      "norm_label": "\u0448\u0430\u0433 3. \u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u043a\u043e\u043d\u0444\u043b\u0438\u043a\u0442\u0430 \u0444\u0430\u0435\u0440\u0432\u043e\u043b\u043e\u0432"
+    },
+    {
+      "label": "code:bash (sudo ufw disable)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L153",
+      "id": "vless_server_instal_readme_codeblock_9",
+      "community": 2,
+      "norm_label": "code:bash (sudo ufw disable)"
+    },
+    {
+      "label": "code:bash (sudo reboot)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L157",
+      "id": "vless_server_instal_readme_codeblock_10",
+      "community": 2,
+      "norm_label": "code:bash (sudo reboot)"
+    },
+    {
+      "label": "\ud83d\udee0\ufe0f \u0412\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u0430\u044f \u0441\u0438\u0441\u0442\u0435\u043c\u0430 \u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0438 (Troubleshooting)",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L164",
+      "id": "vless_server_instal_readme_troubleshooting",
+      "community": 1,
+      "norm_label": "\ud83d\udee0\ufe0f \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u0430\u044f \u0441\u0438\u0441\u0442\u0435\u043c\u0430 \u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0438 (troubleshooting)"
+    },
+    {
+      "label": "\ud83d\udcc2 \u0421\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430 \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L176",
+      "id": "vless_server_instal_readme_176",
+      "community": 1,
+      "norm_label": "\ud83d\udcc2 \u0441\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430 \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435"
+    },
+    {
+      "label": "\ud83d\uded1 \u041f\u043e\u043b\u043d\u043e\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u0435 \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u0441 \u0441\u0435\u0440\u0432\u0435\u0440\u0430",
+      "file_type": "document",
+      "source_file": "README.md",
+      "source_location": "L190",
+      "id": "vless_server_instal_readme_190",
+      "community": 1,
+      "norm_label": "\ud83d\uded1 \u043f\u043e\u043b\u043d\u043e\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u0435 \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u0441 \u0441\u0435\u0440\u0432\u0435\u0440\u0430"
+    }
+  ],
+  "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L26",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_install_xry_command"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L43",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_get_installed_var"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L50",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_update_marker_val"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L63",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_update_geoblock_list"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L154",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_install_warp"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L235",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_toggle_warp"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L257",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_install_opera_proxy"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L323",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_toggle_opera_proxy"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L344",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_uninstall_opera_proxy"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L364",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_check_domain"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L389",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_check_port_conflicts"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L450",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_get_flag_emoji"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L473",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_create_directories"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L484",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_install_dependencies"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L514",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_install_xray"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L521",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_install_hysteria"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L540",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_setup_firewall"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L585",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_setup_certificates"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L615",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_generate_server_config"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L924",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_generate_hysteria_config"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1016",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_generate_client_configs"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1129",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_setup_subscription_server"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1161",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_body"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1180",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_h2"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1192",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_button"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1291",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_detectlanguage"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1519",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_install_generate_script"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1582",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_urlencode"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1626",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_show_connections"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1637",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_show_logs"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1653",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_run_diagnostics"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1748",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_check_media_unlock"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1855",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_add_client"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1926",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_remove_client"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L1981",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_show_status_dashboard"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L2044",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_change_fingerprint"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L2086",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_domain_management_menu"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L2172",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_main_menu"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L2222",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_uninstall_warp"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L2252",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_bypass_menu"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "install_xray.sh",
+      "source_location": "L2419",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "install_xray_sh",
+      "target": "vless_server_instal_install_xray_uninstall_all"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "readme_md",
+      "target": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L17",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L41",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme_41"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L54",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme_xry"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L91",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme_91"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L119",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme_antizapret_vpn"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L164",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme_troubleshooting"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L176",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme_176"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L190",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xray_vless_tcp_xtls_vision_hysteria_2_warp_opera_proxy",
+      "target": "vless_server_instal_readme_190"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L48",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_41",
+      "target": "vless_server_instal_readme_codeblock_1"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L57",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xry",
+      "target": "vless_server_instal_readme_codeblock_2"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L63",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_xry",
+      "target": "vless_server_instal_readme_codeblock_3"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L93",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_91",
+      "target": "vless_server_instal_readme_1_headless"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L103",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_91",
+      "target": "vless_server_instal_readme_2"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L109",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_91",
+      "target": "vless_server_instal_readme_3"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L95",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_1_headless",
+      "target": "vless_server_instal_readme_codeblock_4"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L99",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_1_headless",
+      "target": "vless_server_instal_readme_codeblock_5"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L104",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_2",
+      "target": "vless_server_instal_readme_codeblock_6"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L123",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_antizapret_vpn",
+      "target": "vless_server_instal_readme_123"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L127",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_antizapret_vpn",
+      "target": "vless_server_instal_readme_127"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L129",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_127",
+      "target": "vless_server_instal_readme_1_443_tcp_antizapret"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L139",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_127",
+      "target": "vless_server_instal_readme_2_vless_tcp"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L133",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_1_443_tcp_antizapret",
+      "target": "vless_server_instal_readme_codeblock_7"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L141",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_2_vless_tcp",
+      "target": "vless_server_instal_readme_codeblock_8"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L146",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_2_vless_tcp",
+      "target": "vless_server_instal_readme_3_146"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L153",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_3_146",
+      "target": "vless_server_instal_readme_codeblock_9"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "README.md",
+      "source_location": "L157",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "vless_server_instal_readme_3_146",
+      "target": "vless_server_instal_readme_codeblock_10"
+    }
+  ],
+  "hyperedges": [],
+  "built_at_commit": "24b4ffbf597693149fad5923f061a18851673a63"
+}
