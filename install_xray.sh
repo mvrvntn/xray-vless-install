@@ -853,10 +853,10 @@ EOF
     local fallbacks_str='[
           {
             "path": "/sub/",
-            "dest": 10080
+            "dest": "127.0.0.1:10080"
           },
           {
-            "dest": 10080
+            "dest": "127.0.0.1:10080"
           }
         ]'
 
@@ -895,7 +895,6 @@ EOF
             "keyFile": "$SSL_DIR/private.key"
           }],
           "alpn": [
-            "h2",
             "http/1.1"
           ],
           "minVersion": "1.3"
