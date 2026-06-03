@@ -618,6 +618,7 @@ generate_server_config() {
     
     # Инициализация массивов для клиентов
     local vless_clients=()
+    local vless_clients_noflow=()
     
     # Проверяем, есть ли уже клиенты
     if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
@@ -629,6 +630,10 @@ generate_server_config() {
                 vless_clients+=("{
                   \"id\": \"$uuid\",
                   \"flow\": \"xtls-rprx-vision\",
+                  \"email\": \"client-$idx\"
+                }")
+                vless_clients_noflow+=("{
+                  \"id\": \"$uuid\",
                   \"email\": \"client-$idx\"
                 }")
                 idx=$((idx + 1))
@@ -645,10 +650,15 @@ generate_server_config() {
               \"flow\": \"xtls-rprx-vision\",
               \"email\": \"client-$i\"
             }")
+            vless_clients_noflow+=("{
+              \"id\": \"$uuid\",
+              \"email\": \"client-$i\"
+            }")
         done
     fi
     
     local vless_clients_str=$(IFS=,; echo "${vless_clients[*]}")
+    local vless_clients_noflow_str=$(IFS=,; echo "${vless_clients_noflow[*]}")
     
     # Проверяем статус WARP и Opera Proxy
     local warp_enabled=$(get_installed_var "WARP_ENABLED")
@@ -657,7 +667,7 @@ generate_server_config() {
     local opera_enabled=$(get_installed_var "OPERA_ENABLED")
     
     local outbounds_list=()
-
+ 
     # Сначала добавим DIRECT как первый outbound (или WARP, если warp_mode == "full")
     if [ "$warp_enabled" == "true" ] && [ "$warp_mode" == "full" ]; then
         outbounds_list+=('{
@@ -722,7 +732,7 @@ generate_server_config() {
     }')
         fi
     fi
-
+ 
     # Добавляем OPERA прокси, если включен
     if [ "$opera_enabled" == "true" ]; then
         outbounds_list+=('{
@@ -738,17 +748,17 @@ generate_server_config() {
       }
     }')
     fi
-
+ 
     # Всегда добавляем BLOCK в конец
     outbounds_list+=('{
       "tag": "BLOCK",
       "protocol": "blackhole"
     }')
-
+ 
     local outbounds_str=$(IFS=,; echo "[${outbounds_list[*]}]")
     
     local routing_rules_list=()
-
+ 
     # Базовые правила блокировки
     routing_rules_list+=('{
         "ip": [
@@ -768,7 +778,7 @@ generate_server_config() {
         ],
         "outboundTag": "BLOCK"
       }')
-
+ 
     # Правило для Opera Proxy (приоритет выше, чем у WARP)
     if [ "$opera_enabled" == "true" ]; then
         local opera_domains=()
@@ -803,7 +813,7 @@ EOF
         \"outboundTag\": \"OPERA\"
       }")
     fi
-
+ 
     # Правила для WARP
     if [ "$warp_enabled" == "true" ]; then
         if [ "$warp_mode" == "smart" ]; then
@@ -832,7 +842,7 @@ EOF
         \"outboundTag\": \"WARP\"
       }")
         fi
-
+ 
         local check_domains=()
         for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me checkip.amazonaws.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com gemini.google.com generativelanguage.googleapis.com accounts.google.com googleapis.com gstatic.com googleusercontent.com webrtc.org stun.l.google.com; do
             check_domains+=("\"domain:$dom\"")
@@ -846,21 +856,25 @@ EOF
         \"outboundTag\": \"WARP\"
       }")
     fi
-
+ 
     local routing_rules_str=$(IFS=,; echo "${routing_rules_list[*]}")
     
-    # Fallback-маршруты для VLESS TCP (перенаправление на сервер подписок)
+    # Fallback-маршруты для VLESS TCP (перенаправление на сервер подписок и xhttp порт)
     local fallbacks_str='[
           {
             "path": "/sub/",
             "dest": "127.0.0.1:10080"
           },
           {
+            "path": "/xhttp",
+            "dest": "127.0.0.1:10443"
+          },
+          {
             "dest": "127.0.0.1:10080"
           }
         ]'
-
-    # Генерация конфигурационного файла с VLESS TCP
+ 
+    # Генерация конфигурационного файла с VLESS TCP и VLESS XHTTP
     cat > "$config_file" <<EOF
 {
   "log": {
@@ -895,6 +909,7 @@ EOF
             "keyFile": "$SSL_DIR/private.key"
           }],
           "alpn": [
+            "h2",
             "http/1.1"
           ],
           "minVersion": "1.3"
@@ -903,6 +918,23 @@ EOF
           "tcpFastOpen": true,
           "tcpcongestion": "bbr",
           "tcpKeepAliveIdle": 300
+        }
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 10443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [$vless_clients_noflow_str],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "none",
+        "xhttpSettings": {
+          "path": "/xhttp",
+          "mode": "auto"
         }
       }
     }
@@ -915,7 +947,7 @@ EOF
   }
 }
 EOF
-
+ 
     systemctl restart xray
 }
 
@@ -1425,27 +1457,26 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         if emoji:
             remark_vision = f"{emoji} VLESS-TCP"
             remark_hy2 = f"{emoji} Hysteria2"
+            remark_xhttp = f"{emoji} VLESS-XHTTP"
         else:
             remark_vision = "🌐 VLESS-TCP"
             remark_hy2 = "⚡ Hysteria2"
+            remark_xhttp = "🪐 VLESS-XHTTP"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
+        encoded_remark_xhttp = urllib.parse.quote(remark_xhttp)
+        
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http/1.1#{encoded_remark_vision}"
         hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
+        vless_xhttp = f"vless://{uuid_param}@{domain}:443?security=tls&type=xhttp&path=%2Fxhttp&sni={domain}&fp={fp}&alpn=h2#{encoded_remark_xhttp}"
         
-        sub_content_links = vless_vision + "\n" + hy2_link + "\n"
+        sub_content_links = vless_vision + "\n" + hy2_link + "\n" + vless_xhttp + "\n"
             
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
-        announce_text = (
-            f"Профиль: {client_name} [Безлимитный] • коридор: https://mvrvntn.github.io/koridor/\n"
-            f"Локации:\n"
-            f" - VLESS — для мобильных и ПК\n"
-            f" - Hysteria2 — максимальная скорость через UDP\n"
-            f"Нет соединения? ➔ Нажмите ↻ Обновить"
-        )
+        announce_text = f"Профиль: {client_name} [Безлимитный] • Локации: VLESS (TCP), Hysteria2 (UDP), VLESS (XHTTP) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
         support_url = "https://t.me/mavrtunbot"
@@ -1548,16 +1579,15 @@ if [ ${#config_files[@]} -eq 0 ]; then
   exit 1
 fi
 
-echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-echo -e "${BOLD}${CYAN}│                 Доступные устройства                  │${NC}"
-echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+echo -e "\n${BOLD}${CYAN}📱  ДОСТУПНЫЕ УСТРОЙСТВА${NC}"
+echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 for i in "${!config_files[@]}"; do
   remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "${config_files[$i]}" 2>/dev/null)
   if [ -z "$remarks" ] || [ "$remarks" = "null" ]; then
     remarks="${config_files[$i]##*/}"
     remarks="${remarks%.json}"
   fi
-  echo -e " ${BOLD}${YELLOW}$((i+1)).${NC} 📱 $remarks"
+  echo -e " ${BOLD}${YELLOW}$((i+1)).${NC} $remarks"
 done
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 
@@ -1579,9 +1609,11 @@ fi
 if [ -n "$EMOJI" ]; then
   remark_vision="${EMOJI} VLESS-TCP"
   remark_hy2="${EMOJI} Hysteria2"
+  remark_xhttp="${EMOJI} VLESS-XHTTP"
 else
   remark_vision="🌐 VLESS-TCP"
   remark_hy2="⚡ Hysteria2"
+  remark_xhttp="🪐 VLESS-XHTTP"
 fi
 
 urlencode() {
@@ -1590,37 +1622,41 @@ urlencode() {
 
 encoded_remark_vision=$(urlencode "$remark_vision")
 encoded_remark_hy2=$(urlencode "$remark_hy2")
+encoded_remark_xhttp=$(urlencode "$remark_xhttp")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http/1.1#${encoded_remark_vision}"
 HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
+VLESS_XHTTP="vless://${UUID}@${DOMAIN}:${PORT}?security=tls&type=xhttp&path=%2Fxhttp&sni=${DOMAIN}&fp=${FINGERPRINT}&alpn=h2#${encoded_remark_xhttp}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
-echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
-echo -e "${BOLD}${PURPLE}│                Ссылки для подключения                  │${NC}"
-echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
+echo -e "\n${BOLD}${PURPLE}🔗  ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ${NC}"
+echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и ПК):${NC}"
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
 echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход):${NC}"
 echo -e "    ${GREEN}$HY2_LINK${NC}"
+echo -e " ${BOLD}${YELLOW}3. VLESS XHTTP (Через HTTP/2):${NC}"
+echo -e "    ${GREEN}$VLESS_XHTTP${NC}"
 
 echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 
-echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-echo -e "${BOLD}${CYAN}│                   Генерация QR-кода                    │${NC}"
-echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
-echo -e " Выберите, для чего отобразить QR-код:"
-echo -e " ${BOLD}${YELLOW}1.${NC} 📱 VLESS TCP Vision"
-echo -e " ${BOLD}${YELLOW}2.${NC} ⚡ Hysteria2"
-echo -e " ${BOLD}${YELLOW}3.${NC} 🔄 Ссылка подписки"
+echo -e "\n${BOLD}${CYAN}🔳  ГЕНЕРАЦИЯ QR-КОДА${NC}"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-read -p "Ваш выбор (1-3): " qr_choice
+echo -e " Выберите, для чего отобразить QR-код:"
+echo -e " ${BOLD}${YELLOW}1.${NC} VLESS TCP Vision"
+echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2"
+echo -e " ${BOLD}${YELLOW}3.${NC} VLESS XHTTP"
+echo -e " ${BOLD}${YELLOW}4.${NC} Ссылка подписки"
+echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+read -p "Ваш выбор (1-4): " qr_choice
 case "$qr_choice" in
   1) qrencode -t UTF8 "$VLESS_VISION" ;;
   2) qrencode -t UTF8 "$HY2_LINK" ;;
-  3) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+  3) qrencode -t UTF8 "$VLESS_XHTTP" ;;
+  4) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
   *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
 esac
 EOF
@@ -1658,9 +1694,8 @@ if [ -f "$MARKER_FILE" ]; then
     }
 
     run_diagnostics() {
-        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│             ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ         │${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e "\n${BOLD}${CYAN}🛠️  ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
         
         # 1. Проверка конфликтов портов 443 и 80
         echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
@@ -1932,9 +1967,8 @@ EOF
     }
 
     remove_client() {
-        echo -e "\n${BOLD}${RED}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${RED}│                  Удаление клиента                      │${NC}"
-        echo -e "${BOLD}${RED}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e "\n${BOLD}${RED}🗑️  УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ${NC}"
+        echo -e "${RED}──────────────────────────────────────────────────────────${NC}"
         mapfile -t config_files < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
         if [ ${#config_files[@]} -eq 0 ]; then
             echo -e " ${RED}❌ Нет доступных клиентов для удаления${NC}"
@@ -2041,18 +2075,18 @@ EOF
             fi
         fi
 
-        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Сервер:${NC} ${GREEN}$domain${NC}"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Службы:${NC} Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub-Server: [$sub_status]"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Обход:${NC}  WARP: [$warp_status] | Opera Proxy: [$opera_status]"
-        echo -e "${BOLD}${CYAN}│${NC}  ${BOLD}Клиенты:${NC} Активных устройств: ${BOLD}${YELLOW}$clients_count${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e "\n${BOLD}${CYAN}🖥️  СТАТУС СЕРВЕРА${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        echo -e " 🌐 ${BOLD}Сервер:${NC}       ${GREEN}$domain${NC}"
+        echo -e " ⚙️  ${BOLD}Службы:${NC}       Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub-Server: [$sub_status]"
+        echo -e " 🌀 ${BOLD}Обход:${NC}        WARP: [$warp_status] | Opera Proxy: [$opera_status]"
+        echo -e " 👥 ${BOLD}Клиенты:${NC}      Активных устройств: ${BOLD}${YELLOW}$clients_count${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
     }
 
     change_fingerprint() {
-        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│               Выбор отпечатка TLS (Fingerprint)        │${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e "\n${BOLD}${CYAN}🛠️  ВЫБОР ОТПЕЧАТКА TLS (FINGERPRINT)${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
         echo -e " ${BOLD}${YELLOW}1.${NC} chrome (Рекомендуется, самый стабильный)"
         echo -e " ${BOLD}${YELLOW}2.${NC} safari (Apple устройства)"
         echo -e " ${BOLD}${YELLOW}3.${NC} ios (Мобильный Apple)"
@@ -2095,9 +2129,8 @@ EOF
     domain_management_menu() {
         local current_domain=$(get_installed_var "DOMAIN")
 
-        echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│                 Смена основного домена                 │${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e "\n${BOLD}${CYAN}🌐  СМЕНА ОСНОВНОГО ДОМЕНА${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
         echo -e " Текущий домен: ${GREEN}$current_domain${NC}"
         echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (с перевыпуском SSL)"
         echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Вернуться в главное меню"
@@ -2181,9 +2214,8 @@ EOF
 
     main_menu() {
         show_status_dashboard
-        echo -e "${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${CYAN}│                      ГЛАВНОЕ МЕНЮ                      │${NC}"
-        echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e "${BOLD}${CYAN}⚡  ГЛАВНОЕ МЕНЮ${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
         echo -e " ${BOLD}${YELLOW}1.${NC} 📱 Показать QR-коды и ссылки подключения"
         echo -e " ${BOLD}${YELLOW}2.${NC} 👤 Добавить нового пользователя / устройство"
         echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить существующего пользователя"
@@ -2269,9 +2301,8 @@ EOF
         local opera_installed=$(get_installed_var "OPERA_INSTALLED")
         local opera_enabled=$(get_installed_var "OPERA_ENABLED")
 
-        echo -e "\n${BOLD}${PURPLE}┌────────────────────────────────────────────────────────┐${NC}"
-        echo -e "${BOLD}${PURPLE}│           Управление обходами блокировок              │${NC}"
-        echo -e "${BOLD}${PURPLE}└────────────────────────────────────────────────────────┘${NC}"
+        echo -e "\n${BOLD}${PURPLE}🌀  УПРАВЛЕНИЕ ОБХОДАМИ БЛОКИРОВОК${NC}"
+        echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
         
         # Секция Cloudflare WARP
         echo -e " ${BOLD}${CYAN}[ Cloudflare WARP ]${NC}"
@@ -2660,9 +2691,8 @@ if [ "$1" == "--headless" ]; then
         fi
     done
 else
-    echo -e "\n${BOLD}${CYAN}┌────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${BOLD}${CYAN}│             🚀 Установка Xray VLESS Сервера            │${NC}"
-    echo -e "${BOLD}${CYAN}└────────────────────────────────────────────────────────┘${NC}"
+    echo -e "\n${BOLD}${CYAN}🚀  УСТАНОВКА XRAY VLESS СЕРВЕРА${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
     echo -e " Добро пожаловать! Давайте настроим ваш новый VPN-сервер."
     echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
     
