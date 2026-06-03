@@ -1401,11 +1401,11 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             domain = self.headers.get('Host', '').split(':')[0]
 
         if emoji:
-            remark_vision = f"{emoji} VLESS-TCP (Основной)"
-            remark_hy2 = f"{emoji} Hysteria2 (Быстрый)"
+            remark_vision = f"{emoji} VLESS-TCP"
+            remark_hy2 = f"{emoji} Hysteria2"
         else:
-            remark_vision = "🌐 VLESS-TCP (Основной)"
-            remark_hy2 = "⚡ Hysteria2 (Быстрый)"
+            remark_vision = "🌐 VLESS-TCP"
+            remark_hy2 = "⚡ Hysteria2"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
@@ -1420,8 +1420,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         announce_text = (
             f"Профиль: {client_name} [Безлимитный] • коридор: https://mvrvntn.github.io/koridor/\n"
             f"Локации:\n"
-            f" - VLESS (Основной) — для мобильных и ПК\n"
-            f" - Hysteria2 (Быстрый) — максимальная скорость через UDP\n"
+            f" - VLESS — для мобильных и ПК\n"
+            f" - Hysteria2 — максимальная скорость через UDP\n"
             f"Нет соединения? ➔ Нажмите ↻ Обновить"
         )
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
@@ -1555,11 +1555,11 @@ fi
 
 # Генерация названий с новыми эмодзи-символами и скобками
 if [ -n "$EMOJI" ]; then
-  remark_vision="${EMOJI} VLESS-TCP (Основной)"
-  remark_hy2="${EMOJI} Hysteria2 (Быстрый)"
+  remark_vision="${EMOJI} VLESS-TCP"
+  remark_hy2="${EMOJI} Hysteria2"
 else
-  remark_vision="🌐 VLESS-TCP (Основной)"
-  remark_hy2="⚡ Hysteria2 (Быстрый)"
+  remark_vision="🌐 VLESS-TCP"
+  remark_hy2="⚡ Hysteria2"
 fi
 
 urlencode() {
