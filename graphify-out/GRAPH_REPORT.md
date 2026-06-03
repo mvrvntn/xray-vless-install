@@ -1,7 +1,7 @@
 # Graph Report - vless_server_instal  (2026-06-03)
 
 ## Corpus Check
-- 7 files · ~13,265 words
+- 2 files · ~11,337 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `24b4ffbf`
+- Built from commit: `7f52b42b`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
