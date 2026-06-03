@@ -538,6 +538,28 @@ install_hysteria() {
 
 # === Настройка фаервола ===
 setup_firewall() {
+    # Проверяем наличие AntiZapret (через правила iptables или запущенные службы)
+    local antizapret_detected=false
+    if iptables -t nat -S 2>/dev/null | grep -qi "antizapret" || systemctl list-units --all --quiet 2>/dev/null | grep -q "antizapret" || systemctl is-active --quiet openvpn-server@antizapret-tcp || systemctl is-active --quiet openvpn-server@antizapret-udp; then
+        antizapret_detected=true
+    fi
+
+    if [ "$antizapret_detected" = "true" ]; then
+        echo "⚠️ Обнаружен AntiZapret-VPN! Для предотвращения сбоев маршрутизации UFW не будет включен."
+        echo "🔌 Отключаем UFW и разрешаем порты в iptables напрямую..."
+        ufw disable >/dev/null 2>&1 || true
+        
+        # Гарантируем доступ к нужным портам в iptables напрямую
+        local ipt_path=$(which iptables 2>/dev/null || echo "/sbin/iptables")
+        if [ -x "$ipt_path" ]; then
+            $ipt_path -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 443 -j ACCEPT
+            $ipt_path -C INPUT -p udp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 443 -j ACCEPT
+            $ipt_path -C INPUT -p udp --dport 20000:50000 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 20000:50000 -j ACCEPT
+            $ipt_path -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+        fi
+        return 0
+    fi
+
     echo "🛡 Настройка UFW..."
     ufw allow 443/tcp > /dev/null
     ufw allow 443/udp > /dev/null
