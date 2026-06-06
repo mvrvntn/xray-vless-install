@@ -1146,9 +1146,8 @@ CONFIG_DIR = "/etc/xray/client_configs"
 INSTALLED_FILE = "/etc/xray/.installed"
 
 _ROSCOMVPN_URLS = {
-    "default": "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/HAPP/DEFAULT.DEEPLINK",
-    "jsonsub": "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/HAPP/JSONSUB.DEEPLINK",
-    "whitelist": "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/HAPP/WHITELIST.DEEPLINK",
+    "happ": "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/HAPP/DEFAULT.DEEPLINK",
+    "incy": "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/INCY/DEFAULT.DEEPLINK",
 }
 
 DECOY_HTML = """<!DOCTYPE html>
@@ -1364,7 +1363,8 @@ class RoscomVPNResolver:
                     threading.Thread(target=self._bg_fetch, daemon=True).start()
         return self._value
 
-roscomvpn_resolver = RoscomVPNResolver("default")
+happ_resolver = RoscomVPNResolver("happ")
+incy_resolver = RoscomVPNResolver("incy")
 
 def get_domain_emoji_fp():
     domain = ""
@@ -1449,12 +1449,15 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         if "v2ray" in user_agent or "clash" in user_agent:
             sub_content = sub_content_links
         else:
-            # Задаем комментарии с метаданными подписки (название, страница информации, анонсы)
-            sub_content = f"#profile-title: {client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {announce_text}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{sub_content_links}"
+            # Задаем комментарии с метаданными подписки (используем base64 для безопасной передачи кириллицы в Incy/Happ)
+            sub_content = f"#profile-title: {b64_client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {b64_announce}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{sub_content_links}"
             
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
         
-        _routing = roscomvpn_resolver.get()
+        if "incy" in user_agent:
+            _routing = incy_resolver.get()
+        else:
+            _routing = happ_resolver.get()
 
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -1922,12 +1925,64 @@ EOF
         echo "✅ Клиент '$new_name' успешно добавлен!"
     }
 
+    # === UI ФУНКЦИИ ===
+    ui_header() {
+        local title="$1"
+        local color="${2:-${CYAN}}"
+        echo -e "\n${color}╭─────── ${BOLD}${title}${NC} ${color}─────────────────────────────────────────${NC}"
+        echo -e "${color}│${NC}"
+    }
+
+    ui_footer() {
+        local color="${1:-${CYAN}}"
+        echo -e "${color}│${NC}"
+        echo -e "${color}╰────────────────────────────────────────────────────────────${NC}"
+    }
+
+    ui_divider() {
+        local color="${1:-${CYAN}}"
+        echo -e "${color}│${NC}"
+        echo -e "${color}├────────────────────────────────────────────────────────────${NC}"
+        echo -e "${color}│${NC}"
+    }
+
+    ui_item() {
+        local num="$1"
+        local text="$2"
+        local color="${3:-${YELLOW}}"
+        if [ -z "$num" ]; then
+             echo -e "${CYAN}│${NC}  ${text}"
+        else
+             echo -e "${CYAN}│${NC}  ${BOLD}${color}${num}.${NC} ${text}"
+        fi
+    }
+
+    ui_item_color() {
+        local num="$1"
+        local text="$2"
+        local num_color="${3:-${YELLOW}}"
+        local border_color="${4:-${CYAN}}"
+        if [ -z "$num" ]; then
+             echo -e "${border_color}│${NC}  ${text}"
+        else
+             echo -e "${border_color}│${NC}  ${BOLD}${num_color}${num}.${NC} ${text}"
+        fi
+    }
+
+    ui_status() {
+        local icon="$1"
+        local key="$2"
+        local val="$3"
+        printf "${CYAN}│${NC} %s ${BOLD}%-12s${NC} %b\n" "$icon" "$key:" "$val"
+    }
+
     remove_client() {
-        echo -e "\n${BOLD}${RED}🗑️  УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ${NC}"
-        echo -e "${RED}──────────────────────────────────────────────────────────${NC}"
+        ui_header "🗑️  УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ" "${RED}"
+        
         mapfile -t config_files < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
         if [ ${#config_files[@]} -eq 0 ]; then
-            echo -e " ${RED}❌ Нет доступных клиентов для удаления${NC}"
+            ui_item_color "" "❌ Нет доступных клиентов для удаления" "" "${RED}"
+            ui_footer "${RED}"
             return
         fi
 
@@ -1937,12 +1992,12 @@ EOF
                 remarks="${config_files[$i]##*/}"
                 remarks="${remarks%.json}"
             fi
-            echo -e " ${BOLD}${YELLOW}$((i+1)).${NC} $remarks"
+            ui_item_color "$((i+1))" "$remarks" "${YELLOW}" "${RED}"
         done
-        echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Отмена и возврат назад"
-        echo -e "${RED}──────────────────────────────────────────────────────────${NC}"
+        ui_item_color "0" "↩️ Отмена и возврат назад" "${CYAN}" "${RED}"
+        ui_footer "${RED}"
 
-        read -p "Выберите клиента для удаления (1-${#config_files[@]}, или 0 для выхода): " choice
+        read -p " Выберите клиента (1-${#config_files[@]}, или 0 для выхода): " choice
         if [ "$choice" == "0" ] || [ -z "$choice" ]; then
             return
         fi
@@ -1959,7 +2014,7 @@ EOF
             remarks="${remarks%.json}"
         fi
 
-        read -p "Вы действительно хотите безвозвратно удалить '$remarks'? [y/N]: " confirm
+        read -p " Вы действительно хотите удалить '$remarks'? [y/N]: " confirm
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
             rm -f "$selected"
             # Обновляем конфиг сервера и перезапускаем xray и hysteria
@@ -1973,7 +2028,7 @@ EOF
             echo -e " ${GREEN}✅ Клиент '$remarks' успешно удален из системы!${NC}"
             sleep 1
         else
-            echo "Отменено."
+            echo " Отменено."
         fi
     }
 
@@ -2031,30 +2086,28 @@ EOF
             fi
         fi
 
-        echo -e "\n${BOLD}${CYAN}🖥️  СТАТУС СЕРВЕРА${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        echo -e " 🌐 ${BOLD}Сервер:${NC}       ${GREEN}$domain${NC}"
-        echo -e " ⚙️  ${BOLD}Службы:${NC}       Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub-Server: [$sub_status]"
-        echo -e " 🌀 ${BOLD}Обход:${NC}        WARP: [$warp_status] | Opera Proxy: [$opera_status]"
-        echo -e " 👥 ${BOLD}Клиенты:${NC}      Активных устройств: ${BOLD}${YELLOW}$clients_count${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        ui_header "🖥️  СТАТУС СЕРВЕРА"
+        ui_status "🌐" "Сервер" "${GREEN}$domain${NC}"
+        ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
+        ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status]"
+        ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
+        ui_footer
     }
 
     change_fingerprint() {
-        echo -e "\n${BOLD}${CYAN}🛠️  ВЫБОР ОТПЕЧАТКА TLS (FINGERPRINT)${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        echo -e " ${BOLD}${YELLOW}1.${NC} chrome (Рекомендуется, самый стабильный)"
-        echo -e " ${BOLD}${YELLOW}2.${NC} safari (Apple устройства)"
-        echo -e " ${BOLD}${YELLOW}3.${NC} ios (Мобильный Apple)"
-        echo -e " ${BOLD}${YELLOW}4.${NC} android (Мобильный Android)"
-        echo -e " ${BOLD}${YELLOW}5.${NC} edge (Microsoft Edge)"
-        echo -e " ${BOLD}${YELLOW}6.${NC} firefox (Mozilla Firefox)"
-        echo -e " ${BOLD}${YELLOW}7.${NC} 360 (Браузер 360)"
-        echo -e " ${BOLD}${YELLOW}8.${NC} qq (Браузер QQ)"
-        echo -e " ${BOLD}${YELLOW}9.${NC} random (Случайный из списка браузеров)"
-        echo -e " ${BOLD}${YELLOW}10.${NC} randomized (Полная рандомизация - может вызывать обрывы)"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        read -p "Выберите отпечаток (1-10): " fp_choice
+        ui_header "🛠️  ВЫБОР ОТПЕЧАТКА TLS (FINGERPRINT)"
+        ui_item "1" "chrome (Рекомендуется, самый стабильный)"
+        ui_item "2" "safari (Apple устройства)"
+        ui_item "3" "ios (Мобильный Apple)"
+        ui_item "4" "android (Мобильный Android)"
+        ui_item "5" "edge (Microsoft Edge)"
+        ui_item "6" "firefox (Mozilla Firefox)"
+        ui_item "7" "360 (Браузер 360)"
+        ui_item "8" "qq (Браузер QQ)"
+        ui_item "9" "random (Случайный из списка браузеров)"
+        ui_item "10" "randomized (Полная рандомизация - может вызывать обрывы)"
+        ui_footer
+        read -p " Выберите отпечаток (1-10): " fp_choice
         case $fp_choice in
             1) new_fp="chrome" ;;
             2) new_fp="safari" ;;
@@ -2085,14 +2138,14 @@ EOF
     domain_management_menu() {
         local current_domain=$(get_installed_var "DOMAIN")
 
-        echo -e "\n${BOLD}${CYAN}🌐  СМЕНА ОСНОВНОГО ДОМЕНА${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        echo -e " Текущий домен: ${GREEN}$current_domain${NC}"
-        echo -e "\n ${BOLD}${YELLOW}1.${NC} 🌐 Изменить основной домен (с перевыпуском SSL)"
-        echo -e " ${BOLD}${CYAN}0.${NC} ↩️ Вернуться в главное меню"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        ui_header "🌐  СМЕНА ОСНОВНОГО ДОМЕНА"
+        ui_item "" "Текущий домен: ${GREEN}$current_domain${NC}"
+        ui_divider
+        ui_item "1" "🌐 Изменить основной домен (с перевыпуском SSL)"
+        ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+        ui_footer
         
-        read -p "Выберите действие (0-1): " dchoice
+        read -p " Выберите действие (0-1): " dchoice
         case $dchoice in
             0) main_menu ;;
             1)
@@ -2170,22 +2223,24 @@ EOF
 
     main_menu() {
         show_status_dashboard
-        echo -e "${BOLD}${CYAN}⚡  ГЛАВНОЕ МЕНЮ${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        echo -e " ${BOLD}${YELLOW}1.${NC} 📱 Показать QR-коды и ссылки подключения"
-        echo -e " ${BOLD}${YELLOW}2.${NC} 👤 Добавить нового пользователя / устройство"
-        echo -e " ${BOLD}${YELLOW}3.${NC} 🗑️ Удалить существующего пользователя"
-        echo -e " ${BOLD}${YELLOW}4.${NC} 🌀 Управление обходами блокировок (WARP & Opera Proxy)"
-        echo -e " ${BOLD}${YELLOW}5.${NC} 📰 Просмотреть системные логи служб"
-        echo -e " ${BOLD}${YELLOW}6.${NC} 📊 Мониторинг active-соединений (port 443)"
-        echo -e " ${BOLD}${YELLOW}7.${NC} 🛠️ Запустить полную диагностику системы (Troubleshooting)"
-        echo -e " ${BOLD}${YELLOW}8.${NC} 🔄 Обновить скрипт с GitHub и применить новые фиксы"
-        echo -e " ${BOLD}${YELLOW}9.${NC} 🌐 Изменить отпечаток TLS (Fingerprint)"
-        echo -e " ${BOLD}${YELLOW}10.${NC} 🌐 Смена основного домена (SSL)"
-        echo -e " ${BOLD}${RED}11. 🗑️ Полностью удалить всю установку Xray с сервера${NC}"
-        echo -e " ${BOLD}${CYAN}12.${NC} 🚪 Выйти из терминала"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        read -p "Выберите действие (1-12): " choice
+        ui_header "⚡  ГЛАВНОЕ МЕНЮ"
+        ui_item "1" "📱 Показать QR-коды и ссылки подключения"
+        ui_item "2" "👤 Добавить нового пользователя / устройство"
+        ui_item "3" "🗑️ Удалить существующего пользователя"
+        ui_item "4" "🌀 Управление обходами блокировок (WARP & Opera Proxy)"
+        ui_divider
+        ui_item "5" "📰 Просмотреть системные логи служб"
+        ui_item "6" "📊 Мониторинг active-соединений (port 443)"
+        ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
+        ui_divider
+        ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
+        ui_item "9" "🌐 Изменить отпечаток TLS (Fingerprint)"
+        ui_item "10" "🌐 Смена основного домена (SSL)"
+        ui_divider
+        ui_item_color "11" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+        ui_item "12" "🚪 Выйти из терминала" "${CYAN}"
+        ui_footer
+        read -p " Выберите действие (1-12): " choice
         case $choice in
             1) "$GENERATE_SCRIPT" ; main_menu ;;
             2) add_client ; main_menu ;;
@@ -2257,52 +2312,54 @@ EOF
         local opera_installed=$(get_installed_var "OPERA_INSTALLED")
         local opera_enabled=$(get_installed_var "OPERA_ENABLED")
 
-        echo -e "\n${BOLD}${PURPLE}🌀  УПРАВЛЕНИЕ ОБХОДАМИ БЛОКИРОВОК${NC}"
-        echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
+        ui_header "🌀  УПРАВЛЕНИЕ ОБХОДАМИ БЛОКИРОВОК" "${PURPLE}"
         
         # Секция Cloudflare WARP
-        echo -e " ${BOLD}${CYAN}[ Cloudflare WARP ]${NC}"
+        ui_item_color "" "${BOLD}[ Cloudflare WARP ]${NC}" "" "${PURPLE}"
         if [ "$warp_installed" != "true" ]; then
-            echo -e "  Статус: ${RED}Не установлен${NC}"
-            echo -e "  ${BOLD}${YELLOW}1.${NC} 📥 Установить и активировать Cloudflare WARP"
+            ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
+            ui_item_color "1" "📥 Установить и активировать Cloudflare WARP" "${YELLOW}" "${PURPLE}"
         else
             local warp_status="${RED}Выключен${NC}"
             [ "$warp_enabled" == "true" ] && warp_status="${GREEN}Активен${NC}"
-            local mode_text="${CYAN}Smart-обход (блокированные сайты)${NC}"
+            local mode_text="${CYAN}Smart-обход${NC}"
             [ "$warp_mode" == "full" ] && mode_text="${PURPLE}Full-обход (весь трафик)${NC}"
-            echo -e "  Статус: $warp_status"
-            echo -e "  Режим: $mode_text"
+            ui_item_color "" "Статус: $warp_status | Режим: $mode_text" "" "${PURPLE}"
             if [ "$warp_enabled" == "true" ]; then
-                echo -e "  ${BOLD}${YELLOW}1.${NC} 📴 Отключить WARP"
+                ui_item_color "1" "📴 Отключить WARP" "${YELLOW}" "${PURPLE}"
             else
-                echo -e "  ${BOLD}${YELLOW}1.${NC} 🌀 Включить WARP"
+                ui_item_color "1" "🌀 Включить WARP" "${YELLOW}" "${PURPLE}"
             fi
-            echo -e "  ${BOLD}${YELLOW}2.${NC} ⚙️ Изменить режим WARP (Smart / Full)"
-            echo -e "  ${BOLD}${YELLOW}3.${NC} 🔄 Обновить список геоблокировок WARP"
-            echo -e "  ${BOLD}${YELLOW}4.${NC} ⚡ Пересоздать/обновить WireGuard профиль WARP"
-            echo -e "  ${BOLD}${RED}5.${NC} 🗑️ Удалить Cloudflare WARP с сервера"
+            ui_item_color "2" "⚙️ Изменить режим WARP (Smart / Full)" "${YELLOW}" "${PURPLE}"
+            ui_item_color "3" "🔄 Обновить список геоблокировок WARP" "${YELLOW}" "${PURPLE}"
+            ui_item_color "4" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
+            ui_item_color "5" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
         fi
         
-        echo -e "\n ${BOLD}${CYAN}[ Opera Proxy (для OpenAI/ChatGPT) ]${NC}"
+        ui_divider "${PURPLE}"
+        ui_item_color "" "${BOLD}[ Opera Proxy (для OpenAI/ChatGPT) ]${NC}" "" "${PURPLE}"
+        
         if [ "$opera_installed" != "true" ]; then
-            echo -e "  Статус: ${RED}Не установлен${NC}"
-            echo -e "  ${BOLD}${YELLOW}6.${NC} 📥 Установить и активировать Opera Proxy"
+            ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
+            ui_item_color "6" "📥 Установить и активировать Opera Proxy" "${YELLOW}" "${PURPLE}"
         else
             local opera_status="${RED}Выключен${NC}"
             [ "$opera_enabled" == "true" ] && opera_status="${GREEN}Активен${NC}"
-            echo -e "  Статус: $opera_status"
+            ui_item_color "" "Статус: $opera_status" "" "${PURPLE}"
             if [ "$opera_enabled" == "true" ]; then
-                echo -e "  ${BOLD}${YELLOW}6.${NC} 📴 Отключить Opera Proxy"
+                ui_item_color "6" "📴 Отключить Opera Proxy" "${YELLOW}" "${PURPLE}"
             else
-                echo -e "  ${BOLD}${YELLOW}6.${NC} 🌀 Включить Opera Proxy"
+                ui_item_color "6" "🌀 Включить Opera Proxy" "${YELLOW}" "${PURPLE}"
             fi
-            echo -e "  ${BOLD}${YELLOW}7.${NC} 📝 Редактировать список доменов Opera Proxy"
-            echo -e "  ${BOLD}${RED}8.${NC} 🗑️ Удалить Opera Proxy с сервера"
+            ui_item_color "7" "📝 Редактировать список доменов Opera Proxy" "${YELLOW}" "${PURPLE}"
+            ui_item_color "8" "${RED}🗑️ Удалить Opera Proxy${NC}" "${RED}" "${PURPLE}"
         fi
         
-        echo -e "\n ${BOLD}${YELLOW}9.${NC} ↩️ Назад в главное меню"
-        echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-        read -p "Выберите действие (1-9): " bchoice
+        ui_divider "${PURPLE}"
+        ui_item_color "9" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
+        ui_footer "${PURPLE}"
+        
+        read -p " Выберите действие (1-9): " bchoice
         case $bchoice in
             1)
                 if [ "$warp_installed" != "true" ]; then
