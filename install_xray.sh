@@ -669,8 +669,8 @@ generate_server_config() {
         # Гарантируем наличие ключей и short ID
         if [[ -z "$reality_priv" || -z "$reality_pub" ]]; then
             local keys=$(which xray &>/dev/null && xray x25519 2>/dev/null || /usr/local/bin/xray x25519 2>/dev/null || xray x25519 2>/dev/null)
-            reality_priv=$(echo "$keys" | grep -i "Private key:" | awk '{print $3}' | tr -d '[:space:]')
-            reality_pub=$(echo "$keys" | grep -i "Public key:" | awk '{print $3}' | tr -d '[:space:]')
+            reality_priv=$(echo "$keys" | grep -i "private" | cut -d: -f2- | tr -d '[:space:]')
+            reality_pub=$(echo "$keys" | grep -i "public" | cut -d: -f2- | tr -d '[:space:]')
             update_marker_val "REALITY_PRIVATE_KEY" "$reality_priv"
             update_marker_val "REALITY_PUBLIC_KEY" "$reality_pub"
         fi
