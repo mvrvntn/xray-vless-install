@@ -2477,12 +2477,12 @@ EOF
                 echo -e "\n${BOLD}--- Изменение маскировочного сайта ---${NC}"
                 echo "Введите домен для маскировки (например, max.ru):"
                 read -p " SNI (по умолчанию max.ru): " new_sni
-                new_sni=$(echo "$new_sni" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                new_sni=$(echo "$new_sni" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
                 [ -z "$new_sni" ] && new_sni="max.ru"
 
                 echo "Введите адрес назначения (по умолчанию $new_sni:443):"
                 read -p " DEST (по умолчанию $new_sni:443): " new_dest
-                new_dest=$(echo "$new_dest" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                new_dest=$(echo "$new_dest" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
                 [ -z "$new_dest" ] && new_dest="$new_sni:443"
 
                 update_marker_val "REALITY_SNI" "$new_sni"
