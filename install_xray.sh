@@ -655,14 +655,15 @@ generate_server_config() {
     local warp_mode=$(get_installed_var "WARP_MODE")
     [ -z "$warp_mode" ] && warp_mode="smart"
     local opera_enabled=$(get_installed_var "OPERA_ENABLED")
+    local DOMAIN=$(get_installed_var "DOMAIN" | tr -d '[:space:]')
     
     # Загружаем настройки Reality
     local reality_enabled=$(get_installed_var "REALITY_ENABLED")
-    local reality_sni=$(get_installed_var "REALITY_SNI")
-    local reality_dest=$(get_installed_var "REALITY_DEST")
-    local reality_priv=$(get_installed_var "REALITY_PRIVATE_KEY")
-    local reality_pub=$(get_installed_var "REALITY_PUBLIC_KEY")
-    local reality_sid=$(get_installed_var "REALITY_SHORT_ID")
+    local reality_sni=$(get_installed_var "REALITY_SNI" | tr -d '[:space:]')
+    local reality_dest=$(get_installed_var "REALITY_DEST" | tr -d '[:space:]')
+    local reality_priv=$(get_installed_var "REALITY_PRIVATE_KEY" | tr -d '[:space:]')
+    local reality_pub=$(get_installed_var "REALITY_PUBLIC_KEY" | tr -d '[:space:]')
+    local reality_sid=$(get_installed_var "REALITY_SHORT_ID" | tr -d '[:space:]')
 
     if [ "$reality_enabled" == "true" ]; then
         # Гарантируем наличие ключей и short ID
@@ -1692,17 +1693,17 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 
   CONFIG_DIR="/etc/xray/client_configs"
-  DOMAIN=$(grep "^DOMAIN=" /etc/xray/.installed | cut -d= -f2)
-  EMOJI=$(grep "^EMOJI=" /etc/xray/.installed | cut -d= -f2)
+  DOMAIN=$(grep "^DOMAIN=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
+  EMOJI=$(grep "^EMOJI=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
   FLOW="xtls-rprx-vision"
-  FINGERPRINT=$(grep "^FINGERPRINT=" /etc/xray/.installed | cut -d= -f2)
+  FINGERPRINT=$(grep "^FINGERPRINT=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
   if [ -z "$FINGERPRINT" ]; then FINGERPRINT="random"; fi
   PORT=443
 
-  REALITY_ENABLED=$(grep "^REALITY_ENABLED=" /etc/xray/.installed | cut -d= -f2)
-  REALITY_SNI=$(grep "^REALITY_SNI=" /etc/xray/.installed | cut -d= -f2)
-  REALITY_PBK=$(grep "^REALITY_PUBLIC_KEY=" /etc/xray/.installed | cut -d= -f2)
-  REALITY_SID=$(grep "^REALITY_SHORT_ID=" /etc/xray/.installed | cut -d= -f2)
+  REALITY_ENABLED=$(grep "^REALITY_ENABLED=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
+  REALITY_SNI=$(grep "^REALITY_SNI=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
+  REALITY_PBK=$(grep "^REALITY_PUBLIC_KEY=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
+  REALITY_SID=$(grep "^REALITY_SHORT_ID=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
 
 mapfile -t config_files < <(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
 
