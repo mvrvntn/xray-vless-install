@@ -2530,12 +2530,11 @@ EOF
         ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
         ui_item "9" "🌐 Изменить отпечаток TLS (Fingerprint)"
         ui_item "10" "🌐 Смена основного домена (SSL)"
-        # ui_item "11" "🛡️ Настройка маскировки трафика (VLESS-Reality)"
         ui_divider
-        ui_item_color "12" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
-        ui_item "13" "🚪 Выйти из терминала" "${CYAN}"
+        ui_item_color "11" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+        ui_item "12" "🚪 Выйти из терминала" "${CYAN}"
         ui_footer
-        read -p " Выберите действие (1-13): " choice
+        read -p " Выберите действие (1-12): " choice
         case $choice in
             1) "$GENERATE_SCRIPT" ; main_menu ;;
             2) add_client ; main_menu ;;
@@ -2554,8 +2553,7 @@ EOF
                 ;;
             9) change_fingerprint ; main_menu ;;
             10) domain_management_menu ;;
-            # 11) reality_management_menu ;;
-            12) 
+            11) 
                 echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
                 read -p "Вы уверены? (y/n): " uconf
                 if [[ "$uconf" =~ ^[Yy]$ ]]; then
@@ -2564,7 +2562,7 @@ EOF
                     main_menu
                 fi
                 ;;
-            13) exit 0 ;;
+            12) exit 0 ;;
             *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
         esac
     }
