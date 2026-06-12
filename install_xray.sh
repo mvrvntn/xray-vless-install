@@ -657,8 +657,8 @@ generate_server_config() {
     local opera_enabled=$(get_installed_var "OPERA_ENABLED")
     local DOMAIN=$(get_installed_var "DOMAIN" | tr -d '[:space:]')
     
-    # Загружаем настройки Reality
-    local reality_enabled=$(get_installed_var "REALITY_ENABLED")
+    # Загружаем настройки Reality (Принудительно отключено для стабильности)
+    local reality_enabled="false"
     local reality_sni=$(get_installed_var "REALITY_SNI" | tr -d '[:space:]')
     local reality_dest=$(get_installed_var "REALITY_DEST" | tr -d '[:space:]')
     local reality_priv=$(get_installed_var "REALITY_PRIVATE_KEY" | tr -d '[:space:]')
@@ -885,10 +885,10 @@ EOF
     local fallbacks_str='[
           {
             "path": "/sub/",
-            "dest": "127.0.0.1:10080"
+            "dest": 10080
           },
           {
-            "dest": "127.0.0.1:10080"
+            "dest": 10080
           }
         ]'
 
@@ -904,23 +904,15 @@ EOF
         "fallbacks": [
           {
             "name": "'"$DOMAIN"'",
-            "dest": "127.0.0.1:4433"
+            "dest": 4433
           },
           {
             "name": "'"$reality_sni"'",
-            "dest": "127.0.0.1:4434"
+            "dest": 4434
           },
           {
             "dest": "'"$reality_dest"'"
           }
-        ]
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
         ]
       },
       "streamSettings": {
@@ -973,6 +965,15 @@ EOF
       "settings": {
         "clients": ['"$vless_clients_str"'],
         "decryption": "none"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "routeOnly": true
       },
       "streamSettings": {
         "network": "tcp",
@@ -1515,7 +1516,8 @@ def get_installed_vars():
         "reality_enabled": "false",
         "reality_sni": "max.ru",
         "reality_pbk": "",
-        "reality_sid": ""
+        "reality_sid": "",
+        "routing_enabled": "true"
     }
     try:
         if os.path.exists(INSTALLED_FILE):
@@ -1532,6 +1534,7 @@ def get_installed_vars():
                         elif key == "reality_sni": vars["reality_sni"] = val
                         elif key == "reality_public_key": vars["reality_pbk"] = val
                         elif key == "reality_short_id": vars["reality_sid"] = val
+                        elif key == "routing_enabled": vars["routing_enabled"] = val
     except Exception:
         pass
     if not vars["fp"]:
@@ -1615,10 +1618,13 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
         
-        if "incy" in user_agent:
-            _routing = incy_resolver.get()
-        else:
-            _routing = happ_resolver.get()
+        routing_enabled = ivars.get("routing_enabled", "true") != "false"
+        _routing = ""
+        if routing_enabled:
+            if "incy" in user_agent:
+                _routing = incy_resolver.get()
+            else:
+                _routing = happ_resolver.get()
 
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -1643,7 +1649,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("fragmentation-length", "10-30")
         self.send_header("fragmentation-interval", "10-20")
 
-        if _routing:
+        if routing_enabled and _routing:
             self.send_header("routing", _routing)
             self.send_header("routing-enable", "true")
         self.end_headers()
@@ -2289,7 +2295,7 @@ EOF
         ui_header "🖥️  СТАТУС СЕРВЕРА"
         ui_status "🌐" "Сервер" "${GREEN}$domain${NC}"
         ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
-        ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status] | Reality: [$reality_status]"
+        ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status]"
         ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
         ui_footer
     }
@@ -2524,7 +2530,7 @@ EOF
         ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
         ui_item "9" "🌐 Изменить отпечаток TLS (Fingerprint)"
         ui_item "10" "🌐 Смена основного домена (SSL)"
-        ui_item "11" "🛡️ Настройка маскировки трафика (VLESS-Reality)"
+        # ui_item "11" "🛡️ Настройка маскировки трафика (VLESS-Reality)"
         ui_divider
         ui_item_color "12" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
         ui_item "13" "🚪 Выйти из терминала" "${CYAN}"
@@ -2548,7 +2554,7 @@ EOF
                 ;;
             9) change_fingerprint ; main_menu ;;
             10) domain_management_menu ;;
-            11) reality_management_menu ;;
+            # 11) reality_management_menu ;;
             12) 
                 echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
                 read -p "Вы уверены? (y/n): " uconf
@@ -2593,6 +2599,20 @@ EOF
         sleep 1.5
     }
 
+    toggle_warp_auto_update() {
+        local script_path=$(realpath "$0")
+        if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
+            echo "📴 Отключение автообновления геоблокировок..."
+            (crontab -l 2>/dev/null | grep -v 'update-geoblocks') | crontab -
+            echo -e "${GREEN}✅ Автообновление отключено${NC}"
+        else
+            echo "🔄 Включение автообновления геоблокировок..."
+            (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; echo "30 3 * * * bash $script_path --update-geoblocks >/dev/null 2>&1") | crontab -
+            echo -e "${GREEN}✅ Автообновление включено (ежедневно в 03:30)${NC}"
+        fi
+        sleep 1.5
+    }
+
     bypass_menu() {
         local warp_installed=$(get_installed_var "WARP_INSTALLED")
         local warp_enabled=$(get_installed_var "WARP_ENABLED")
@@ -2622,8 +2642,14 @@ EOF
             fi
             ui_item_color "2" "⚙️ Изменить режим WARP (Smart / Full)" "${YELLOW}" "${PURPLE}"
             ui_item_color "3" "🔄 Обновить список геоблокировок WARP" "${YELLOW}" "${PURPLE}"
-            ui_item_color "4" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
-            ui_item_color "5" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
+            
+            local cron_status="${RED}Выключено${NC}"
+            if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
+                cron_status="${GREEN}Включено${NC}"
+            fi
+            ui_item_color "4" "🕒 Автообновление геоблоков: $cron_status" "${YELLOW}" "${PURPLE}"
+            ui_item_color "5" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
+            ui_item_color "6" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
         fi
         
         ui_divider "${PURPLE}"
@@ -2631,26 +2657,42 @@ EOF
         
         if [ "$opera_installed" != "true" ]; then
             ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
-            ui_item_color "6" "📥 Установить и активировать Opera Proxy" "${YELLOW}" "${PURPLE}"
+            ui_item_color "7" "📥 Установить и активировать Opera Proxy" "${YELLOW}" "${PURPLE}"
         else
             local opera_status="${RED}Выключен${NC}"
             [ "$opera_enabled" == "true" ] && opera_status="${GREEN}Активен${NC}"
             ui_item_color "" "Статус: $opera_status" "" "${PURPLE}"
             if [ "$opera_enabled" == "true" ]; then
-                ui_item_color "6" "📴 Отключить Opera Proxy" "${YELLOW}" "${PURPLE}"
+                ui_item_color "7" "📴 Отключить Opera Proxy" "${YELLOW}" "${PURPLE}"
             else
-                ui_item_color "6" "🌀 Включить Opera Proxy" "${YELLOW}" "${PURPLE}"
+                ui_item_color "7" "🌀 Включить Opera Proxy" "${YELLOW}" "${PURPLE}"
             fi
-            ui_item_color "7" "📝 Редактировать список доменов Opera Proxy" "${YELLOW}" "${PURPLE}"
-            ui_item_color "8" "${RED}🗑️ Удалить Opera Proxy${NC}" "${RED}" "${PURPLE}"
+            ui_item_color "8" "📝 Редактировать список доменов Opera Proxy" "${YELLOW}" "${PURPLE}"
+            ui_item_color "9" "${RED}🗑️ Удалить Opera Proxy${NC}" "${RED}" "${PURPLE}"
         fi
         
         ui_divider "${PURPLE}"
-        ui_item_color "9" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
+        ui_item_color "" "${BOLD}[ Настройки подписки ]${NC}" "" "${PURPLE}"
+        local routing_enabled=$(get_installed_var "ROUTING_ENABLED")
+        [ -z "$routing_enabled" ] && routing_enabled="true"
+        local routing_status="${RED}Отключена${NC}"
+        [ "$routing_enabled" == "true" ] && routing_status="${GREEN}Включена${NC}"
+        ui_item_color "" "Передача маршрутов (Routing): $routing_status" "" "${PURPLE}"
+        if [ "$routing_enabled" == "true" ]; then
+            ui_item_color "10" "📴 Отключить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
+        else
+            ui_item_color "10" "🌀 Включить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
+        fi
+        
+        ui_divider "${PURPLE}"
+        ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
         ui_footer "${PURPLE}"
         
-        read -p " Выберите действие (1-9): " bchoice
+        read -p " Выберите действие (0-10): " bchoice
         case $bchoice in
+            0)
+                main_menu
+                ;;
             1)
                 if [ "$warp_installed" != "true" ]; then
                     install_warp
@@ -2701,6 +2743,14 @@ EOF
                 ;;
             4)
                 if [ "$warp_installed" == "true" ]; then
+                    toggle_warp_auto_update
+                else
+                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                fi
+                bypass_menu
+                ;;
+            5)
+                if [ "$warp_installed" == "true" ]; then
                     install_warp
                     DOMAIN=$(get_installed_var "DOMAIN")
                     NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
@@ -2711,14 +2761,15 @@ EOF
                 sleep 1.5
                 bypass_menu
                 ;;
-            5)
+            6)
                 if [ "$warp_installed" == "true" ]; then
                     uninstall_warp
+                else
+                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
                 fi
-                sleep 1.5
                 bypass_menu
                 ;;
-            6)
+            7)
                 if [ "$opera_installed" != "true" ]; then
                     install_opera_proxy
                 else
@@ -2727,7 +2778,7 @@ EOF
                 sleep 1.5
                 bypass_menu
                 ;;
-            7)
+            8)
                 if [ "$opera_installed" == "true" ]; then
                     if command -v nano &>/dev/null; then
                         nano /etc/xray/opera.lst
@@ -2744,15 +2795,27 @@ EOF
                 fi
                 bypass_menu
                 ;;
-            8)
+            9)
                 if [ "$opera_installed" == "true" ]; then
                     uninstall_opera_proxy
+                else
+                    echo -e "${RED}❌ Установите Opera Proxy сначала!${NC}"
                 fi
                 sleep 1.5
                 bypass_menu
                 ;;
-            9)
-                main_menu
+            10)
+                local current_status=$(get_installed_var "ROUTING_ENABLED")
+                if [ "$current_status" == "false" ]; then
+                    update_marker_val "ROUTING_ENABLED" "true"
+                    echo -e "${GREEN}✅ Передача маршрутов включена по умолчанию.${NC}"
+                else
+                    update_marker_val "ROUTING_ENABLED" "false"
+                    echo -e "${GREEN}✅ Передача маршрутов отключена.${NC}"
+                fi
+                setup_subscription_server
+                sleep 1.5
+                bypass_menu
                 ;;
             *)
                 echo -e "${RED}❌ Неверный выбор!${NC}"
