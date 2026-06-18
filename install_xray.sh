@@ -33,6 +33,109 @@ install_xry_command() {
     fi
 }
 
+# === Оптимизация VPS (Xanmod + Limits + Sysctl) ===
+optimize_vps() {
+    echo -e "\n${BOLD}${CYAN}🔧 Запуск оптимизации VPS...${NC}"
+    
+    # Установка системных лимитов (ulimit)
+    echo -e "${YELLOW}Настройка системных лимитов...${NC}"
+    local prof_path="/etc/profile"
+    sed -i '/ulimit -n/d' $prof_path
+    sed -i '/ulimit -s/d' $prof_path
+    echo "ulimit -n 1048576" | tee -a $prof_path >/dev/null
+    echo "ulimit -s -H 65536" | tee -a $prof_path >/dev/null
+    echo "ulimit -s 32768" | tee -a $prof_path >/dev/null
+    
+    # Обновление лимитов systemd
+    local sys_conf="/etc/systemd/system.conf"
+    local usr_conf="/etc/systemd/user.conf"
+    
+    for conf in "$sys_conf" "$usr_conf"; do
+        if grep -q "^DefaultLimitNOFILE=" "$conf"; then
+            sed -i "s/^DefaultLimitNOFILE=.*/DefaultLimitNOFILE=1048576/" "$conf"
+        else
+            echo "DefaultLimitNOFILE=1048576" >> "$conf"
+        fi
+        if grep -q "^DefaultLimitNPROC=" "$conf"; then
+            sed -i "s/^DefaultLimitNPROC=.*/DefaultLimitNPROC=1048576/" "$conf"
+        else
+            echo "DefaultLimitNPROC=1048576" >> "$conf"
+        fi
+    done
+    systemctl daemon-reexec
+
+    # Установка расширенных сетевых параметров (sysctl)
+    echo -e "${YELLOW}Настройка расширенных сетевых параметров...${NC}"
+    local sysctl_opt_file="/etc/sysctl.d/99-xray-optimize.conf"
+    cat <<EOF > "$sysctl_opt_file"
+# File system settings
+fs.file-max = 67108864
+
+# Network core settings
+net.core.somaxconn = 65536
+net.core.netdev_max_backlog = 32768
+net.core.optmem_max = 262144
+
+# TCP and UDP memory limits
+net.ipv4.tcp_rmem = 16384 1048576 33554432
+net.ipv4.tcp_wmem = 16384 1048576 33554432
+net.ipv4.tcp_mem = 65536 1048576 33554432
+net.ipv4.udp_mem = 65536 1048576 33554432
+EOF
+    sysctl -p "$sysctl_opt_file" > /dev/null 2>&1
+
+    # Установка ядра Xanmod
+    echo -e "${YELLOW}Определение архитектуры процессора и установка ядра Xanmod...${NC}"
+    apt update && apt install -y ca-certificates curl gnupg lsb-release gawk
+    
+    local cpu_level
+    cpu_level=$(awk -f - <<'EOF'
+    BEGIN {
+        while (!/flags/) if (getline < "/proc/cpuinfo" != 1) exit 1
+        if (/lm/&&/cmov/&&/cx8/&&/fpu/&&/fxsr/&&/mmx/&&/syscall/&&/sse2/) level = 1
+        if (level == 1 && /cx16/&&/lahf/&&/popcnt/&&/sse4_1/&&/sse4_2/&&/ssse3/) level = 2
+        if (level == 2 && /avx/&&/avx2/&&/bmi1/&&/bmi2/&&/f16c/&&/fma/&&/abm/&&/movbe/&&/xsave/) level = 3
+        if (level == 3 && /avx512f/&&/avx512bw/&&/avx512cd/&&/avx512dq/&&/avx512vl/) level = 4
+        if (level > 0) { print level; exit level + 1 }
+        exit 1
+    }
+EOF
+    )
+
+    if [ -z "$cpu_level" ] || [ "$cpu_level" -lt 1 ]; then
+        echo -e "${RED}❌ Не удалось определить уровень CPU или архитектура не поддерживается.${NC}"
+    else
+        echo -e "${GREEN}👉 Определен уровень CPU: v${cpu_level}${NC}"
+        
+        # Переопределяем v4 на v3
+        if [ "$cpu_level" -eq 4 ]; then
+            echo -e "${YELLOW}👉 Уровень CPU v4 понижен до v3 по требованию стабильности.${NC}"
+            cpu_level=3
+        fi
+
+        if curl -fsSL https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
+            echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
+            apt update
+            
+            echo -e "${YELLOW}Установка linux-xanmod-x64v${cpu_level}...${NC}"
+            apt install -y "linux-xanmod-x64v${cpu_level}"
+            if [ $? -eq 0 ]; then
+                echo -e "${GREEN}✅ Ядро Xanmod успешно установлено!${NC}"
+            else
+                echo -e "${RED}❌ Ошибка при установке ядра Xanmod. Продолжаем работу...${NC}"
+            fi
+        else
+             echo -e "${RED}❌ Не удалось скачать ключ Xanmod. Пропускаем установку ядра.${NC}"
+        fi
+    fi
+
+    echo -e "\n${BOLD}${GREEN}✅ Оптимизация завершена! Сервер будет перезагружен.${NC}"
+    echo -e "${BOLD}${YELLOW}ВАЖНО: После перезагрузки запустите скрипт установки Xray СНОВА, чтобы продолжить!${NC}"
+    read -p "Нажмите Enter для перезагрузки..."
+    reboot
+    exit 0
+}
+
 # === Проверка прав root ===
 if [ "$(id -u)" != "0" ]; then
     echo "❌ Этот скрипт должен запускаться с правами root"
@@ -3059,6 +3162,16 @@ else
     echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
     echo -e " Добро пожаловать! Давайте настроим ваш новый VPN-сервер."
     echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+    
+    if [ ! -f "$MARKER_FILE" ]; then
+        echo -e "\n ${BOLD}${YELLOW}ОПТИМИЗАЦИЯ VPS${NC}"
+        read -p " Выполнить базовую оптимизацию VPS (установка ядра Xanmod v3 и настройка системных лимитов)? 
+ Рекомендуется для чистой ОС Debian 12/13. Сервер будет перезагружен. [y/N]: " opt_choice
+        if [[ "$opt_choice" =~ ^[Yy]$ ]]; then
+            optimize_vps
+        fi
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+    fi
     
     # 1. Ввод домена с валидацией
     while true; do
