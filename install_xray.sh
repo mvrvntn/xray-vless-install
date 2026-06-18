@@ -1604,7 +1604,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
-        announce_text = f"Профиль: {client_name} [Безлимитный] • Локации: VLESS (TCP), Hysteria2 (UDP) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
+        announce_text = f"Профиль: {client_name} • Локации: VLESS (TCP), Hysteria2 (UDP) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
         support_url = "https://t.me/mavrtunbot"
