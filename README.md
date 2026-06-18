@@ -126,15 +126,22 @@ sudo bash install_xray.sh --update-geoblocks
 
 ### 📝 Как поставить их вместе
 
-#### Шаг 1. Освобождаем порт 443 TCP в AntiZapret
-AntiZapret по умолчанию занимает `443 TCP` как резервный канал для OpenVPN. Чтобы отдать этот порт быстрому Xray VLESS, сделайте следующее:
-1. Поставьте **AntiZapret-VPN** как обычно.
-2. Во время или после установки остановите и выключите TCP-службы AntiZapret:
-   ```bash
-   sudo systemctl stop openvpn-server@antizapret-tcp openvpn-server@antizapret-no-vpn-tcp 2>/dev/null
-   sudo systemctl disable openvpn-server@antizapret-tcp openvpn-server@antizapret-no-vpn-tcp 2>/dev/null
-   ```
-   *(Весь обход блокировок в AntiZapret продолжит отлично работать через UDP).*
+#### Шаг 1. Освобождаем порты 443 (TCP и UDP) в AntiZapret
+AntiZapret может занимать порты `443 TCP` и `443 UDP` как резервные для OpenVPN, но они нужны для работы Xray VLESS и Hysteria 2. В свежем установщике AntiZapret можно заранее отключить эти настройки.
+
+**При новой установке AntiZapret:**
+На вопросы скрипта отвечайте так, чтобы не занимать порты:
+* `Enable OpenVPN TCP? [y/n]:` — введите **n**
+* `Use TCP ports 80, 443, 504, 508 as backup for OpenVPN connections? [y/n]:` — введите **n**
+* `Use UDP ports 80, 443, 504, 508 as backup for OpenVPN connections? [y/n]:` — введите **n**
+*(Весь обход блокировок в AntiZapret продолжит отлично работать через стандартные UDP-порты).*
+
+**Если AntiZapret уже установлен со старыми настройками:**
+Просто остановите и выключите его TCP-службы:
+```bash
+sudo systemctl stop openvpn-server@antizapret-tcp openvpn-server@antizapret-no-vpn-tcp 2>/dev/null
+sudo systemctl disable openvpn-server@antizapret-tcp openvpn-server@antizapret-no-vpn-tcp 2>/dev/null
+```
 
 #### Шаг 2. Ставим VLESS TCP
 Запускаем установку нашего скрипта:
