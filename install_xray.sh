@@ -1717,7 +1717,30 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             sub_content = sub_content_links
         else:
             # Задаем комментарии с метаданными подписки (используем base64 для безопасной передачи кириллицы в Incy/Happ)
-            sub_content = f"#profile-title: {b64_client_display}\n#profile-update-interval: 1\n#support-url: {support_url}\n#profile-web-page-url: https://mvrvntn.github.io/koridor/\n#announce: {b64_announce}\n#fragmentation-enable: 1\n#fragmentation-packets: tlshello\n#fragmentation-length: 10-30\n#fragmentation-interval: 10-20\n{sub_content_links}"
+            sub_metadata = (
+                f"#profile-title: {b64_client_display}\n"
+                f"#profile-update-interval: 1\n"
+                f"#support-url: {support_url}\n"
+                f"#profile-web-page-url: https://mvrvntn.github.io/koridor/\n"
+                f"#announce: {b64_announce}\n"
+                f"#fragmentation-enable: 1\n"
+                f"#fragmentation-packets: tlshello\n"
+                f"#fragmentation-length: 10-30\n"
+                f"#fragmentation-interval: 10-20\n"
+                f"#hide-url: 1\n"
+                f"#noises-enable: 0\n"
+                f"#no-limit-enabled: 1\n"
+                f"#per-app-proxy-enable: 0\n"
+            )
+            if "incy" in user_agent:
+                sub_metadata += (
+                    "#server-address-resolve-enable: 1\n"
+                    "#server-address-resolve-dns-domain: https://common.dot.dns.yandex.net/dns-query\n"
+                    "#server-address-resolve-dns-ip: 77.88.8.8\n"
+                    "#banner-bg-color: #F4F4F5\n"
+                    "#banner-button-color: #1A1A1A\n"
+                )
+            sub_content = sub_metadata + sub_content_links
             
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
         
@@ -1745,6 +1768,20 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("subscription-ping-onopen-enabled", "1")
         self.send_header("subscription-autoconnect", "1")
         self.send_header("subscription-autoconnect-type", "lastused")
+        
+        # UX настройки для Happ/Incy
+        self.send_header("hide-url", "1")
+        self.send_header("noises-enable", "0")
+        self.send_header("no-limit-enabled", "1")
+        self.send_header("per-app-proxy-enable", "0")
+        
+        # Дополнительное резолве доменных имен для Incy
+        if "incy" in user_agent:
+            self.send_header("server-address-resolve-enable", "1")
+            self.send_header("server-address-resolve-dns-domain", "https://common.dot.dns.yandex.net/dns-query")
+            self.send_header("server-address-resolve-dns-ip", "77.88.8.8")
+            self.send_header("banner-bg-color", "#F4F4F5")
+            self.send_header("banner-button-color", "#1A1A1A")
         
         # Анти-DPI фрагментация на стороне клиента (для Incy/Happ)
         self.send_header("fragmentation-enable", "1")
