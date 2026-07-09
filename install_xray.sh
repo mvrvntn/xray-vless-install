@@ -1620,7 +1620,8 @@ def get_installed_vars():
         "reality_sni": "max.ru",
         "reality_pbk": "",
         "reality_sid": "",
-        "routing_enabled": "true"
+        "routing_enabled": "true",
+        "providerid": ""
     }
     try:
         if os.path.exists(INSTALLED_FILE):
@@ -1638,6 +1639,7 @@ def get_installed_vars():
                         elif key == "reality_public_key": vars["reality_pbk"] = val
                         elif key == "reality_short_id": vars["reality_sid"] = val
                         elif key == "routing_enabled": vars["routing_enabled"] = val
+                        elif key in ("provider_id", "providerid"): vars["providerid"] = val
     except Exception:
         pass
     if not vars["fp"]:
@@ -1680,6 +1682,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         domain = ivars["domain"]
         emoji = ivars["emoji"]
         fp = ivars["fp"]
+        providerid = ivars.get("providerid", "")
         if not domain:
             domain = self.headers.get('Host', '').split(':')[0]
 
@@ -1732,6 +1735,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 f"#no-limit-enabled: 1\n"
                 f"#per-app-proxy-enable: 0\n"
             )
+            if providerid:
+                sub_metadata = f"#providerid {providerid}\n" + sub_metadata
             if "incy" in user_agent:
                 sub_metadata += (
                     "#server-address-resolve-enable: 1\n"
@@ -1762,6 +1767,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("support-url", support_url)
         self.send_header("profile-web-page-url", "https://mvrvntn.github.io/koridor/")
         self.send_header("announce", b64_announce)
+        if providerid:
+            self.send_header("providerid", providerid)
         
         # Улучшение UX (Авто-обновление и пинг)
         self.send_header("subscription-auto-update-enable", "1")
@@ -2655,6 +2662,51 @@ EOF
         esac
     }
 
+    manage_provider_id() {
+        ui_header "🔑 УПРАВЛЕНИЕ PROVIDER ID"
+        local current_pid=$(get_installed_var "PROVIDER_ID")
+        if [ -z "$current_pid" ]; then
+            echo -e " Текущий статус: ${RED}Не установлен${NC}"
+        else
+            echo -e " Текущий статус: ${GREEN}${current_pid}${NC}"
+        fi
+        ui_divider
+        ui_item "1" "✏️ Указать / Изменить Provider ID"
+        ui_item "2" "🗑️ Удалить Provider ID"
+        ui_item "0" "⬅️ Вернуться в главное меню"
+        ui_footer
+        read -p " Выберите действие (0-2): " pid_choice
+        case $pid_choice in
+            1)
+                read -p " Введите ваш Provider ID с happ-proxy.com: " new_pid
+                if [ -n "$new_pid" ]; then
+                    update_marker_val "PROVIDER_ID" "$new_pid"
+                    echo -e "${GREEN}✅ Provider ID успешно сохранен!${NC}"
+                    systemctl restart xray-sub >/dev/null 2>&1
+                else
+                    echo -e "${RED}❌ Пустое значение!${NC}"
+                fi
+                sleep 1.5
+                manage_provider_id
+                ;;
+            2)
+                update_marker_val "PROVIDER_ID" ""
+                echo -e "${GREEN}✅ Provider ID удален!${NC}"
+                systemctl restart xray-sub >/dev/null 2>&1
+                sleep 1.5
+                manage_provider_id
+                ;;
+            0)
+                main_menu
+                ;;
+            *)
+                echo -e "${RED}❌ Неверный выбор!${NC}"
+                sleep 1
+                manage_provider_id
+                ;;
+        esac
+    }
+
     main_menu() {
         show_status_dashboard
         ui_header "⚡  ГЛАВНОЕ МЕНЮ"
@@ -2670,11 +2722,12 @@ EOF
         ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
         ui_item "9" "🌐 Изменить отпечаток TLS (Fingerprint)"
         ui_item "10" "🌐 Смена основного домена (SSL)"
+        ui_item "11" "🔑 Управление Provider ID (happ-proxy.com)"
         ui_divider
-        ui_item_color "11" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
-        ui_item "12" "🚪 Выйти из терминала" "${CYAN}"
+        ui_item_color "12" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+        ui_item "13" "🚪 Выйти из терминала" "${CYAN}"
         ui_footer
-        read -p " Выберите действие (1-12): " choice
+        read -p " Выберите действие (1-13): " choice
         case $choice in
             1) "$GENERATE_SCRIPT" ; main_menu ;;
             2) add_client ; main_menu ;;
@@ -2693,7 +2746,8 @@ EOF
                 ;;
             9) change_fingerprint ; main_menu ;;
             10) domain_management_menu ;;
-            11) 
+            11) manage_provider_id ;;
+            12) 
                 echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
                 read -p "Вы уверены? (y/n): " uconf
                 if [[ "$uconf" =~ ^[Yy]$ ]]; then
@@ -2702,7 +2756,7 @@ EOF
                     main_menu
                 fi
                 ;;
-            12) exit 0 ;;
+            13) exit 0 ;;
             *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
         esac
     }

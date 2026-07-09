@@ -1,10 +1,22 @@
 {
+  "C:\\Users\\mvrvntn\\Desktop\\PROJECTS\\vless_server_instal\\debian-optimizer.sh": {
+    "mtime": 1781782942.0234523,
+    "hash": "68cc3bcdb6393631ca220546f39c904b"
+  },
   "C:\\Users\\mvrvntn\\Desktop\\PROJECTS\\vless_server_instal\\install_xray.sh": {
-    "mtime": 1780493277.9008996,
-    "hash": "d44b8232489d2e546f6dff90abebf503"
+    "mtime": 1783634522.5949292,
+    "hash": "e08db7f1b4876dc5680e020d6519576a"
+  },
+  "C:\\Users\\mvrvntn\\Desktop\\PROJECTS\\vless_server_instal\\optimizer.sh": {
+    "mtime": 1781780485.9272225,
+    "hash": "557298d0d621ead3c0176790565dcd54"
+  },
+  "C:\\Users\\mvrvntn\\Desktop\\PROJECTS\\vless_server_instal\\xmohammad_opt.sh": {
+    "mtime": 1781780509.098673,
+    "hash": "22ed4d3f39161a95d751646bdcefe19e"
   },
   "C:\\Users\\mvrvntn\\Desktop\\PROJECTS\\vless_server_instal\\README.md": {
-    "mtime": 1780493041.344004,
-    "hash": "d3133bb1a965e09ff499ea47d92fe662"
+    "mtime": 1781783178.6499798,
+    "hash": "f7ee4efe19a5f0516fc1be601bd51a5a"
   }
 }
