@@ -1670,6 +1670,413 @@ def get_installed_vars():
         vars["fp"] = "random"
     return vars
 
+def dict_to_yaml(data, indent=0):
+    lines = []
+    spacer = " " * indent
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if v is None:
+                lines.append(f"{spacer}{k}: null")
+            elif isinstance(v, (dict, list)):
+                lines.append(f"{spacer}{k}:")
+                lines.append(dict_to_yaml(v, indent + 2))
+            elif isinstance(v, bool):
+                lines.append(f"{spacer}{k}: {str(v).lower()}")
+            elif isinstance(v, (int, float)):
+                lines.append(f"{spacer}{k}: {v}")
+            else:
+                escaped = str(v).replace('"', '\\"')
+                lines.append(f"{spacer}{k}: \"{escaped}\"")
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, (dict, list)):
+                sub = dict_to_yaml(item, 0)
+                sub_lines = sub.split("\n")
+                if sub_lines:
+                    sub_lines[0] = f"{spacer}- {sub_lines[0]}"
+                    for i in range(1, len(sub_lines)):
+                        sub_lines[i] = f"{spacer}  {sub_lines[i]}"
+                    lines.append("\n".join(sub_lines))
+            else:
+                if isinstance(item, bool):
+                    lines.append(f"{spacer}- {str(item).lower()}")
+                elif isinstance(item, (int, float)):
+                    lines.append(f"{spacer}- {item}")
+                else:
+                    escaped = str(item).replace('"', '\\"')
+                    lines.append(f"{spacer}- \"{escaped}\"")
+    return "\n".join(lines)
+
+def vless_url_to_sing_box_outbound(url: str):
+    if not url.startswith("vless://"):
+        return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            uuid, host_port = netloc.split("@", 1)
+        else:
+            return None
+            
+        if ":" in host_port:
+            host, port_str = host_port.split(":", 1)
+            port = int(port_str)
+        else:
+            host = host_port
+            port = 443
+            
+        params = urllib.parse.parse_qs(parsed.query)
+        
+        def get_param(name: str):
+            val = params.get(name) or params.get(name + "[]")
+            return val[0] if val else None
+
+        flow = get_param("flow")
+        security = get_param("security")
+        sni = get_param("sni")
+        fp = get_param("fp") or "chrome"
+        pbk = get_param("pbk")
+        sid = get_param("sid")
+        transport_type = get_param("type")
+        path = get_param("path")
+        service_name = get_param("serviceName") or get_param("service_name")
+        
+        tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else host
+        
+        outbound = {
+            "type": "vless",
+            "tag": tag,
+            "server": host,
+            "server_port": port,
+            "uuid": uuid,
+            "packet_encoding": "xudp"
+        }
+        
+        if flow:
+            outbound["flow"] = flow
+            
+        if security == "reality":
+            outbound["tls"] = {
+                "enabled": True,
+                "server_name": sni or host,
+                "utls": {
+                    "enabled": True,
+                    "fingerprint": fp
+                },
+                "reality": {
+                    "enabled": True,
+                    "public_key": pbk or "",
+                    "short_id": sid or ""
+                }
+            }
+        elif security == "tls":
+            outbound["tls"] = {
+                "enabled": True,
+                "server_name": sni or host,
+                "utls": {
+                    "enabled": True,
+                    "fingerprint": fp
+                }
+            }
+            
+        if transport_type == "ws":
+            outbound["transport"] = {
+                "type": "ws",
+                "path": path or "/",
+            }
+        elif transport_type == "grpc":
+            outbound["transport"] = {
+                "type": "grpc",
+                "service_name": service_name or "grpc"
+            }
+        elif transport_type == "httpupgrade":
+            outbound["transport"] = {
+                "type": "httpupgrade",
+                "path": path or "/",
+                "host": sni or host
+            }
+            
+        return outbound
+    except Exception:
+        return None
+
+def hysteria2_url_to_sing_box_outbound(url: str):
+    if not url.startswith("hysteria2://"):
+        return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            auth, host_port = netloc.split("@", 1)
+            if ":" in auth:
+                password = auth.split(":", 1)[0]
+            else:
+                password = auth
+        else:
+            return None
+            
+        if ":" in host_port:
+            host, port_str = host_port.split(":", 1)
+            port = int(port_str)
+        else:
+            host = host_port
+            port = 443
+            
+        params = urllib.parse.parse_qs(parsed.query)
+        
+        def get_param(name: str):
+            val = params.get(name) or params.get(name + "[]")
+            return val[0] if val else None
+
+        sni = get_param("sni")
+        tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else host
+        
+        outbound = {
+            "type": "hysteria2",
+            "tag": tag,
+            "server": host,
+            "server_port": port,
+            "password": password,
+            "tls": {
+                "enabled": True,
+                "server_name": sni or host,
+                "insecure": False
+            }
+        }
+        return outbound
+    except Exception:
+        return None
+
+def vless_url_to_xray_outbound(url: str, index: int):
+    if not url.startswith("vless://"):
+        return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            uuid, host_port = netloc.split("@", 1)
+        else:
+            return None
+            
+        if ":" in host_port:
+            host, port_str = host_port.split(":", 1)
+            port = int(port_str)
+        else:
+            host = host_port
+            port = 443
+            
+        params = urllib.parse.parse_qs(parsed.query)
+        
+        def get_param(name: str):
+            val = params.get(name) or params.get(name + "[]")
+            return val[0] if val else None
+
+        flow = get_param("flow")
+        security = get_param("security")
+        sni = get_param("sni")
+        fp = get_param("fp") or "chrome"
+        pbk = get_param("pbk")
+        sid = get_param("sid")
+        transport_type = get_param("type")
+        path = get_param("path")
+        service_name = get_param("serviceName") or get_param("service_name")
+        
+        tag = f"proxy-{index}"
+        
+        outbound = {
+            "protocol": "vless",
+            "tag": tag,
+            "settings": {
+                "vnext": [
+                    {
+                        "address": host,
+                        "port": port,
+                        "users": [
+                            {
+                                "id": uuid,
+                                "encryption": "none"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": transport_type or "tcp",
+                "security": security or "none"
+            }
+        }
+        
+        if flow:
+            outbound["settings"]["vnext"][0]["users"][0]["flow"] = flow
+            
+        if security == "reality":
+            outbound["streamSettings"]["realitySettings"] = {
+                "publicKey": pbk or "",
+                "fingerprint": fp,
+                "serverName": sni or host,
+                "shortId": sid or "",
+                "spiderX": "/"
+            }
+        elif security == "tls":
+            outbound["streamSettings"]["tlsSettings"] = {
+                "serverName": sni or host,
+                "fingerprint": fp
+            }
+            
+        if transport_type == "ws":
+            outbound["streamSettings"]["wsSettings"] = {
+                "path": path or "/",
+                "headers": {
+                    "Host": sni or host
+                }
+            }
+        elif transport_type == "grpc":
+            outbound["streamSettings"]["grpcSettings"] = {
+                "serviceName": service_name or "grpc",
+                "multiMode": True
+            }
+        elif transport_type == "httpupgrade":
+            outbound["streamSettings"]["httpupgradeSettings"] = {
+                "path": path or "/",
+                "host": sni or host
+            }
+            
+        return outbound
+    except Exception:
+        return None
+
+def vless_url_to_mihomo_proxy(url: str):
+    if not url.startswith("vless://"):
+        return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            uuid, host_port = netloc.split("@", 1)
+        else:
+            return None
+            
+        if ":" in host_port:
+            host, port_str = host_port.split(":", 1)
+            port = int(port_str)
+        else:
+            host = host_port
+            port = 443
+            
+        params = urllib.parse.parse_qs(parsed.query)
+        
+        def get_param(name: str):
+            val = params.get(name) or params.get(name + "[]")
+            return val[0] if val else None
+
+        flow = get_param("flow")
+        security = get_param("security")
+        sni = get_param("sni")
+        fp = get_param("fp") or "chrome"
+        pbk = get_param("pbk")
+        sid = get_param("sid")
+        transport_type = get_param("type")
+        path = get_param("path")
+        service_name = get_param("serviceName") or get_param("service_name")
+        
+        tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else host
+        
+        proxy = {
+            "name": tag,
+            "type": "vless",
+            "server": host,
+            "port": port,
+            "uuid": uuid,
+            "udp": True,
+            "tls": True if security in ("tls", "reality") else False,
+            "network": transport_type or "tcp"
+        }
+        
+        if flow:
+            proxy["flow"] = flow
+            
+        if security == "reality":
+            proxy["reality-opts"] = {
+                "public-key": pbk or "",
+                "short-id": sid or ""
+            }
+            proxy["client-fingerprint"] = fp
+            if sni:
+                proxy["servername"] = sni
+        elif security == "tls":
+            proxy["client-fingerprint"] = fp
+            if sni:
+                proxy["servername"] = sni
+                
+        if transport_type == "ws":
+            proxy["ws-opts"] = {
+                "path": path or "/",
+                "headers": {
+                    "Host": sni or host
+                }
+            }
+        elif transport_type == "grpc":
+            proxy["grpc-opts"] = {
+                "grpc-service-name": service_name or "grpc"
+            }
+        elif transport_type == "httpupgrade":
+            proxy["httpupgrade-opts"] = {
+                "path": path or "/",
+                "headers": {
+                    "Host": sni or host
+                }
+            }
+            
+        return proxy
+    except Exception:
+        return None
+
+def hysteria2_url_to_mihomo_proxy(url: str):
+    if not url.startswith("hysteria2://"):
+        return None
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = parsed.netloc
+        if "@" in netloc:
+            auth, host_port = netloc.split("@", 1)
+            if ":" in auth:
+                password = auth.split(":", 1)[0]
+            else:
+                password = auth
+        else:
+            return None
+            
+        if ":" in host_port:
+            host, port_str = host_port.split(":", 1)
+            port = int(port_str)
+        else:
+            host = host_port
+            port = 443
+            
+        params = urllib.parse.parse_qs(parsed.query)
+        
+        def get_param(name: str):
+            val = params.get(name) or params.get(name + "[]")
+            return val[0] if val else None
+
+        sni = get_param("sni")
+        tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else host
+        
+        proxy = {
+            "name": tag,
+            "type": "hysteria2",
+            "server": host,
+            "port": port,
+            "password": password,
+            "auth-str": password,
+            "sni": sni or host,
+            "skip-cert-verify": False,
+            "alpn": ["h3"]
+        }
+        return proxy
+    except Exception:
+        return None
+
 class SubHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
@@ -1726,10 +2133,12 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http%2F1.1#{encoded_remark_vision}"
         hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
         
-        sub_content_links = vless_vision + "\n" + hy2_link + "\n"
+        urls = [vless_vision, hy2_link]
         if ivars["reality_enabled"] == "true":
             vless_reality = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=reality&sni={ivars['reality_sni']}&pbk={ivars['reality_pbk']}&sid={ivars['reality_sid']}&fp={fp}&type=tcp#{encoded_remark_reality}"
-            sub_content_links += vless_reality + "\n"
+            urls.append(vless_reality)
+            
+        sub_content_links = "\n".join(urls) + "\n"
             
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
@@ -1739,11 +2148,679 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         
         support_url = "https://t.me/mavrtunbot"
 
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        format_param = query_params.get("format", [""])[0].lower()
+
         user_agent = self.headers.get("User-Agent", "").lower()
+        client_param = query_params.get("client", [""])[0].lower()
+        if client_param in ("happ", "incy"):
+            user_agent += f" {client_param}"
+
+        resp_headers = {
+            "Cache-Control": "no-store",
+            "profile-title": b64_client_display,
+            "profile-update-interval": "1",
+            "support-url": support_url,
+            "profile-web-page-url": "https://mvrvntn.github.io/koridor/",
+            "announce": b64_announce,
+            "subscription-auto-update-enable": "1",
+            "subscription-ping-onopen-enabled": "1",
+            "subscription-autoconnect": "1",
+            "subscription-autoconnect-type": "lastused",
+            "hide-url": "1",
+            "noises-enable": "0",
+            "no-limit-enabled": "1",
+            "per-app-proxy-enable": "0",
+            "fragmentation-enable": "1",
+            "fragmentation-packets": "tlshello",
+            "fragmentation-length": "10-30",
+            "fragmentation-interval": "10-20"
+        }
+        if providerid:
+            resp_headers["providerid"] = providerid
+            
+        if "incy" in user_agent:
+            resp_headers.update({
+                "server-address-resolve-enable": "1",
+                "server-address-resolve-dns-domain": "https://common.dot.dns.yandex.net/dns-query",
+                "server-address-resolve-dns-ip": "77.88.8.8",
+                "banner-bg-color": "#F4F4F5",
+                "banner-button-color": "#1A1A1A"
+            })
+            
+        routing_enabled = ivars.get("routing_enabled", "true") != "false"
+        _routing = ""
+        if routing_enabled:
+            if "incy" in user_agent:
+                _routing = incy_resolver.get()
+            else:
+                _routing = happ_resolver.get()
+            if _routing:
+                resp_headers["routing"] = _routing
+                resp_headers["routing-enable"] = "true"
+
+        if format_param == "singbox" or format_param == "sing-box":
+            outbounds_list = []
+            outbound_tags = []
+            for u in urls:
+                if u.startswith("vless://"):
+                    ob = vless_url_to_sing_box_outbound(u)
+                    if ob:
+                        outbounds_list.append(ob)
+                        outbound_tags.append(ob["tag"])
+                elif u.startswith("hysteria2://"):
+                    ob = hysteria2_url_to_sing_box_outbound(u)
+                    if ob:
+                        outbounds_list.append(ob)
+                        outbound_tags.append(ob["tag"])
+
+            singbox_config = {
+                "dns": {
+                    "rules": [
+                        {
+                            "server": "remote",
+                            "query_type": ["A", "AAAA"]
+                        },
+                        {
+                            "server": "local",
+                            "outbound": "any"
+                        }
+                    ],
+                    "fakeip": {
+                        "enabled": True,
+                        "inet4_range": "198.18.0.0/15",
+                        "inet6_range": "fc00::/18"
+                    },
+                    "servers": [
+                        {
+                            "tag": "cf-dns",
+                            "address": "tls://1.1.1.1"
+                        },
+                        {
+                            "tag": "local",
+                            "detour": "direct",
+                            "address": "tcp://1.1.1.1",
+                            "strategy": "ipv4_only",
+                            "address_strategy": "prefer_ipv4"
+                        },
+                        {
+                            "tag": "remote",
+                            "address": "fakeip"
+                        }
+                    ],
+                    "independent_cache": True
+                },
+                "log": {
+                    "level": "warning",
+                    "disabled": False,
+                    "timestamp": True
+                },
+                "route": {
+                    "rules": [
+                        {
+                            "action": "sniff"
+                        },
+                        {
+                            "mode": "or",
+                            "type": "logical",
+                            "rules": [
+                                {
+                                    "protocol": "dns"
+                                },
+                                {
+                                    "port": 53
+                                }
+                            ],
+                            "action": "hijack-dns"
+                        },
+                        {
+                            "outbound": "direct",
+                            "ip_is_private": True
+                        },
+                        {
+                            "port": [25],
+                            "outbound": "block"
+                        },
+                        {
+                            "outbound": "block",
+                            "rule_set": ["oisd-big"]
+                        },
+                        {
+                            "port": [443],
+                            "network": ["udp"],
+                            "outbound": "block"
+                        },
+                        {
+                            "outbound": "direct",
+                            "rule_set": ["ru-bundle"]
+                        },
+                        {
+                            "outbound": "→ Remnawave",
+                            "rule_set": [
+                                "discord-voice-ip-list",
+                                "geosite-tiktok",
+                                "geosite-whatsapp",
+                                "geosite-telegram",
+                                "geoip-telegram",
+                                "viber_aws_ip"
+                            ]
+                        }
+                    ],
+                    "rule_set": [
+                        {
+                            "tag": "oisd-big",
+                            "url": "https://github.com/burjuyz/RuRulesets/raw/main/ruleset-domain-oisd_big.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        },
+                        {
+                            "tag": "ru-bundle",
+                            "url": "https://github.com/legiz-ru/sb-rule-sets/raw/main/ru-bundle.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        },
+                        {
+                            "tag": "discord-voice-ip-list",
+                            "url": "https://github.com/legiz-ru/sb-rule-sets/raw/main/discord-voice-ip-list.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        },
+                        {
+                            "tag": "geosite-tiktok",
+                            "url": "https://github.com/MetaCubeX/meta-rules-dat/raw/sing/geo/geosite/tiktok.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        },
+                        {
+                            "tag": "geosite-whatsapp",
+                            "url": "https://github.com/MetaCubeX/meta-rules-dat/raw/sing/geo/geosite/whatsapp.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        },
+                        {
+                            "tag": "geosite-telegram",
+                            "url": "https://github.com/MetaCubeX/meta-rules-dat/raw/sing/geo/geosite/telegram.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        },
+                        {
+                            "tag": "geoip-telegram",
+                            "url": "https://github.com/MetaCubeX/meta-rules-dat/raw/sing/geo/geoip/telegram.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        },
+                        {
+                            "tag": "viber_aws_ip",
+                            "url": "https://github.com/legiz-ru/sb-rule-sets/raw/main/viber_aws_ip.srs",
+                            "type": "remote",
+                            "format": "binary"
+                        }
+                    ],
+                    "override_android_vpn": True,
+                    "auto_detect_interface": True
+                },
+                "inbounds": [
+                    {
+                        "mtu": 9000,
+                        "tag": "tun-in",
+                        "type": "tun",
+                        "sniff": True,
+                        "stack": "mixed",
+                        "platform": {
+                            "http_proxy": {
+                                "server": "127.0.0.1",
+                                "enabled": True,
+                                "server_port": 2412
+                            }
+                        },
+                        "auto_route": True,
+                        "strict_route": True,
+                        "inet4_address": "172.19.0.1/30",
+                        "inet6_address": "fdfe:dcba:9876::1/126",
+                        "interface_name": "tun125",
+                        "endpoint_independent_nat": True
+                    },
+                    {
+                        "tag": "mixed-in",
+                        "type": "mixed",
+                        "sniff": True,
+                        "users": [],
+                        "listen": "127.0.0.1",
+                        "listen_port": 2412,
+                        "set_system_proxy": False
+                    }
+                ],
+                "outbounds": [
+                    {
+                        "tag": "→ Remnawave",
+                        "type": "selector",
+                        "outbounds": outbound_tags,
+                        "interrupt_exist_connections": True
+                    },
+                    *outbounds_list,
+                    {
+                        "tag": "direct",
+                        "type": "direct"
+                    },
+                    {
+                        "tag": "block",
+                        "type": "block"
+                    }
+                ],
+                "experimental": {
+                    "clash_api": {
+                        "external_ui": "yacd",
+                        "default_mode": "rule",
+                        "external_controller": "127.0.0.1:9090",
+                        "external_ui_download_url": "https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip",
+                        "external_ui_download_detour": "direct"
+                    },
+                    "cache_file": {
+                        "path": "remnawave.db",
+                        "enabled": True,
+                        "cache_id": "remnawave",
+                        "store_fakeip": True
+                    }
+                }
+            }
+            body = json.dumps(singbox_config, indent=2, ensure_ascii=False)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            for k, v in resp_headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+
+        elif format_param == "xray":
+            outbounds_list = []
+            for i, u in enumerate(urls, 1):
+                if u.startswith("vless://"):
+                    ob = vless_url_to_xray_outbound(u, i)
+                    if ob:
+                        outbounds_list.append(ob)
+            
+            xray_config = {
+                "dns": {
+                    "hosts": {
+                        "lkfl2.nalog.ru": "213.24.64.175",
+                        "lknpd.nalog.ru": "213.24.64.181",
+                        "domain:googleapis.cn": "googleapis.com",
+                        "geosite:category-ads": "127.0.0.1"
+                    },
+                    "servers": [
+                        "https://8.8.8.8/dns-query",
+                        "https://1.1.1.1/dns-query",
+                        {
+                            "address": "https://8.8.8.8/dns-query",
+                            "domains": [
+                                "geosite:github",
+                                "geosite:twitch-ads",
+                                "geosite:youtube",
+                                "geosite:telegram"
+                            ]
+                        },
+                        {
+                            "address": "https://77.88.8.8/dns-query",
+                            "domains": [
+                                "geosite:private",
+                                "geosite:category-ru",
+                                "geosite:whitelist",
+                                "geosite:microsoft",
+                                "geosite:apple",
+                                "geosite:google-play",
+                                "geosite:epicgames",
+                                "geosite:riot",
+                                "geosite:escapefromtarkov",
+                                "geosite:steam",
+                                "geosite:origin",
+                                "geosite:twitch",
+                                "geosite:pinterest",
+                                "geosite:faceit"
+                            ]
+                        }
+                    ],
+                    "queryStrategy": "UseIPv4"
+                },
+                "log": {
+                    "loglevel": "warning"
+                },
+                "stats": {},
+                "policy": {
+                    "levels": {
+                        "8": {
+                            "connIdle": 300,
+                            "handshake": 4,
+                            "uplinkOnly": 1,
+                            "downlinkOnly": 1
+                        }
+                    },
+                    "system": {
+                        "statsOutboundUplink": True,
+                        "statsOutboundDownlink": True
+                    }
+                },
+                "routing": {
+                    "rules": [
+                        {
+                            "port": 53,
+                            "type": "field",
+                            "outboundTag": "dns-out"
+                        },
+                        {
+                            "port": 443,
+                            "type": "field",
+                            "network": "udp",
+                            "outboundTag": "block"
+                        },
+                        {
+                            "type": "field",
+                            "domain": [
+                                "geosite:win-spy",
+                                "geosite:torrent",
+                                "geosite:category-ads"
+                            ],
+                            "outboundTag": "block"
+                        },
+                        {
+                            "ip": ["77.88.8.8"],
+                            "type": "field",
+                            "outboundTag": "direct"
+                        },
+                        {
+                            "ip": ["8.8.8.8", "1.1.1.1"],
+                            "type": "field",
+                            "balancerTag": "Super_Balancer"
+                        },
+                        {
+                            "type": "field",
+                            "domain": [
+                                "geosite:github",
+                                "geosite:twitch-ads",
+                                "geosite:youtube",
+                                "geosite:telegram"
+                            ],
+                            "balancerTag": "Super_Balancer"
+                        },
+                        {
+                            "type": "field",
+                            "domain": [
+                                "geosite:private",
+                                "geosite:category-ru",
+                                "geosite:whitelist",
+                                "geosite:microsoft",
+                                "geosite:apple",
+                                "geosite:google-play",
+                                "geosite:epicgames",
+                                "geosite:riot",
+                                "geosite:escapefromtarkov",
+                                "geosite:steam",
+                                "geosite:origin",
+                                "geosite:twitch",
+                                "geosite:pinterest",
+                                "geosite:faceit"
+                            ],
+                            "outboundTag": "direct"
+                        },
+                        {
+                            "ip": [
+                                "geoip:private",
+                                "geoip:direct"
+                            ],
+                            "type": "field",
+                            "outboundTag": "direct"
+                        },
+                        {
+                            "type": "field",
+                            "network": "tcp,udp",
+                            "balancerTag": "Super_Balancer"
+                        }
+                    ],
+                    "balancers": [
+                        {
+                            "tag": "Super_Balancer",
+                            "selector": ["proxy"],
+                            "strategy": {
+                                "type": "leastPing"
+                            },
+                            "fallbackTag": "direct"
+                        }
+                    ],
+                    "domainStrategy": "IPIfNonMatch"
+                },
+                "inbounds": [
+                    {
+                        "tag": "socks",
+                        "port": 10808,
+                        "listen": "127.0.0.1",
+                        "protocol": "socks",
+                        "settings": {
+                            "udp": True,
+                            "auth": "noauth",
+                            "userLevel": 8
+                        },
+                        "sniffing": {
+                            "enabled": True,
+                            "routeOnly": True,
+                            "destOverride": ["http", "quic", "tls"]
+                        }
+                    },
+                    {
+                        "tag": "http",
+                        "port": 10809,
+                        "listen": "127.0.0.1",
+                        "protocol": "http",
+                        "settings": {
+                            "userLevel": 8,
+                            "allowTransparent": False
+                        },
+                        "sniffing": {
+                            "enabled": True,
+                            "routeOnly": True,
+                            "destOverride": ["http", "quic", "tls"]
+                        }
+                    }
+                ],
+                "outbounds": [
+                    *outbounds_list,
+                    {
+                        "tag": "direct",
+                        "protocol": "freedom"
+                    },
+                    {
+                        "tag": "block",
+                        "protocol": "blackhole"
+                    },
+                    {
+                        "tag": "dns-out",
+                        "protocol": "dns"
+                    }
+                ]
+            }
+            body = json.dumps(xray_config, indent=2, ensure_ascii=False)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            for k, v in resp_headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+
+        elif format_param in ("clash", "mihomo"):
+            proxies_list = []
+            proxy_names = []
+            seen_names = {}
+            for u in urls:
+                if u.startswith("vless://"):
+                    pr = vless_url_to_mihomo_proxy(u)
+                    if pr:
+                        original_name = pr["name"]
+                        name = original_name
+                        counter = seen_names.get(original_name, 0)
+                        if counter > 0:
+                            name = f"{original_name} [{counter}]"
+                        seen_names[original_name] = counter + 1
+                        pr["name"] = name
+                        proxies_list.append(pr)
+                        proxy_names.append(name)
+                elif u.startswith("hysteria2://"):
+                    pr = hysteria2_url_to_mihomo_proxy(u)
+                    if pr:
+                        original_name = pr["name"]
+                        name = original_name
+                        counter = seen_names.get(original_name, 0)
+                        if counter > 0:
+                            name = f"{original_name} [{counter}]"
+                        seen_names[original_name] = counter + 1
+                        pr["name"] = name
+                        proxies_list.append(pr)
+                        proxy_names.append(name)
+                        
+            if not proxy_names:
+                proxy_names = ["DIRECT"]
+
+            clash_config = {
+                "mixed-port": 7890,
+                "allow-lan": False,
+                "bind-address": "*",
+                "mode": "rule",
+                "log-level": "warning",
+                "ipv6": False,
+                "external-controller": "127.0.0.1:9090",
+                "dns": {
+                    "enable": True,
+                    "ipv6": False,
+                    "enhanced-mode": "fake-ip",
+                    "fake-ip-range": "198.18.0.1/16",
+                    "nameserver": [
+                        "77.88.8.8"
+                    ],
+                    "fallback": [
+                        "8.8.8.8",
+                        "1.1.1.1"
+                    ]
+                },
+                "tun": {
+                    "enable": True,
+                    "stack": "system",
+                    "auto-route": True,
+                    "auto-detect-interface": True
+                },
+                "proxy-groups": [
+                    {
+                        "name": "🛡️ VPN",
+                        "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Hijacking.png",
+                        "type": "select",
+                        "proxies": ["⚡️ Авто"] + proxy_names
+                    },
+                    {
+                        "name": "📺 Youtube",
+                        "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/YouTube.png",
+                        "type": "select",
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
+                    },
+                    {
+                        "name": "💬 Discord",
+                        "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Discord.png",
+                        "type": "select",
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
+                    },
+                    {
+                        "name": "🎮 Игры",
+                        "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Game.png",
+                        "type": "select",
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
+                    },
+                    {
+                        "name": "⚡️ Авто",
+                        "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Speed.png",
+                        "type": "url-test",
+                        "proxies": list(proxy_names),
+                        "url": "http://cp.cloudflare.com/generate_204",
+                        "interval": 300,
+                        "tolerance": 50
+                    }
+                ],
+                "rule-providers": {
+                    "microsoft": {
+                        "type": "http",
+                        "behavior": "domain",
+                        "url": "https://raw.githubusercontent.com/burjuyz/RuRulesets/main/ruleset-domain-microsoft.yaml",
+                        "path": "./rulesets/microsoft.yaml",
+                        "interval": 86400
+                    },
+                    "torrent": {
+                        "type": "http",
+                        "behavior": "domain",
+                        "url": "https://raw.githubusercontent.com/burjuyz/RuRulesets/main/ruleset-domain-torrent.yaml",
+                        "path": "./rulesets/torrent.yaml",
+                        "interval": 86400
+                    },
+                    "steam": {
+                        "type": "http",
+                        "behavior": "domain",
+                        "url": "https://raw.githubusercontent.com/burjuyz/RuRulesets/main/ruleset-domain-steam.yaml",
+                        "path": "./rulesets/steam.yaml",
+                        "interval": 86400
+                    },
+                    "discord": {
+                        "type": "http",
+                        "behavior": "domain",
+                        "url": "https://raw.githubusercontent.com/burjuyz/RuRulesets/main/ruleset-domain-discord.yaml",
+                        "path": "./rulesets/discord.yaml",
+                        "interval": 86400
+                    },
+                    "category-ru": {
+                        "type": "http",
+                        "behavior": "domain",
+                        "url": "https://raw.githubusercontent.com/burjuyz/RuRulesets/main/ruleset-domain-category-ru.yaml",
+                        "path": "./rulesets/category-ru.yaml",
+                        "interval": 86400
+                    },
+                    "private-domains": {
+                        "type": "http",
+                        "behavior": "domain",
+                        "url": "https://raw.githubusercontent.com/burjuyz/RuRulesets/main/ruleset-domain-private.yaml",
+                        "path": "./rulesets/private.yaml",
+                        "interval": 86400
+                    }
+                },
+                "proxies": proxies_list,
+                "rules": [
+                    "PORT,25,REJECT",
+                    "AND,((NETWORK,udp),(PORT,443)),REJECT",
+                    "RULE-SET,private-domains,DIRECT",
+                    "RULE-SET,category-ru,DIRECT",
+                    "RULE-SET,microsoft,DIRECT",
+                    "RULE-SET,steam,🎮 Игры",
+                    "RULE-SET,discord,💬 Discord",
+                    "PROCESS-NAME,Discord.exe,💬 Discord",
+                    "PROCESS-NAME,DiscordCanary.exe,💬 Discord",
+                    "PROCESS-NAME,DiscordPTB.exe,💬 Discord",
+                    "DOMAIN-KEYWORD,discord,💬 Discord",
+                    "DOMAIN-SUFFIX,youtube.com,📺 Youtube",
+                    "DOMAIN-SUFFIX,googlevideo.com,📺 Youtube",
+                    "DOMAIN-SUFFIX,ytimg.com,📺 Youtube",
+                    "DOMAIN-SUFFIX,youtube-nocookie.com,📺 Youtube",
+                    "DOMAIN-SUFFIX,youtu.be,📺 Youtube",
+                    "RULE-SET,torrent,DIRECT",
+                    "GEOIP,private,DIRECT",
+                    "MATCH,🛡️ VPN"
+                ]
+            }
+            body = dict_to_yaml(clash_config)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/yaml; charset=utf-8")
+            for k, v in resp_headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+
+        # Default raw link list formatted base64
         if "v2ray" in user_agent or "clash" in user_agent:
             sub_content = sub_content_links
         else:
-            # Задаем комментарии с метаданными подписки (используем base64 для безопасной передачи кириллицы в Incy/Happ)
             sub_metadata = (
                 f"#profile-title: {b64_client_display}\n"
                 f"#profile-update-interval: 1\n"
@@ -1772,57 +2849,10 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             sub_content = sub_metadata + sub_content_links
             
         b64_content = base64.b64encode(sub_content.encode("utf-8")).decode("utf-8")
-        
-        routing_enabled = ivars.get("routing_enabled", "true") != "false"
-        _routing = ""
-        if routing_enabled:
-            if "incy" in user_agent:
-                _routing = incy_resolver.get()
-            else:
-                _routing = happ_resolver.get()
-
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        
-        # Передаем заголовки для отображения названия подписки и переходов по кнопкам
-        self.send_header("profile-title", b64_client_display)
-        self.send_header("profile-update-interval", "1")
-        self.send_header("support-url", support_url)
-        self.send_header("profile-web-page-url", "https://mvrvntn.github.io/koridor/")
-        self.send_header("announce", b64_announce)
-        if providerid:
-            self.send_header("providerid", providerid)
-        
-        # Улучшение UX (Авто-обновление и пинг)
-        self.send_header("subscription-auto-update-enable", "1")
-        self.send_header("subscription-ping-onopen-enabled", "1")
-        self.send_header("subscription-autoconnect", "1")
-        self.send_header("subscription-autoconnect-type", "lastused")
-        
-        # UX настройки для Happ/Incy
-        self.send_header("hide-url", "1")
-        self.send_header("noises-enable", "0")
-        self.send_header("no-limit-enabled", "1")
-        self.send_header("per-app-proxy-enable", "0")
-        
-        # Дополнительное резолве доменных имен для Incy
-        if "incy" in user_agent:
-            self.send_header("server-address-resolve-enable", "1")
-            self.send_header("server-address-resolve-dns-domain", "https://common.dot.dns.yandex.net/dns-query")
-            self.send_header("server-address-resolve-dns-ip", "77.88.8.8")
-            self.send_header("banner-bg-color", "#F4F4F5")
-            self.send_header("banner-button-color", "#1A1A1A")
-        
-        # Анти-DPI фрагментация на стороне клиента (для Incy/Happ)
-        self.send_header("fragmentation-enable", "1")
-        self.send_header("fragmentation-packets", "tlshello")
-        self.send_header("fragmentation-length", "10-30")
-        self.send_header("fragmentation-interval", "10-20")
-
-        if routing_enabled and _routing:
-            self.send_header("routing", _routing)
-            self.send_header("routing-enable", "true")
+        for k, v in resp_headers.items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(b64_content.encode("utf-8"))
 
