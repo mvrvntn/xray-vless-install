@@ -903,6 +903,18 @@ generate_server_config() {
         ],
         "outboundTag": "BLOCK"
       }')
+    routing_rules_list+=('{
+        "type": "field",
+        "domain": [
+          "geosite:category-ads-all"
+        ],
+        "outboundTag": "BLOCK"
+      }')
+    routing_rules_list+=('{
+        "port": "25",
+        "type": "field",
+        "outboundTag": "BLOCK"
+      }')
 
     # Правило для Opera Proxy (приоритет выше, чем у WARP)
     if [ "$opera_enabled" == "true" ]; then
@@ -1150,6 +1162,18 @@ EOF
     "loglevel": "warning",
     "access": "/var/log/xray/access.log",
     "error": "/var/log/xray/error.log"
+  },
+  "dns": {
+    "servers": [
+      {
+        "address": "https://1.1.1.2/dns-query",
+        "skipFallback": false
+      },
+      "https://9.9.9.9/dns-query",
+      "https://1.0.0.2/dns-query",
+      "localhost"
+    ],
+    "queryStrategy": "UseIPv4"
   },
   "inbounds": $inbounds_str,
   "outbounds": $outbounds_str,
