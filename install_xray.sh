@@ -693,6 +693,8 @@ chatgpt.com
 oaistatic.com
 oaiusercontent.com
 sentry.io
+claude.ai
+anthropic.com
 EOF
     fi
 
@@ -1205,8 +1207,10 @@ chatgpt.com
 oaistatic.com
 oaiusercontent.com
 sentry.io
+claude.ai
+anthropic.com
 EOF
-            opera_domains+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sentry.io\"")
+            opera_domains+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sentry.io\"" "\"domain:claude.ai\"" "\"domain:anthropic.com\"")
         fi
         
         opera_domains+=("\"geosite:openai\"")
