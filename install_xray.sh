@@ -1,13 +1,16 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # === Конфигурационные параметры ===
-XRAY_CONFIG_DIR="/usr/local/etc/xray"
-CLIENT_CONFIG_DIR="/etc/xray/client_configs"
-SSL_DIR="/etc/ssl/vless"
-MARKER_FILE="/etc/xray/.installed"
-GENERATE_SCRIPT="/usr/local/bin/generate_client_config"
-SUB_SERVER_SCRIPT="/usr/local/bin/xray_sub_server.py"
-INSTALL_LOG="/var/log/xray/install.log"
+readonly XRAY_CONFIG_DIR="/usr/local/etc/xray"
+readonly CLIENT_CONFIG_DIR="/etc/xray/client_configs"
+readonly SSL_DIR="/etc/ssl/vless"
+readonly MARKER_FILE="/etc/xray/.installed"
+readonly GENERATE_SCRIPT="/usr/local/bin/generate_client_config"
+readonly SUB_SERVER_SCRIPT="/usr/local/bin/xray_sub_server.py"
+readonly INSTALL_LOG="/var/log/xray/install.log"
+
+readonly SCRIPT_NAME=$(basename "$0")
+readonly SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 # Объявление глобального ассоциативного массива для UUID
 declare -A UUIDs
@@ -21,6 +24,34 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
+
+# === Логирование и Traps (/bash-scripting) ===
+mkdir -p "$(dirname "$INSTALL_LOG")"
+
+log_info() {
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $*" >> "$INSTALL_LOG"
+}
+
+log_error() {
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >> "$INSTALL_LOG"
+}
+
+cleanup() {
+    echo -ne "${NC}" # Сброс цвета консоли
+    log_info "Скрипт прерван (SIGINT/SIGTERM) или завершен."
+}
+trap 'cleanup' SIGINT SIGTERM
+
+usage() {
+    cat <<EOF
+Использование: $0 [ОПЦИИ]
+Опции:
+-h, --help      Показать эту справку
+-v, --version   Показать версию
+EOF
+    exit 0
+}
+
 
 # Регистрация команды xry
 install_xry_command() {
@@ -37,56 +68,305 @@ install_xry_command() {
 optimize_vps() {
     echo -e "\n${BOLD}${CYAN}🔧 Запуск оптимизации VPS...${NC}"
     
-    # Установка системных лимитов (ulimit)
-    echo -e "${YELLOW}Настройка системных лимитов...${NC}"
-    local prof_path="/etc/profile"
-    sed -i '/ulimit -n/d' $prof_path
-    sed -i '/ulimit -s/d' $prof_path
-    echo "ulimit -n 1048576" | tee -a $prof_path >/dev/null
-    echo "ulimit -s -H 65536" | tee -a $prof_path >/dev/null
-    echo "ulimit -s 32768" | tee -a $prof_path >/dev/null
-    
-    # Обновление лимитов systemd
-    local sys_conf="/etc/systemd/system.conf"
-    local usr_conf="/etc/systemd/user.conf"
-    
-    for conf in "$sys_conf" "$usr_conf"; do
-        if grep -q "^DefaultLimitNOFILE=" "$conf"; then
-            sed -i "s/^DefaultLimitNOFILE=.*/DefaultLimitNOFILE=1048576/" "$conf"
-        else
-            echo "DefaultLimitNOFILE=1048576" >> "$conf"
+        # 1. Часовой пояс и синхронизация времени (NTP)
+    echo -e "${YELLOW}[!] Настройка часового пояса (Europe/Moscow) и NTP...${NC}"
+    timedatectl set-timezone Europe/Moscow || true
+    timedatectl set-ntp true 2>/dev/null || true
+    systemctl enable --now systemd-timesyncd 2>/dev/null || true
+    echo -e "${GREEN}[✓] Часовой пояс и NTP синхронизация настроены.${NC}"
+
+    # 2. Установка пакетов
+    echo -e "${YELLOW}[!] Обновление кэша и установка базовых утилит...${NC}"
+    DEBIAN_FRONTEND=noninteractive apt-get update -yq
+    DEBIAN_FRONTEND=noninteractive apt-get install -yq curl wget jq unzip htop net-tools ufw iptables zram-tools
+    echo -e "${GREEN}[✓] Утилиты установлены.${NC}"
+
+    # 2.1. Отключение неиспользуемых и опасных служб (rpcbind, apt-daily)
+    echo -e "${YELLOW}[!] Отключение фоновых автообновлений и rpcbind...${NC}"
+    systemctl stop rpcbind rpcbind.socket apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl disable rpcbind rpcbind.socket apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl mask rpcbind rpcbind.socket 2>/dev/null || true
+
+    # 2.2. Ограничение размера логов journald (до 100MB)
+    if [[ -f /etc/systemd/journald.conf ]]; then
+        sed -i -E 's/^#?SystemMaxUse=.*/SystemMaxUse=100M/g' /etc/systemd/journald.conf
+        systemctl restart systemd-journald 2>/dev/null || true
+    fi
+    echo -e "${GREEN}[✓] Лишние службы отключены, логи journald ограничены 100MB.${NC}"
+
+    # 3. Настройка SWAP (Гибридная память: ZRAM + Disk Swap)
+    echo -e "${YELLOW}[!] Настройка Swap файла...${NC}"
+    # Удаляем старые фантомные записи /swap, вызывающие сбои в systemd
+    sed -i -E '\|^/swap[[:space:]]+swap|d' /etc/fstab 2>/dev/null || true
+    if ! grep -q "/swapfile" /etc/fstab; then
+        if [[ ! -f /swapfile ]]; then
+            fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null
+            chmod 600 /swapfile
+            mkswap /swapfile >/dev/null 2>&1
         fi
-        if grep -q "^DefaultLimitNPROC=" "$conf"; then
-            sed -i "s/^DefaultLimitNPROC=.*/DefaultLimitNPROC=1048576/" "$conf"
+        swapon -p -2 /swapfile 2>/dev/null || true
+        echo "/swapfile   none    swap    sw,pri=-2    0   0" >> /etc/fstab
+        echo -e "${GREEN}[✓] Disk Swap 2GB создан с приоритетом -2.${NC}"
+    else
+        swapon -a 2>/dev/null || true
+        echo -e "${GREEN}[✓] Disk Swap уже существует.${NC}"
+    fi
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl reset-failed swap.swap 2>/dev/null || true
+
+    # Включение и оптимизация ZRAM (lz4, умный процент в зависимости от RAM, Priority 100)
+    echo -e "${YELLOW}[!] Запуск и настройка ZRAM...${NC}"
+    TOTAL_RAM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo "1000")
+    if [[ ! "$TOTAL_RAM_MB" =~ ^[0-9]+$ ]]; then
+        TOTAL_RAM_MB=1000
+    fi
+
+    if [[ "$TOTAL_RAM_MB" -gt 1200 ]]; then
+        ZRAM_PERCENT=60
+        echo -e "${GREEN}[✓] Детектировано ${TOTAL_RAM_MB}MB RAM (2GB+). Автоматически выбираем ZRAM = 60%.${NC}"
+    else
+        ZRAM_PERCENT=50
+        echo -e "${GREEN}[✓] Детектировано ${TOTAL_RAM_MB}MB RAM (1GB). Выбираем ZRAM = 50% (оптимально под XHTTP).${NC}"
+    fi
+
+    if [[ -f /etc/default/zramswap ]]; then
+        sed -i -E 's/^#?ALGO=.*/ALGO=lz4/g' /etc/default/zramswap
+        sed -i -E "s/^#?PERCENT=.*/PERCENT=${ZRAM_PERCENT}/g" /etc/default/zramswap
+        sed -i -E 's/^#?PRIORITY=.*/PRIORITY=100/g' /etc/default/zramswap
+    fi
+    systemctl enable --now zramswap 2>/dev/null || true
+    echo -e "${GREEN}[✓] ZRAM настроен (lz4, ${ZRAM_PERCENT}% RAM, Priority 100).${NC}"
+
+    # 4. Настройка DNS (Google & Cloudflare)
+    echo -e "${YELLOW}[!] Настройка DNS...${NC}"
+    dns_configured=false
+
+    if [[ -f /etc/dhcp/dhclient.conf ]]; then
+        sed -i -E '/^#?[[:space:]]*prepend domain-name-servers/d' /etc/dhcp/dhclient.conf
+        echo "prepend domain-name-servers 8.8.8.8, 1.1.1.1;" >> /etc/dhcp/dhclient.conf
+        echo -e "${GREEN}[✓] DNS внесен в dhclient.conf.${NC}"
+        dns_configured=true
+    fi
+
+    if [[ -f /etc/systemd/resolved.conf ]]; then
+        # Удаляем старую строку DNS, если она была
+        sed -i -E '/^[[:space:]]*DNS=/d' /etc/systemd/resolved.conf
+        # Вставляем DNS сразу после секции [Resolve]
+        sed -i '/^\[Resolve\]/a DNS=8.8.8.8 1.1.1.1' /etc/systemd/resolved.conf
+        systemctl restart systemd-resolved || true
+        echo -e "${GREEN}[✓] DNS внесен в systemd-resolved.${NC}"
+        dns_configured=true
+    fi
+
+    if [[ "$dns_configured" == false ]]; then
+        if [[ ! -L /etc/resolv.conf ]]; then
+            sed -i -E '/^[[:space:]]*nameserver/d' /etc/resolv.conf
+            echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+            echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+            echo -e "${GREEN}[✓] DNS внесен напрямую в resolv.conf.${NC}"
         else
-            echo "DefaultLimitNPROC=1048576" >> "$conf"
+            echo -e "${GREEN}[✓] resolv.conf является ссылкой, прямая запись пропущена.${NC}"
+        fi
+    fi
+
+    # 5. Настройка SSH
+    echo -e "${YELLOW}[!] Оптимизация SSH лимитов и безопасности...${NC}"
+    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+    sed -i -E '/^#?[[:space:]]*(TCPKeepAlive|ClientAliveInterval|ClientAliveCountMax|X11Forwarding|AllowTcpForwarding|PermitTunnel|GatewayPorts)/d' /etc/ssh/sshd_config
+    cat << 'EOF' >> /etc/ssh/sshd_config
+TCPKeepAlive yes
+ClientAliveInterval 120
+ClientAliveCountMax 3
+X11Forwarding no
+AllowTcpForwarding no
+PermitTunnel no
+GatewayPorts no
+EOF
+    systemctl restart ssh || true
+    echo -e "${GREEN}[✓] SSH оптимизирован и перезапущен.${NC}"
+
+    # 6. Загрузка модулей ядра
+    echo -e "${YELLOW}[!] Настройка модулей ядра...${NC}"
+    cat << 'EOF' > /etc/modules-load.d/vpn-performance.conf
+tcp_bbr
+nf_conntrack
+EOF
+    modprobe tcp_bbr || true
+    modprobe nf_conntrack || true
+    echo -e "${GREEN}[✓] Модули ядра добавлены.${NC}"
+
+    # 7. Лимиты процессов и файлов (limits.conf)
+    echo -e "${YELLOW}[!] Увеличение системных лимитов (limits.conf)...${NC}"
+    cat << 'EOF' > /etc/security/limits.d/99-vpn-limits.conf
+* soft nproc 1048576
+* hard nproc 1048576
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nproc 1048576
+root hard nproc 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+EOF
+
+    if ! grep -q "pam_limits.so" /etc/pam.d/common-session; then
+        echo "session required pam_limits.so" >> /etc/pam.d/common-session
+    fi
+    if ! grep -q "pam_limits.so" /etc/pam.d/common-session-noninteractive; then
+        echo "session required pam_limits.so" >> /etc/pam.d/common-session-noninteractive
+    fi
+
+    # Настройка лимитов Systemd (system.conf и user.conf)
+    echo -e "${YELLOW}[!] Настройка лимитов Systemd (system.conf и user.conf)...${NC}"
+    for conf in /etc/systemd/system.conf /etc/systemd/user.conf; do
+        if [[ -f "$conf" ]]; then
+            sed -i -E 's/^#?DefaultLimitNOFILE=.*/DefaultLimitNOFILE=1048576/g' "$conf"
+            sed -i -E 's/^#?DefaultLimitNPROC=.*/DefaultLimitNPROC=1048576/g' "$conf"
+            # Если строк не было, добавляем их
+            if ! grep -q "^DefaultLimitNOFILE=1048576" "$conf"; then
+                echo "DefaultLimitNOFILE=1048576" >> "$conf"
+            fi
+            if ! grep -q "^DefaultLimitNPROC=1048576" "$conf"; then
+                echo "DefaultLimitNPROC=1048576" >> "$conf"
+            fi
         fi
     done
-    systemctl daemon-reexec
+    systemctl daemon-reexec || true
 
-    # Установка расширенных сетевых параметров (sysctl)
-    echo -e "${YELLOW}Настройка расширенных сетевых параметров...${NC}"
-    local sysctl_opt_file="/etc/sysctl.d/99-xray-optimize.conf"
-    cat <<EOF > "$sysctl_opt_file"
-# File system settings
+    echo -e "${GREEN}[✓] Системные лимиты обновлены.${NC}"
+
+    # 8. Настройка Sysctl параметров
+    echo -e "${YELLOW}[!] Применение оптимизаций sysctl...${NC}"
+    # Удаляем все старые и конфликтующие файлы от прошлых оптимизаторов
+    rm -f /etc/sysctl.d/99-*.conf /etc/sysctl.d/98-*.conf 2>/dev/null || true
+    # Очищаем основной /etc/sysctl.conf (делаем бэкап), чтобы старые скрипты не перебивали настройки
+    cp /etc/sysctl.conf /etc/sysctl.conf.bak2 2>/dev/null || true
+    echo "# Все оптимизации перенесены в /etc/sysctl.d/99-zzz-node-optimization.conf" > /etc/sysctl.conf
+
+    cat << 'EOF' > /etc/sysctl.d/99-zzz-node-optimization.conf
+# Forwarding
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.forwarding = 1
+net.ipv6.conf.all.forwarding = 1
+
+# Отключение IPv6 (по запросу)
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+
+# QDisc & BBR
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# Limits & Maximum Buffers (Максимальный разгон под 5-10G каналы и 1-2GB RAM)
 fs.file-max = 67108864
-
-# Network core settings
-net.core.somaxconn = 65536
-net.core.netdev_max_backlog = 32768
+net.core.netdev_max_backlog = 250000
 net.core.optmem_max = 262144
+net.core.somaxconn = 65536
+net.core.rmem_max = 33554432
+net.core.rmem_default = 262144
+net.core.wmem_max = 33554432
+net.core.wmem_default = 262144
 
-# TCP and UDP memory limits
-net.ipv4.tcp_rmem = 16384 1048576 33554432
-net.ipv4.tcp_wmem = 16384 1048576 33554432
+# TCP buffers (Авто-подстройка от 4KB до 32MB без риска OOM при 1000+ юзерах)
+net.ipv4.tcp_rmem = 4096 87380 33554432
+net.ipv4.tcp_wmem = 4096 65536 33554432
 net.ipv4.tcp_mem = 65536 1048576 33554432
+
+# UDP buffers (Для Hysteria2 / QUIC)
 net.ipv4.udp_mem = 65536 1048576 33554432
+
+# TCP Tunings & Keepalive (Безопасные значения против обрывов туннелей)
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_max_orphans = 819200
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_max_tw_buckets = 1440000
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_tw_reuse = 0
+net.ipv4.tcp_synack_retries = 5
+net.ipv4.tcp_syn_retries = 6
+net.ipv4.tcp_retries2 = 15
+
+# Conntrack (Безопасные таймауты, чтобы соединения не рвались при паузах)
+net.netfilter.nf_conntrack_max = 8388608
+net.netfilter.nf_conntrack_tcp_timeout_established = 86400
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 60
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
+net.netfilter.nf_conntrack_udp_timeout = 60
+net.netfilter.nf_conntrack_udp_timeout_stream = 300
+
+# Безопасность ядра (Kernel Hardening - из утилиты Решала)
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+net.ipv4.conf.all.src_valid_mark = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+kernel.randomize_va_space = 2
+kernel.dmesg_restrict = 1
+kernel.yama.ptrace_scope = 1
+fs.protected_symlinks = 1
+fs.protected_hardlinks = 1
+
+# VM settings
+vm.min_free_kbytes = 65536
+vm.swappiness = 10
+vm.vfs_cache_pressure = 100
+vm.dirty_ratio = 15
+vm.dirty_background_ratio = 5
+vm.dirty_expire_centisecs = 3000
+vm.dirty_writeback_centisecs = 500
+
+# Дополнительные оптимизации TCP
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_slow_start_after_idle = 0
+
+# Настройки кэша ARP-соседей (Neighbour Table)
+net.ipv4.neigh.default.gc_thresh1 = 1024
+net.ipv4.neigh.default.gc_thresh2 = 4096
+net.ipv4.neigh.default.gc_thresh3 = 32768
 EOF
-    sysctl -p "$sysctl_opt_file" > /dev/null 2>&1
+
+    sysctl --system || true
+    echo -e "${GREEN}[✓] Параметры Sysctl успешно применены.${NC}"
+
+    # 8.1. TCP MSS Clamping (Защита от зависаний пакетов при нестандартном MTU оператора)
+    echo -e "${YELLOW}[!] Настройка TCP MSS Clamping (PMTU Clamp)...${NC}"
+    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
+    # Внедряем персистентность PMTU Clamp в /etc/ufw/before.rules (сохраняется при перезагрузке)
+    UFW_BEFORE="/etc/ufw/before.rules"
+    if [[ -f "$UFW_BEFORE" ]]; then
+        sed -i '/\*mangle/,/COMMIT/d' "$UFW_BEFORE" 2>/dev/null || true
+        cat << 'EOF' >> "$UFW_BEFORE"
+
+*mangle
+:FORWARD ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+-A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+COMMIT
+EOF
+    fi
+    echo -e "${GREEN}[✓] TCP MSS Clamping применен и сохранен в автозагрузку UFW.${NC}"
 
     # Установка ядра Xanmod
     echo -e "${YELLOW}Определение архитектуры процессора и установка ядра Xanmod...${NC}"
     apt update && apt install -y ca-certificates curl gnupg lsb-release gawk
+    log_info "Running APT package operation..."
     
     local cpu_level
     cpu_level=$(awk -f - <<'EOF'
@@ -102,13 +382,13 @@ EOF
 EOF
     )
 
-    if [ -z "$cpu_level" ] || [ "$cpu_level" -lt 1 ]; then
+    if [[ -z "$cpu_level" ]] || [[ "$cpu_level" -lt 1 ]]; then
         echo -e "${RED}❌ Не удалось определить уровень CPU или архитектура не поддерживается.${NC}"
     else
         echo -e "${GREEN}👉 Определен уровень CPU: v${cpu_level}${NC}"
         
         # Переопределяем v4 на v3
-        if [ "$cpu_level" -eq 4 ]; then
+        if [[ "$cpu_level" -eq 4 ]]; then
             echo -e "${YELLOW}👉 Уровень CPU v4 понижен до v3 по требованию стабильности.${NC}"
             cpu_level=3
         fi
@@ -116,10 +396,12 @@ EOF
         if curl -fsSL https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
             echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
             apt update
+    log_info "Running APT package operation..."
             
             echo -e "${YELLOW}Установка linux-xanmod-x64v${cpu_level}...${NC}"
             apt install -y "linux-xanmod-x64v${cpu_level}"
-            if [ $? -eq 0 ]; then
+    log_info "Running APT package operation..."
+            if [[ $? -eq 0 ]]; then
                 echo -e "${GREEN}✅ Ядро Xanmod успешно установлено!${NC}"
             else
                 echo -e "${RED}❌ Ошибка при установке ядра Xanmod. Продолжаем работу...${NC}"
@@ -131,13 +413,13 @@ EOF
 
     echo -e "\n${BOLD}${GREEN}✅ Оптимизация завершена! Сервер будет перезагружен.${NC}"
     echo -e "${BOLD}${YELLOW}ВАЖНО: После перезагрузки запустите скрипт установки Xray СНОВА, чтобы продолжить!${NC}"
-    read -p "Нажмите Enter для перезагрузки..."
+    read -r -p "Нажмите Enter для перезагрузки..."
     reboot
     exit 0
 }
 
 # === Проверка прав root ===
-if [ "$(id -u)" != "0" ]; then
+if [[ "$(id -u)" != "0" ]]; then
     echo "❌ Этот скрипт должен запускаться с правами root"
     exit 1
 fi
@@ -145,8 +427,8 @@ fi
 # === Вспомогательные функции для работы с маркером ===
 get_installed_var() {
     local var_name="$1"
-    if [ -f "$MARKER_FILE" ]; then
-        grep "^${var_name}=" "$MARKER_FILE" | cut -d= -f2-
+    if [[ -f "$MARKER_FILE" ]]; then
+        awk -F= -v key="${var_name}" '$1 == key { sub(/^[^=]+=/, ""); print }' "$MARKER_FILE"
     fi
 }
 
@@ -156,7 +438,7 @@ update_marker_val() {
     mkdir -p "$(dirname "$MARKER_FILE")"
     touch "$MARKER_FILE"
     if grep -q "^${var_name}=" "$MARKER_FILE"; then
-        local escaped_val=$(echo "$new_val" | sed 's/[\/&]/\\&/g')
+        local escaped_val; escaped_val=$(echo "$new_val" | sed 's/[\/&]/\\&/g')
         sed -i "s/^${var_name}=.*/${var_name}=${escaped_val}/" "$MARKER_FILE"
     else
         echo "${var_name}=${new_val}" >> "$MARKER_FILE"
@@ -165,9 +447,9 @@ update_marker_val() {
 
 update_geoblock_list() {
     local list_file="/etc/xray/geoblock.lst"
-    local temp_file=$(mktemp)
-    local temp_geoblock=$(mktemp)
-    local temp_google_ai=$(mktemp)
+    local temp_file; temp_file=$(mktemp)
+    local temp_geoblock; temp_geoblock=$(mktemp)
+    local temp_google_ai; temp_google_ai=$(mktemp)
     
     echo "📥 Обновление списка геоблокированных доменов (itdog геоблок и google ai)..."
     
@@ -177,7 +459,7 @@ update_geoblock_list() {
     curl -sSL --connect-timeout 8 "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_ai.lst" -o "$temp_google_ai"
     
     # Если хотя бы один файл скачался успешно и не пуст, объединяем их
-    if [ -s "$temp_geoblock" ] || [ -s "$temp_google_ai" ]; then
+    if [[ -s "$temp_geoblock" ]] || [[ -s "$temp_google_ai" ]]; then
         cat "$temp_geoblock" "$temp_google_ai" 2>/dev/null > "$temp_file"
         # Очищаем от Windows CRLF
         sed -i 's/\r//g' "$temp_file"
@@ -185,14 +467,14 @@ update_geoblock_list() {
         grep -v '^[[:space:]]*$' "$temp_file" | grep -v '^[[:space:]]*#' | sort -u > "${temp_file}.clean"
         mv "${temp_file}.clean" "$temp_file"
         
-        if [ -s "$temp_file" ]; then
+        if [[ -s "$temp_file" ]]; then
             download_success=true
         fi
     fi
     
     rm -f "$temp_geoblock" "$temp_google_ai"
     
-    if [ "$download_success" = true ]; then
+    if [[ "$download_success" = true ]]; then
         if ! cmp -s "$temp_file" "$list_file" 2>/dev/null; then
             mkdir -p /etc/xray
             mv "$temp_file" "$list_file"
@@ -206,7 +488,7 @@ update_geoblock_list() {
     fi
     
     # Если файла еще нет (первая установка), создаем базовый дефолтный список
-    if [ ! -f "$list_file" ]; then
+    if [[ ! -f "$list_file" ]]; then
         mkdir -p /etc/xray
         cat > "$list_file" <<EOF
 4pda.to
@@ -259,12 +541,14 @@ install_warp() {
     if ! command -v wg-quick &>/dev/null || ! command -v wireguard &>/dev/null; then
         echo "📦 Установка WireGuard..."
         apt update >/dev/null
+    log_info "Running APT package operation..."
         apt install -y wireguard wireguard-tools >/dev/null
+    log_info "Running APT package operation..."
     fi
 
-    if [ ! -f "/etc/wireguard/warp.conf" ]; then
+    if [[ ! -f "/etc/wireguard/warp.conf" ]]; then
         echo "📥 Загрузка и запуск скрипта установки warp-native..."
-        local temp_dir=$(mktemp -d)
+        local temp_dir; temp_dir=$(mktemp -d)
         local success=false
 
         # Устанавливаем git если его нет
@@ -277,7 +561,7 @@ install_warp() {
         # Попытка 1: Клонирование репозитория через git (самый надежный способ со всеми зависимыми файлами)
         echo "📥 Клонирование репозитория warp-native..."
         if git clone --depth 1 https://github.com/distillium/warp-native.git "$temp_dir/repo" >/dev/null 2>&1; then
-            if [ -f "$temp_dir/repo/install.sh" ]; then
+            if [[ -f "$temp_dir/repo/install.sh" ]]; then
                 chmod +x "$temp_dir/repo/install.sh"
                 (cd "$temp_dir/repo" && printf "1\n\n\n" | bash install.sh)
                 success=true
@@ -285,10 +569,10 @@ install_warp() {
         fi
 
         # Попытка 2: Резервный curl (main)
-        if [ "$success" = false ]; then
+        if [[ "$success" = false ]]; then
             echo "⚠️ git clone не удался, пробуем скачать install.sh через curl (main)..."
             curl -sSL --connect-timeout 10 https://raw.githubusercontent.com/distillium/warp-native/main/install.sh -o "$temp_dir/install.sh"
-            if [ -s "$temp_dir/install.sh" ]; then
+            if [[ -s "$temp_dir/install.sh" ]]; then
                 chmod +x "$temp_dir/install.sh"
                 (cd "$temp_dir" && printf "1\n\n\n" | bash install.sh)
                 success=true
@@ -296,10 +580,10 @@ install_warp() {
         fi
 
         # Попытка 3: Резервный curl (master)
-        if [ "$success" = false ]; then
+        if [[ "$success" = false ]]; then
             echo "⚠️ Пробуем скачать install.sh через curl (master)..."
             curl -sSL --connect-timeout 10 https://raw.githubusercontent.com/distillium/warp-native/master/install.sh -o "$temp_dir/install.sh"
-            if [ -s "$temp_dir/install.sh" ]; then
+            if [[ -s "$temp_dir/install.sh" ]]; then
                 chmod +x "$temp_dir/install.sh"
                 (cd "$temp_dir" && printf "1\n\n\n" | bash install.sh)
                 success=true
@@ -309,7 +593,7 @@ install_warp() {
         rm -rf "$temp_dir"
     fi
 
-    if [ -f "/etc/wireguard/warp.conf" ]; then
+    if [[ -f "/etc/wireguard/warp.conf" ]]; then
         # Отключаем глобальную маршрутизацию через WARP (выборочно маршрутизируем через Xray)
         if ! grep -q "Table = off" /etc/wireguard/warp.conf; then
             sed -i '/\[Interface\]/a Table = off' /etc/wireguard/warp.conf
@@ -322,7 +606,7 @@ install_warp() {
         update_geoblock_list
         
         # Добавляем обновление списка геоблокировок в cron
-        local script_path=$(realpath "$0")
+        local script_path; script_path=$(realpath "$0")
         (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; \
          echo "30 3 * * * bash $script_path --update-geoblocks >/dev/null 2>&1") | crontab -
 
@@ -336,14 +620,14 @@ install_warp() {
 }
 
 toggle_warp() {
-    local current_status=$(get_installed_var "WARP_ENABLED")
-    if [ "$current_status" == "true" ]; then
+    local current_status; current_status=$(get_installed_var "WARP_ENABLED")
+    if [[ "$current_status" == "true" ]]; then
         echo "📴 Отключение обхода через WARP (возврат к прямому выходу)..."
         update_marker_val "WARP_ENABLED" "false"
         systemctl stop wg-quick@warp >/dev/null 2>&1
     else
         echo "🌀 Включение обхода через WARP..."
-        if [ "$(get_installed_var "WARP_INSTALLED")" != "true" ]; then
+        if [[ "$(get_installed_var "WARP_INSTALLED")" != "true" ]]; then
             install_warp || return 1
         fi
         systemctl start wg-quick@warp >/dev/null 2>&1
@@ -359,11 +643,11 @@ toggle_warp() {
 
 install_opera_proxy() {
     echo -e "\n${BOLD}${GREEN}🌀 Установка Opera Proxy...${NC}"
-    local arch=$(uname -m)
+    local arch; arch=$(uname -m)
     local binary_url
-    if [ "$arch" == "x86_64" ]; then
+    if [[ "$arch" == "x86_64" ]]; then
         binary_url="https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy-linux-amd64"
-    elif [ "$arch" == "aarch64" ] || [ "$arch" == "arm64" ]; then
+    elif [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
         binary_url="https://github.com/Alexey71/opera-proxy/releases/latest/download/opera-proxy-linux-arm64"
     else
         echo -e "${RED}❌ Неподдерживаемая архитектура процессора: $arch${NC}"
@@ -401,7 +685,7 @@ EOF
     systemctl restart opera-proxy >/dev/null 2>&1
 
     # Создание списка доменов
-    if [ ! -f "/etc/xray/opera.lst" ]; then
+    if [[ ! -f "/etc/xray/opera.lst" ]]; then
         mkdir -p /etc/xray
         cat > /etc/xray/opera.lst <<EOF
 openai.com
@@ -424,14 +708,14 @@ EOF
 }
 
 toggle_opera_proxy() {
-    local current_status=$(get_installed_var "OPERA_ENABLED")
-    if [ "$current_status" == "true" ]; then
+    local current_status; current_status=$(get_installed_var "OPERA_ENABLED")
+    if [[ "$current_status" == "true" ]]; then
         echo -e "\n${BOLD}${YELLOW}📴 Отключение Opera Proxy...${NC}"
         update_marker_val "OPERA_ENABLED" "false"
         systemctl stop opera-proxy >/dev/null 2>&1
     else
         echo -e "\n${BOLD}${GREEN}🌀 Включение Opera Proxy...${NC}"
-        if [ "$(get_installed_var "OPERA_INSTALLED")" != "true" ]; then
+        if [[ "$(get_installed_var "OPERA_INSTALLED")" != "true" ]]; then
             install_opera_proxy || return 1
         fi
         systemctl start opera-proxy >/dev/null 2>&1
@@ -491,61 +775,45 @@ check_domain() {
 # === Проверка конфликтов портов ===
 check_port_conflicts() {
     echo "🔍 Проверка конфликтов портов 80/443..."
-    local conflict=false
-    
-    # 1. Проверка стандартных веб-серверов
-    for svc in nginx apache2 caddy httpd; do
-        if systemctl is-active --quiet "$svc"; then
-            echo -e "⚠️ Служба $svc запущена и занимает порты 80/443."
-            echo "🛑 Отключаем и останавливаем $svc, чтобы Xray и Certbot могли запуститься..."
-            systemctl stop "$svc" >/dev/null 2>&1
-            systemctl disable "$svc" >/dev/null 2>&1
-            conflict=true
+    # Проверка порта 443
+    if ss -tln | grep -q ':443 '; then
+        local port_443_pid; port_443_pid=$(ss -tlnp 'sport = :443' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
+        local port_443_process=""
+        if [[ -n "$port_443_pid" ]]; then
+            port_443_process=$(ps -p "$port_443_pid" -o comm= 2>/dev/null)
         fi
-    done
-    
-    # 2. Проверка OpenVPN TCP служб AntiZapret
-    for antizapret_svc in openvpn-server@antizapret-tcp openvpn-server@antizapret-no-vpn-tcp openvpn-server@server-tcp; do
-        if systemctl is-active --quiet "$antizapret_svc"; then
-            echo -e "⚠️ Обнаружена активная служба AntiZapret TCP: $antizapret_svc (занимает порт 443 TCP)."
-            echo "🛑 Останавливаем и отключаем $antizapret_svc для освобождения порта 443 под VLESS..."
-            systemctl stop "$antizapret_svc" >/dev/null 2>&1
-            systemctl disable "$antizapret_svc" >/dev/null 2>&1
-            conflict=true
-        fi
-    done
-    
-    # 3. Глубокое сканирование через ss на наличие любых других процессов на порту 443 или 80
-    local port_443_pid=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -n 1)
-    if [ -n "$port_443_pid" ]; then
-        local proc_name=$(ps -p "$port_443_pid" -o comm= 2>/dev/null)
-        echo -e "❌ Порт 443 TCP занят сторонним процессом '$proc_name' (PID: $port_443_pid)."
-        read -p "Попытаться автоматически завершить процесс '$proc_name' для продолжения установки? [y/N]: " kill_choice
-        if [[ "$kill_choice" =~ ^[Yy]$ ]]; then
-            kill -9 "$port_443_pid"
-            echo "✅ Процесс '$proc_name' принудительно завершен."
+        echo "⚠️ Порт 443 занят процессом: ${port_443_process:-неизвестно} (PID: ${port_443_pid:-неизвестно})"
+        echo "Продолжение работы с занятым портом 443 может привести к ошибкам!"
+        read -r -p "Завершить процесс $port_443_process и продолжить? [y/N]: " kill_443
+        if [[ "$kill_443" =~ ^[Yy]$ ]]; then
+            if [[ -n "$port_443_pid" ]]; then
+                kill -9 "$port_443_pid" 2>/dev/null || true
+                echo "Процесс $port_443_pid завершен."
+            fi
         else
-            echo "❌ Установка остановлена из-за конфликта портов."
+            echo "Установка отменена пользователем."
             exit 1
         fi
     fi
-    
-    local port_80_pid=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | head -n 1)
-    if [ -n "$port_80_pid" ]; then
-        local proc_name=$(ps -p "$port_80_pid" -o comm= 2>/dev/null)
-        echo -e "❌ Порт 80 TCP занят сторонним процессом '$proc_name' (PID: $port_80_pid)."
-        read -p "Попытаться автоматически завершить процесс '$proc_name' для продолжения установки? [y/N]: " kill_choice
-        if [[ "$kill_choice" =~ ^[Yy]$ ]]; then
-            kill -9 "$port_80_pid"
-            echo "✅ Процесс '$proc_name' принудительно завершен."
+
+    # Проверка порта 80
+    if ss -tln | grep -q ':80 '; then
+        local port_80_pid; port_80_pid=$(ss -tlnp 'sport = :80' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
+        local port_80_process=""
+        if [[ -n "$port_80_pid" ]]; then
+            port_80_process=$(ps -p "$port_80_pid" -o comm= 2>/dev/null)
+        fi
+        echo "⚠️ Порт 80 занят процессом: ${port_80_process:-неизвестно} (PID: ${port_80_pid:-неизвестно})"
+        read -r -p "Завершить процесс $port_80_process и продолжить? [y/N]: " kill_80
+        if [[ "$kill_80" =~ ^[Yy]$ ]]; then
+            if [[ -n "$port_80_pid" ]]; then
+                kill -9 "$port_80_pid" 2>/dev/null || true
+                echo "Процесс $port_80_pid завершен."
+            fi
         else
-            echo "❌ Установка остановлена из-за конфликта портов."
+            echo "Установка отменена пользователем."
             exit 1
         fi
-    fi
-    
-    if [ "$conflict" = true ]; then
-        echo "✅ Конфликтующие службы успешно остановлены и отключены."
     fi
 }
 
@@ -624,8 +892,8 @@ install_xray() {
 install_hysteria() {
     echo "🚀 Установка Hysteria 2..."
     systemctl stop hysteria-server >/dev/null 2>&1 || true
-    local latest_ver=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [ -z "$latest_ver" ]; then
+    local latest_ver; latest_ver=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [[ -z "$latest_ver" ]]; then
         latest_ver="v2.6.0"
     fi
     echo "Загрузка Hysteria 2 ($latest_ver)..."
@@ -647,14 +915,14 @@ setup_firewall() {
         antizapret_detected=true
     fi
 
-    if [ "$antizapret_detected" = "true" ]; then
+    if [[ "$antizapret_detected" = "true" ]]; then
         echo "⚠️ Обнаружен AntiZapret-VPN! Для предотвращения сбоев маршрутизации UFW не будет включен."
         echo "🔌 Отключаем UFW и разрешаем порты в iptables напрямую..."
         ufw disable >/dev/null 2>&1 || true
         
         # Гарантируем доступ к нужным портам в iptables напрямую
-        local ipt_path=$(which iptables 2>/dev/null || echo "/sbin/iptables")
-        if [ -x "$ipt_path" ]; then
+        local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
+        if [[ -x "$ipt_path" ]]; then
             $ipt_path -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 443 -j ACCEPT
             $ipt_path -C INPUT -p udp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 443 -j ACCEPT
             $ipt_path -C INPUT -p udp --dport 20000:50000 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 20000:50000 -j ACCEPT
@@ -670,8 +938,8 @@ setup_firewall() {
     ufw allow 80/tcp > /dev/null
     
     # Динамически определяем запущенные и настроенные порты SSH, чтобы не заблокировать пользователя
-    local ssh_ports=$( (ss -tlnp 2>/dev/null | grep -E '("sshd"|:22\s)' | awk '{print $4}' | awk -F':' '{print $NF}'; grep -hE '^\s*Port\s+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}') | sort -u )
-    if [ -n "$ssh_ports" ]; then
+    local ssh_ports; ssh_ports=$( (ss -tlnp 2>/dev/null | awk '/"sshd"|:22/ {print $4}' | awk -F: '{print $NF}'; grep -hE '^\s*Port\s+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}') | sort -u )
+    if [[ -n "$ssh_ports" ]]; then
         for port in $ssh_ports; do
             if [[ "$port" =~ ^[0-9]+$ ]]; then
                 ufw allow "$port"/tcp > /dev/null
@@ -690,6 +958,7 @@ setup_certificates() {
 
     # Получаем сертификат через certbot
     certbot certonly --standalone -d "$DOMAIN" --email "$EMAIL" \
+    log_info "Requested SSL certificate"
         --agree-tos --non-interactive --key-type ecdsa || {
         echo "❌ Ошибка получения сертификата"
         echo "Возможные причины:"
@@ -712,6 +981,7 @@ setup_certificates() {
     # Добавляем обновление сертификатов в cron (копирование и рестарт Xray)
     (crontab -l 2>/dev/null | grep -v 'certbot renew'; \
      echo "0 3 * * * certbot renew --quiet --post-hook \"cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem $SSL_DIR/fullchain.cer && cp /etc/letsencrypt/live/$DOMAIN/privkey.pem $SSL_DIR/private.key && chown -R nobody:nogroup $SSL_DIR && chmod 644 $SSL_DIR/fullchain.cer && chmod 600 $SSL_DIR/private.key && systemctl restart xray\"") | crontab -
+    log_info "Restarted Xray service"
 }
 
 # === Генерация UUID и серверного конфигурационного файла ===
@@ -723,11 +993,11 @@ generate_server_config() {
     local vless_clients=()
     
     # Проверяем, есть ли уже клиенты
-    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
+    if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
         local idx=1
-        for filepath in $(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort); do
-            local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
-            if [ -n "$uuid" ] && [ "$uuid" != "null" ]; then
+        while IFS= read -r -d '' filepath; do
+            local uuid; uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
+            if [[ -n "$uuid" ]] && [[ "$uuid" != "null" ]]; then
                 UUIDs[$idx]="$uuid"
                 vless_clients+=("{
                   \"id\": \"$uuid\",
@@ -736,11 +1006,11 @@ generate_server_config() {
                 }")
                 idx=$((idx + 1))
             fi
-        done
+        done < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' -print0 | sort -z)
     else
         # Генерация уникальных UUID для каждого устройства (первоначальная установка)
-        for i in $(seq 1 "$NUM_DEVICES"); do
-            local uuid=$(xray uuid)
+        for ((i=1; i<=NUM_DEVICES; i++)); do
+            local uuid; uuid=$(xray uuid)
             UUIDs[$i]="$uuid"
             
             vless_clients+=("{
@@ -751,29 +1021,29 @@ generate_server_config() {
         done
     fi
     
-    local vless_clients_str=$(IFS=,; echo "${vless_clients[*]}")
+    local vless_clients_str; vless_clients_str=$(IFS=,; echo "${vless_clients[*]}")
     
     # Проверяем статус WARP и Opera Proxy
-    local warp_enabled=$(get_installed_var "WARP_ENABLED")
-    local warp_mode=$(get_installed_var "WARP_MODE")
-    [ -z "$warp_mode" ] && warp_mode="smart"
-    local opera_enabled=$(get_installed_var "OPERA_ENABLED")
-    local DOMAIN=$(get_installed_var "DOMAIN" | tr -d '[:space:]')
+    local warp_enabled; warp_enabled=$(get_installed_var "WARP_ENABLED")
+    local warp_mode; warp_mode=$(get_installed_var "WARP_MODE")
+    [[ -z "$warp_mode" ]] && warp_mode="smart"
+    local opera_enabled; opera_enabled=$(get_installed_var "OPERA_ENABLED")
+    local DOMAIN; DOMAIN=$(get_installed_var "DOMAIN" | tr -d '[:space:]')
     
     # Загружаем настройки Reality (Принудительно отключено для стабильности)
     local reality_enabled="false"
-    local reality_sni=$(get_installed_var "REALITY_SNI" | tr -d '[:space:]')
-    local reality_dest=$(get_installed_var "REALITY_DEST" | tr -d '[:space:]')
-    local reality_priv=$(get_installed_var "REALITY_PRIVATE_KEY" | tr -d '[:space:]')
-    local reality_pub=$(get_installed_var "REALITY_PUBLIC_KEY" | tr -d '[:space:]')
-    local reality_sid=$(get_installed_var "REALITY_SHORT_ID" | tr -d '[:space:]')
+    local reality_sni; reality_sni=$(get_installed_var "REALITY_SNI" | tr -d '[:space:]')
+    local reality_dest; reality_dest=$(get_installed_var "REALITY_DEST" | tr -d '[:space:]')
+    local reality_priv; reality_priv=$(get_installed_var "REALITY_PRIVATE_KEY" | tr -d '[:space:]')
+    local reality_pub; reality_pub=$(get_installed_var "REALITY_PUBLIC_KEY" | tr -d '[:space:]')
+    local reality_sid; reality_sid=$(get_installed_var "REALITY_SHORT_ID" | tr -d '[:space:]')
 
-    if [ "$reality_enabled" == "true" ]; then
+    if [[ "$reality_enabled" == "true" ]]; then
         # Гарантируем наличие ключей и short ID
         if [[ -z "$reality_priv" || -z "$reality_pub" ]]; then
-            local keys=$(which xray &>/dev/null && xray x25519 2>/dev/null || /usr/local/bin/xray x25519 2>/dev/null || xray x25519 2>/dev/null)
-            reality_priv=$(echo "$keys" | grep -i "private" | cut -d: -f2- | tr -d '[:space:]')
-            reality_pub=$(echo "$keys" | grep -i "public" | cut -d: -f2- | tr -d '[:space:]')
+            local keys; keys=$(command -v xray &>/dev/null && xray x25519 2>/dev/null || /usr/local/bin/xray x25519 2>/dev/null || xray x25519 2>/dev/null)
+            reality_priv=$(echo "$keys" | awk -F':' '/[Pp]rivate/ { gsub(/[[:space:]]/, ""); print $2 }')
+            reality_pub=$(echo "$keys" | awk -F':' '/[Pp]ublic/ { gsub(/[[:space:]]/, ""); print $2 }')
             update_marker_val "REALITY_PRIVATE_KEY" "$reality_priv"
             update_marker_val "REALITY_PUBLIC_KEY" "$reality_pub"
         fi
@@ -794,7 +1064,7 @@ generate_server_config() {
     local outbounds_list=()
 
     # Сначала добавим DIRECT как первый outbound (или WARP, если warp_mode == "full")
-    if [ "$warp_enabled" == "true" ] && [ "$warp_mode" == "full" ]; then
+    if [[ "$warp_enabled" == "true" ]] && [[ "$warp_mode" == "full" ]]; then
         outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
@@ -839,7 +1109,7 @@ generate_server_config() {
         }
       }
     }')
-        if [ "$warp_enabled" == "true" ]; then
+        if [[ "$warp_enabled" == "true" ]]; then
             outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
@@ -859,7 +1129,7 @@ generate_server_config() {
     fi
 
     # Добавляем OPERA прокси, если включен
-    if [ "$opera_enabled" == "true" ]; then
+    if [[ "$opera_enabled" == "true" ]]; then
         outbounds_list+=('{
       "tag": "OPERA",
       "protocol": "socks",
@@ -880,7 +1150,7 @@ generate_server_config() {
       "protocol": "blackhole"
     }')
 
-    local outbounds_str=$(IFS=,; echo "[${outbounds_list[*]}]")
+    local outbounds_str; outbounds_str=$(IFS=,; echo "[${outbounds_list[*]}]")
     
     local routing_rules_list=()
 
@@ -917,10 +1187,10 @@ generate_server_config() {
       }')
 
     # Правило для Opera Proxy (приоритет выше, чем у WARP)
-    if [ "$opera_enabled" == "true" ]; then
+    if [[ "$opera_enabled" == "true" ]]; then
         local opera_domains=()
-        if [ -f "/etc/xray/opera.lst" ]; then
-            while IFS= read -r line || [ -n "$line" ]; do
+        if [[ -f "/etc/xray/opera.lst" ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
                 line=$(echo "$line" | tr -d '\r' | xargs)
                 if [[ -z "$line" || "$line" =~ ^# ]]; then
                     continue
@@ -941,7 +1211,7 @@ EOF
         
         opera_domains+=("\"geosite:openai\"")
         
-        local opera_domains_joined=$(IFS=,; echo "${opera_domains[*]}")
+        local opera_domains_joined; opera_domains_joined=$(IFS=,; echo "${opera_domains[*]}")
         routing_rules_list+=("{
         \"type\": \"field\",
         \"domain\": [
@@ -952,11 +1222,11 @@ EOF
     fi
 
     # Правила для WARP
-    if [ "$warp_enabled" == "true" ]; then
-        if [ "$warp_mode" == "smart" ]; then
+    if [[ "$warp_enabled" == "true" ]]; then
+        if [[ "$warp_mode" == "smart" ]]; then
             local geoblocks=()
-            if [ -f "/etc/xray/geoblock.lst" ]; then
-                while IFS= read -r line || [ -n "$line" ]; do
+            if [[ -f "/etc/xray/geoblock.lst" ]]; then
+                while IFS= read -r line || [[ -n "$line" ]]; do
                     line=$(echo "$line" | tr -d '\r' | xargs)
                     if [[ -z "$line" || "$line" =~ ^# ]]; then
                         continue
@@ -966,11 +1236,11 @@ EOF
             fi
             
             geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"")
-            if [ "$opera_enabled" != "true" ]; then
+            if [[ "$opera_enabled" != "true" ]]; then
                 geoblocks+=("\"geosite:openai\"")
             fi
             
-            local geoblocks_joined=$(IFS=,; echo "${geoblocks[*]}")
+            local geoblocks_joined; geoblocks_joined=$(IFS=,; echo "${geoblocks[*]}")
             routing_rules_list+=("{
         \"type\": \"field\",
         \"domain\": [
@@ -984,7 +1254,7 @@ EOF
         for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me checkip.amazonaws.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com gemini.google.com generativelanguage.googleapis.com accounts.google.com googleapis.com gstatic.com googleusercontent.com webrtc.org stun.l.google.com; do
             check_domains+=("\"domain:$dom\"")
         done
-        local check_domains_joined=$(IFS=,; echo "${check_domains[*]}")
+        local check_domains_joined; check_domains_joined=$(IFS=,; echo "${check_domains[*]}")
         routing_rules_list+=("{
         \"type\": \"field\",
         \"domain\": [
@@ -994,7 +1264,7 @@ EOF
       }")
     fi
 
-    local routing_rules_str=$(IFS=,; echo "${routing_rules_list[*]}")
+    local routing_rules_str; routing_rules_str=$(IFS=,; echo "${routing_rules_list[*]}")
     
     # Fallback-маршруты для VLESS TCP (перенаправление на сервер подписок)
     local fallbacks_str='[
@@ -1009,7 +1279,7 @@ EOF
 
     # Генерация inbounds секции в зависимости от активности Reality
     local inbounds_str=""
-    if [ "$reality_enabled" == "true" ]; then
+    if [[ "$reality_enabled" == "true" ]]; then
         inbounds_str='[
     {
       "port": 443,
@@ -1186,6 +1456,7 @@ EOF
 EOF
 
     systemctl restart xray
+    log_info "Restarted Xray service"
 }
 
 # === Генерация конфигурации Hysteria 2 ===
@@ -1193,8 +1464,8 @@ generate_hysteria_config() {
     echo "🧩 Генерация конфигурации Hysteria 2..."
     mkdir -p /etc/hysteria
     
-    local DOMAIN=$(get_installed_var "DOMAIN")
-    if [ -z "$DOMAIN" ]; then
+    local DOMAIN; DOMAIN=$(get_installed_var "DOMAIN")
+    if [[ -z "$DOMAIN" ]]; then
         DOMAIN="$DOMAIN"
     fi
     
@@ -1202,28 +1473,28 @@ generate_hysteria_config() {
     
     # Собираем userpass для Hysteria 2 (UUID используется и как имя пользователя, и как пароль)
     local userpass=()
-    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
-        for filepath in $(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort); do
-            local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
-            if [ -n "$uuid" ] && [ "$uuid" != "null" ]; then
+    if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
+        while IFS= read -r -d '' filepath; do
+            local uuid; uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
+            if [[ -n "$uuid" ]] && [[ "$uuid" != "null" ]]; then
                 userpass+=("    \"$uuid\": \"$uuid\"")
             fi
-        done
+        done < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' -print0 | sort -z)
     else
         # Первоначальная генерация (когда json файлов на диске еще нет, но UUIDs заполнен)
-        for i in $(seq 1 "$NUM_DEVICES"); do
+        for ((i=1; i<=NUM_DEVICES; i++)); do
             local uuid="${UUIDs[$i]}"
-            if [ -n "$uuid" ]; then
+            if [[ -n "$uuid" ]]; then
                 userpass+=("    \"$uuid\": \"$uuid\"")
             fi
         done
     fi
     
-    if [ ${#userpass[@]} -eq 0 ]; then
+    if [[ ${#userpass[@]} -eq 0 ]]; then
         userpass+=("    \"default\": \"default\"")
     fi
     
-    local userpass_str=$(IFS=$'\n'; echo "${userpass[*]}")
+    local userpass_str; userpass_str=$(IFS=$'\n'; echo "${userpass[*]}")
     
     cat > "$config_yaml" <<EOF
 listen: :443
@@ -1248,8 +1519,8 @@ EOF
     chmod 600 "$config_yaml"
     
     # Создаём или обновляем systemd service
-    local iptables_path=$(which iptables 2>/dev/null || echo "/sbin/iptables")
-    local ip6tables_path=$(which ip6tables 2>/dev/null || echo "/sbin/ip6tables")
+    local iptables_path; iptables_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
+    local ip6tables_path; ip6tables_path=$(command -v ip6tables 2>/dev/null || echo "/sbin/ip6tables")
 
     cat > /etc/systemd/system/hysteria-server.service <<EOF
 [Unit]
@@ -1285,20 +1556,20 @@ generate_client_configs() {
     echo "📦 Генерация клиентских конфигов..."
     mkdir -p "$CLIENT_CONFIG_DIR"
     
-    local DOMAIN=$(get_installed_var "DOMAIN")
-    local FINGERPRINT=$(get_installed_var "FINGERPRINT")
-    if [ -z "$FINGERPRINT" ]; then FINGERPRINT="random"; fi
+    local DOMAIN; DOMAIN=$(get_installed_var "DOMAIN")
+    local FINGERPRINT; FINGERPRINT=$(get_installed_var "FINGERPRINT")
+    if [[ -z "$FINGERPRINT" ]]; then FINGERPRINT="random"; fi
 
-    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
+    if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
         # Обновляем существующие конфиги (идемпотентность)
         for filepath in "$CLIENT_CONFIG_DIR"/*.json; do
-            [ -e "$filepath" ] || continue
+            [[ -e "$filepath" ]] || continue
             
-            local uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
-            local name=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$filepath" 2>/dev/null)
+            local uuid; uuid=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$filepath" 2>/dev/null)
+            local name; name=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$filepath" 2>/dev/null)
             
-            if [ -z "$uuid" ] || [ "$uuid" == "null" ]; then continue; fi
-            if [ -z "$name" ] || [ "$name" == "null" ]; then
+            if [[ -z "$uuid" ]] || [[ "$uuid" == "null" ]]; then continue; fi
+            if [[ -z "$name" ]] || [[ "$name" == "null" ]]; then
                 name="${filepath##*/}"
                 name="${name%.json}"
             fi
@@ -1338,7 +1609,7 @@ EOF
         done
     else
         # Генерация первичных конфигов (установка с нуля)
-        for i in $(seq 1 "$NUM_DEVICES"); do
+        for ((i=1; i<=NUM_DEVICES; i++)); do
             local name="${DEVICE_NAMES[$i]}"
             local uuid="${UUIDs[$i]}"
             
@@ -1346,7 +1617,7 @@ EOF
             [[ -z "$name" ]] && name="Device_$i"
 
             local filename="client_$i"
-            local safe_filename=$(echo "$name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
+            local safe_filename; safe_filename=$(echo "$name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
             if [[ -n "$safe_filename" ]]; then
                 filename="$safe_filename"
             fi
@@ -2883,6 +3154,7 @@ EOF
     systemctl daemon-reload
     systemctl enable xray-sub >/dev/null 2>&1
     systemctl restart xray-sub
+    log_info "Restarted Xray service"
 }
 
 # === Установка утилиты генерации ссылок ===
@@ -2900,21 +3172,21 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 
   CONFIG_DIR="/etc/xray/client_configs"
-  DOMAIN=$(grep "^DOMAIN=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
-  EMOJI=$(grep "^EMOJI=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
+  DOMAIN=$(awk -F= '/^DOMAIN=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  EMOJI=$(awk -F= '/^EMOJI=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
   FLOW="xtls-rprx-vision"
-  FINGERPRINT=$(grep "^FINGERPRINT=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
-  if [ -z "$FINGERPRINT" ]; then FINGERPRINT="random"; fi
+  FINGERPRINT=$(awk -F= '/^FINGERPRINT=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  if [[ -z "$FINGERPRINT" ]]; then FINGERPRINT="random"; fi
   PORT=443
 
-  REALITY_ENABLED=$(grep "^REALITY_ENABLED=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
-  REALITY_SNI=$(grep "^REALITY_SNI=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
-  REALITY_PBK=$(grep "^REALITY_PUBLIC_KEY=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
-  REALITY_SID=$(grep "^REALITY_SHORT_ID=" /etc/xray/.installed | cut -d= -f2 | tr -d '[:space:]')
+  REALITY_ENABLED=$(awk -F= '/^REALITY_ENABLED=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  REALITY_SNI=$(awk -F= '/^REALITY_SNI=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  REALITY_PBK=$(awk -F= '/^REALITY_PUBLIC_KEY=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  REALITY_SID=$(awk -F= '/^REALITY_SHORT_ID=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
 
-mapfile -t config_files < <(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
+mapfile -t -d '' config_files < <(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' -print0 | sort -z)
 
-if [ ${#config_files[@]} -eq 0 ]; then
+if [[ ${#config_files[@]} -eq 0 ]]; then
   echo -e "${RED}❌ Конфиги не найдены!${NC}"
   exit 1
 fi
@@ -2923,7 +3195,7 @@ echo -e "\n${BOLD}${CYAN}📱  ДОСТУПНЫЕ УСТРОЙСТВА${NC}"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 for i in "${!config_files[@]}"; do
   remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "${config_files[$i]}" 2>/dev/null)
-  if [ -z "$remarks" ] || [ "$remarks" = "null" ]; then
+  if [[ -z "$remarks" ]] || [[ "$remarks" = "null" ]]; then
     remarks="${config_files[$i]##*/}"
     remarks="${remarks%.json}"
   fi
@@ -2931,8 +3203,8 @@ for i in "${!config_files[@]}"; do
 done
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 
-read -p "Выберите устройство (1-${#config_files[@]}): " choice
-if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#config_files[@]} ]; then
+read -r -p "Выберите устройство (1-${#config_files[@]}): " choice
+if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt ${#config_files[@]} ]]; then
   echo -e "${RED}❌ Неверный выбор!${NC}"
   exit 1
 fi
@@ -2940,13 +3212,13 @@ fi
 selected="${config_files[$((choice-1))]}"
 UUID=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('id', ''))" "$selected" 2>/dev/null)
 remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$selected" 2>/dev/null)
-if [ -z "$remarks" ] || [ "$remarks" = "null" ]; then
+if [[ -z "$remarks" ]] || [[ "$remarks" = "null" ]]; then
   remarks="${selected##*/}"
   remarks="${remarks%.json}"
 fi
 
 # Генерация названий с новыми эмодзи-символами и скобками
-if [ -n "$EMOJI" ]; then
+if [[ -n "$EMOJI" ]]; then
   remark_vision="${EMOJI} VLESS-TCP"
   remark_hy2="${EMOJI} Hysteria2"
   remark_reality="${EMOJI} VLESS-Reality (${REALITY_SNI})"
@@ -2969,7 +3241,7 @@ VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=t
 HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
-if [ "$REALITY_ENABLED" = "true" ]; then
+if [[ "$REALITY_ENABLED" = "true" ]]; then
   VLESS_REALITY="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=reality&sni=${REALITY_SNI}&pbk=${REALITY_PBK}&sid=${REALITY_SID}&fp=${FINGERPRINT}&type=tcp#${encoded_remark_reality}"
 fi
 
@@ -2979,7 +3251,7 @@ echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и П
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
 echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход):${NC}"
 echo -e "    ${GREEN}$HY2_LINK${NC}"
-if [ "$REALITY_ENABLED" = "true" ]; then
+if [[ "$REALITY_ENABLED" = "true" ]]; then
 echo -e " ${BOLD}${YELLOW}3. VLESS Reality (Маскировка ${REALITY_SNI}):${NC}"
 echo -e "    ${GREEN}$VLESS_REALITY${NC}"
 fi
@@ -2993,15 +3265,15 @@ echo -e "${CYAN}─────────────────────�
 echo -e " Выберите, для чего отобразить QR-код:"
 echo -e " ${BOLD}${YELLOW}1.${NC} VLESS TCP Vision"
 echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2"
-if [ "$REALITY_ENABLED" = "true" ]; then
+if [[ "$REALITY_ENABLED" = "true" ]]; then
 echo -e " ${BOLD}${YELLOW}3.${NC} VLESS Reality"
 echo -e " ${BOLD}${YELLOW}4.${NC} Ссылка подписки"
 else
 echo -e " ${BOLD}${YELLOW}3.${NC} Ссылка подписки"
 fi
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-read -p "Ваш выбор: " qr_choice
-if [ "$REALITY_ENABLED" = "true" ]; then
+read -r -p "Ваш выбор: " qr_choice
+if [[ "$REALITY_ENABLED" = "true" ]]; then
   case "$qr_choice" in
     1) qrencode -t UTF8 "$VLESS_VISION" ;;
     2) qrencode -t UTF8 "$HY2_LINK" ;;
@@ -3023,1373 +3295,1388 @@ EOF
 }
 
 # === Проверка предыдущей установки (до запроса данных) ===
-if [ -f "$MARKER_FILE" ]; then
-    show_connections() {
-        echo -e "\n--- Активные подключения к Xray ---"
-        local conns=$(ss -tnp | grep -E ':443\s' | grep -v '127.0.0.1')
-        if [ -z "$conns" ]; then
-            echo "Нет активных подключений на порт 443."
-        else
-            echo "Состояние Локальный_Адрес Удаленный_Адрес Процесс"
-            echo "$conns" | awk '{print $1, $4, $5, $6}'
-        fi
-    }
+main() {
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        usage
+    elif [[ "${1:-}" == "-v" || "${1:-}" == "--version" ]]; then
+        echo "$SCRIPT_NAME version 1.0.0"
+        exit 0
+    fi
 
-    show_logs() {
-        echo -e "\n--- Выберите лог для просмотра ---"
-        echo "1. Лог Xray (systemd)"
-        echo "2. Лог Сервера подписок (systemd)"
-        echo "3. Лог ошибок Xray (/var/log/xray/error.log)"
-        echo "4. Назад"
-        read -p "Выбор (1-4): " lchoice
-        case $lchoice in
-            1) journalctl -u xray -n 50 --no-pager ;;
-            2) journalctl -u xray-sub -n 50 --no-pager ;;
-            3) tail -n 50 /var/log/xray/error.log ;;
-            4) return ;;
-            *) echo "Неверный выбор" ;;
-        esac
-    }
-
-    run_diagnostics() {
-        echo -e "\n${BOLD}${CYAN}🛠️  ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ${NC}"
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-        
-        # 1. Проверка конфликтов портов 443 и 80
-        echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
-        local port_443_process=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-        local port_443_udp_process=$(ss -ulnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-        local port_80_process=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-        
-        if [ -n "$port_443_process" ]; then
-            echo -e " 🟢 Порт 443 (TCP) успешно занят процессом: ${GREEN}$port_443_process${NC}"
-            if [[ "$port_443_process" =~ "openvpn" ]]; then
-                echo -e "  ${RED}⚠️ ВНИМАНИЕ! Порт 443 занят процессом OpenVPN. Это приведет к неработоспособности Xray!${NC}"
+    if [[ -f "$MARKER_FILE" ]]; then
+        show_connections() {
+            echo -e "\n--- Активные подключения к Xray ---"
+            local conns; conns=$(ss -tnp | grep -E ':443\s' | grep -v '127.0.0.1')
+            if [[ -z "$conns" ]]; then
+                echo "Нет активных подключений на порт 443."
+            else
+                echo "Состояние Локальный_Адрес Удаленный_Адрес Процесс"
+                echo "$conns" | awk '{print $1, $4, $5, $6}'
             fi
-        else
-            echo -e " 🔴 ${RED}Порт 443 (TCP) Свободен или Xray не запущен!${NC}"
-        fi
+        }
 
-        if [ -n "$port_443_udp_process" ]; then
-            echo -e " 🟢 Порт 443 (UDP) успешно занят процессом: ${GREEN}$port_443_udp_process${NC}"
-        else
-            echo -e " 🔴 ${RED}Порт 443 (UDP) Свободен или Hysteria 2 не запущена!${NC}"
-        fi
-        
-        if [ -n "$port_80_process" ]; then
-            echo -e " 🟢 Порт 80 (TCP) успешно занят процессом: ${GREEN}$port_80_process${NC}"
-        else
-            echo -e " 🟡 Порт 80 (TCP) свободен (требуется Certbot для обновления сертификатов)."
-        fi
+        show_logs() {
+            echo -e "\n--- Выберите лог для просмотра ---"
+            echo "1. Лог Xray (systemd)"
+            echo "2. Лог Сервера подписок (systemd)"
+            echo "3. Лог ошибок Xray (/var/log/xray/error.log)"
+            echo "4. Назад"
+            read -r -p "Выбор (1-4): " lchoice
+            case $lchoice in
+                1) journalctl -u xray -n 50 --no-pager ;;
+                2) journalctl -u xray-sub -n 50 --no-pager ;;
+                3) tail -n 50 /var/log/xray/error.log ;;
+                4) return ;;
+                *) echo "Неверный выбор" ;;
+            esac
+        }
 
-        # 2. Проверка служб
-        echo -e "\n${BOLD}[2] Статус системных служб:${NC}"
-        if systemctl is-active --quiet xray; then
-            echo -e " Xray Service: 🟢 ${GREEN}ACTIVE (Запущен)${NC}"
-        else
-            echo -e " Xray Service: 🔴 ${RED}INACTIVE (Остановлен)${NC}"
-            journalctl -u xray -n 10 --no-pager
-        fi
-        
-        if systemctl is-active --quiet hysteria-server; then
-            echo -e " Hysteria 2:   🟢 ${GREEN}ACTIVE (Запущен)${NC}"
-        else
-            echo -e " Hysteria 2:   🔴 ${RED}INACTIVE (Остановлен)${NC}"
-            journalctl -u hysteria-server -n 10 --no-pager
-        fi
-        
-        if systemctl is-active --quiet xray-sub; then
-            echo -e " Sub Service:  🟢 ${GREEN}ACTIVE (Запущен)${NC}"
-        else
-            echo -e " Sub Service:  🔴 ${RED}INACTIVE (Остановлен)${NC}"
-            journalctl -u xray-sub -n 10 --no-pager
-        fi
-
-        # 3. Проверка резолва домена и подмены DNS (dnsmap)
-        echo -e "\n${BOLD}[3] Анализ DNS-маршрутизации и домена:${NC}"
-        local domain=$(get_installed_var "DOMAIN")
-        if [ -n "$domain" ]; then
-            echo -e " Текущий домен сервера: ${CYAN}$domain${NC}"
-            local resolved_ip=$(getent hosts "$domain" | awk '{print $1}' | head -n 1)
-            if [ -n "$resolved_ip" ]; then
-                echo -e " Домен резолвится локально в IP: ${GREEN}$resolved_ip${NC}"
-                if [[ "$resolved_ip" =~ ^10\.224\. ]]; then
-                    echo -e "  ${RED}⚠️ ВНИМАНИЕ! Обнаружена подмена IP через dnsmap (сеть 10.224.x.x от AntiZapret).${NC}"
-                    echo -e "  Xray использует локальный DNS хоста и может направлять трафик некорректно."
+        run_diagnostics() {
+            echo -e "\n${BOLD}${CYAN}🛠️  ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ${NC}"
+            echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+            
+            # 1. Проверка конфликтов портов 443 и 80
+            echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
+            local port_443_process; port_443_process=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+            local port_443_udp_process; port_443_udp_process=$(ss -ulnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+            local port_80_process; port_80_process=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+            
+            if [[ -n "$port_443_process" ]]; then
+                echo -e " 🟢 Порт 443 (TCP) успешно занят процессом: ${GREEN}$port_443_process${NC}"
+                if [[ "$port_443_process" =~ "openvpn" ]]; then
+                    echo -e "  ${RED}⚠️ ВНИМАНИЕ! Порт 443 занят процессом OpenVPN. Это приведет к неработоспособности Xray!${NC}"
                 fi
             else
-                echo -e " 🔴 ${RED}Ошибка: Домен не резолвится локально!${NC}"
+                echo -e " 🔴 ${RED}Порт 443 (TCP) Свободен или Xray не запущен!${NC}"
             fi
-        else
-            echo -e " 🔴 ${RED}Ошибка: Домен не зарегистрирован в системе маркеров.${NC}"
-        fi
 
-        # 4. Проверка интеграции Cloudflare WARP
-        echo -e "\n${BOLD}[4] Статус Cloudflare WARP:${NC}"
-        if [ "$(get_installed_var "WARP_INSTALLED")" == "true" ]; then
-            if ip link show warp >/dev/null 2>&1; then
-                echo -e " Интерфейс warp: 🟢 ${GREEN}UP (Поднят)${NC}"
-                echo -e " Выполняем тест пинга и маршрутизации через интерфейс warp..."
-                local warp_test=$(curl --interface warp -s --connect-timeout 4 https://www.cloudflare.com/cdn-cgi/trace | grep -E "(ip=|warp=)")
-                if [ -n "$warp_test" ]; then
-                    echo -e " 🟢 ${GREEN}Сеть WARP успешно отвечает:${NC}"
-                    echo "$warp_test" | sed 's/^/   /'
+            if [[ -n "$port_443_udp_process" ]]; then
+                echo -e " 🟢 Порт 443 (UDP) успешно занят процессом: ${GREEN}$port_443_udp_process${NC}"
+            else
+                echo -e " 🔴 ${RED}Порт 443 (UDP) Свободен или Hysteria 2 не запущена!${NC}"
+            fi
+            
+            if [[ -n "$port_80_process" ]]; then
+                echo -e " 🟢 Порт 80 (TCP) успешно занят процессом: ${GREEN}$port_80_process${NC}"
+            else
+                echo -e " 🟡 Порт 80 (TCP) свободен (требуется Certbot для обновления сертификатов)."
+            fi
+
+            # 2. Проверка служб
+            echo -e "\n${BOLD}[2] Статус системных служб:${NC}"
+            if systemctl is-active --quiet xray; then
+                echo -e " Xray Service: 🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+            else
+                echo -e " Xray Service: 🔴 ${RED}INACTIVE (Остановлен)${NC}"
+                journalctl -u xray -n 10 --no-pager
+            fi
+            
+            if systemctl is-active --quiet hysteria-server; then
+                echo -e " Hysteria 2:   🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+            else
+                echo -e " Hysteria 2:   🔴 ${RED}INACTIVE (Остановлен)${NC}"
+                journalctl -u hysteria-server -n 10 --no-pager
+            fi
+            
+            if systemctl is-active --quiet xray-sub; then
+                echo -e " Sub Service:  🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+            else
+                echo -e " Sub Service:  🔴 ${RED}INACTIVE (Остановлен)${NC}"
+                journalctl -u xray-sub -n 10 --no-pager
+            fi
+
+            # 3. Проверка резолва домена и подмены DNS (dnsmap)
+            echo -e "\n${BOLD}[3] Анализ DNS-маршрутизации и домена:${NC}"
+            local domain; domain=$(get_installed_var "DOMAIN")
+            if [[ -n "$domain" ]]; then
+                echo -e " Текущий домен сервера: ${CYAN}$domain${NC}"
+                local resolved_ip; resolved_ip=$(getent hosts "$domain" | awk '{print $1}' | head -n 1)
+                if [[ -n "$resolved_ip" ]]; then
+                    echo -e " Домен резолвится локально в IP: ${GREEN}$resolved_ip${NC}"
+                    if [[ "$resolved_ip" =~ ^10\.224\. ]]; then
+                        echo -e "  ${RED}⚠️ ВНИМАНИЕ! Обнаружена подмена IP через dnsmap (сеть 10.224.x.x от AntiZapret).${NC}"
+                        echo -e "  Xray использует локальный DNS хоста и может направлять трафик некорректно."
+                    fi
                 else
-                    echo -e " 🔴 ${RED}Сеть WARP не пропускает трафик! Проверьте wg-quick@warp.${NC}"
+                    echo -e " 🔴 ${RED}Ошибка: Домен не резолвится локально!${NC}"
                 fi
             else
-                echo -e " Интерфейс warp: 🔴 ${RED}DOWN (Сеть WireGuard отключена)${NC}"
-            fi
-        else
-            echo -e " Cloudflare WARP: 🔘 Не установлен."
-        fi
-
-        # 5. Проверка разблокировки медиа-ресурсов
-        echo -e "\n${BOLD}[5] Разблокировка медиа-ресурсов (Netflix, YouTube, ChatGPT):${NC}"
-        check_media_unlock() {
-            local label="$1"
-            local iface="$2"
-            local curl_opts=""
-            if [ -n "$iface" ]; then
-                curl_opts="--interface $iface"
+                echo -e " 🔴 ${RED}Ошибка: Домен не зарегистрирован в системе маркеров.${NC}"
             fi
 
-            # Netflix
-            local nf_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.netflix.com/title/80018499)
-            local nf_res="${RED}🔴 Заблокирован${NC}"
-            if [ "$nf_code" == "200" ]; then
-                nf_res="${GREEN}🟢 Доступен (Оригиналы + Каталог)${NC}"
-            elif [ "$nf_code" == "301" ] || [ "$nf_code" == "302" ]; then
-                nf_res="${YELLOW}🟡 Доступны только собственные релизы${NC}"
-            fi
-
-            # ChatGPT
-            local gpt_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com)
-            local gpt_res="${RED}🔴 Заблокирован${NC}"
-            if [ "$gpt_code" == "200" ] || [ "$gpt_code" == "302" ]; then
-                gpt_res="${GREEN}🟢 Доступен${NC}"
-            fi
-
-            # YouTube Region
-            local yt_region=$(curl $curl_opts -s --connect-timeout 4 https://www.youtube.com/premium 2>/dev/null | grep -o 'countryCode":"[^"]*"' | cut -d'"' -f3)
-            local yt_res="${RED}🔴 Не удалось определить регион${NC}"
-            if [ -n "$yt_region" ]; then
-                yt_res="${GREEN}🟢 Доступен (Регион: $yt_region)${NC}"
-            fi
-
-            echo -e "   👉 ${CYAN}$label:${NC}"
-            echo -e "      - Netflix: $nf_res"
-            echo -e "      - ChatGPT: $gpt_res"
-            echo -e "      - YouTube: $yt_res"
-        }
-        check_media_unlock "Основной IP сервера" ""
-        if [ "$(get_installed_var "WARP_INSTALLED")" == "true" ] && ip link show warp >/dev/null 2>&1; then
-            check_media_unlock "Через интерфейс WARP" "warp"
-        fi
-
-        # 6. Проверка сертификатов SSL
-        echo -e "\n${BOLD}[6] Проверка SSL-сертификатов Let's Encrypt:${NC}"
-        if [ -f "$SSL_DIR/fullchain.cer" ] && [ -f "$SSL_DIR/private.key" ]; then
-            echo -e " Файлы SSL: 🟢 ${GREEN}Присутствуют в директории $SSL_DIR${NC}"
-            local end_date=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
-            echo -e " Срок действия сертификата до: ${YELLOW}$end_date${NC}"
-        else
-            echo -e " Файлы SSL: 🔴 ${RED}ОТСУТСТВУЮТ! Xray не сможет работать без TLS-сертификатов.${NC}"
-        fi
-
-        # 7. Проверка Фаерволов и Правил IPTables
-        echo -e "\n${BOLD}[7] Состояние системных фаерволов и Port Hopping:${NC}"
-        if ufw status | grep -q "Status: active"; then
-            echo -e " UFW Firewall: 🟢 ${GREEN}ACTIVE (Включен)${NC}"
-            if iptables -t nat -S | grep -qi "antizapret"; then
-                echo -e "  ${YELLOW}⚠️ ПРЕДУПРЕЖДЕНИЕ: UFW активен одновременно с правилами NAT AntiZapret.${NC}"
-                echo -e "  Это может вызывать сбои маршрутизации. Рекомендуется выполнить: ${CYAN}ufw disable${NC}"
-            fi
-        else
-            echo -e " UFW Firewall: 🔘 ${YELLOW}DISABLED (Отключен)${NC}"
-            echo -e " Убедитесь, что порты 443 и 80 разрешены напрямую в ваших правилах iptables."
-        fi
-
-        # Проверка правил Port Hopping
-        local ipt_path=$(which iptables 2>/dev/null || echo "/sbin/iptables")
-        if $ipt_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
-            echo -e " Port Hopping (IPv4 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
-        else
-            echo -e " Port Hopping (IPv4 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
-        fi
-        
-        local ipt6_path=$(which ip6tables 2>/dev/null || echo "/sbin/ip6tables")
-        if $ipt6_path -t nat -S &>/dev/null; then
-            if $ipt6_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
-                echo -e " Port Hopping (IPv6 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
+            # 4. Проверка интеграции Cloudflare WARP
+            echo -e "\n${BOLD}[4] Статус Cloudflare WARP:${NC}"
+            if [[ "$(get_installed_var "WARP_INSTALLED")" == "true" ]]; then
+                if ip link show warp >/dev/null 2>&1; then
+                    echo -e " Интерфейс warp: 🟢 ${GREEN}UP (Поднят)${NC}"
+                    echo -e " Выполняем тест пинга и маршрутизации через интерфейс warp..."
+                    local warp_test; warp_test=$(curl --interface warp -s --connect-timeout 4 https://www.cloudflare.com/cdn-cgi/trace | grep -E "(ip=|warp=)")
+                    if [[ -n "$warp_test" ]]; then
+                        echo -e " 🟢 ${GREEN}Сеть WARP успешно отвечает:${NC}"
+                        echo "$warp_test" | sed 's/^/   /'
+                    else
+                        echo -e " 🔴 ${RED}Сеть WARP не пропускает трафик! Проверьте wg-quick@warp.${NC}"
+                    fi
+                else
+                    echo -e " Интерфейс warp: 🔴 ${RED}DOWN (Сеть WireGuard отключена)${NC}"
+                fi
             else
-                echo -e " Port Hopping (IPv6 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
+                echo -e " Cloudflare WARP: 🔘 Не установлен."
             fi
-        fi
 
-        # 8. Использование системных ресурсов
-        echo -e "\n${BOLD}[8] Использование ресурсов процессами Xray и Hysteria 2:${NC}"
-        local xray_pid=$(systemctl show --property=MainPID --value xray)
-        local hysteria_pid=$(systemctl show --property=MainPID --value hysteria-server)
-        
-        if [ -n "$xray_pid" ] && [ "$xray_pid" -ne 0 ] && ps -p "$xray_pid" >/dev/null; then
-            local xray_mem=$(ps -o rss= -p "$xray_pid" | awk '{print int($1/1024)}')
-            local xray_cpu=$(ps -o %cpu= -p "$xray_pid")
-            echo -e " Xray (PID $xray_pid):   CPU: ${GREEN}${xray_cpu}%${NC} | Memory: ${GREEN}${xray_mem} MB${NC}"
-        else
-            echo -e " Xray: 🔴 Процесс не запущен"
-        fi
-        
-        if [ -n "$hysteria_pid" ] && [ "$hysteria_pid" -ne 0 ] && ps -p "$hysteria_pid" >/dev/null; then
-            local hysteria_mem=$(ps -o rss= -p "$hysteria_pid" | awk '{print int($1/1024)}')
-            local hysteria_cpu=$(ps -o %cpu= -p "$hysteria_pid")
-            echo -e " Hysteria 2 (PID $hysteria_pid): CPU: ${GREEN}${hysteria_cpu}%${NC} | Memory: ${GREEN}${hysteria_mem} MB${NC}"
-        else
-            echo -e " Hysteria 2: 🔴 Процесс не запущен"
-        fi
+            # 5. Проверка разблокировки медиа-ресурсов
+            echo -e "\n${BOLD}[5] Разблокировка медиа-ресурсов (Netflix, YouTube, ChatGPT):${NC}"
+            check_media_unlock() {
+                local label="$1"
+                local iface="$2"
+                local curl_opts=""
+                if [[ -n "$iface" ]]; then
+                    curl_opts="--interface $iface"
+                fi
 
-        echo -e "\n${BOLD}Диагностика завершена. Нажмите Enter, чтобы вернуться назад...${NC}"
-        read
-    }
+                # Netflix
+                local nf_code; nf_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.netflix.com/title/80018499)
+                local nf_res="${RED}🔴 Заблокирован${NC}"
+                if [[ "$nf_code" == "200" ]]; then
+                    nf_res="${GREEN}🟢 Доступен (Оригиналы + Каталог)${NC}"
+                elif [[ "$nf_code" == "301" ]] || [[ "$nf_code" == "302" ]]; then
+                    nf_res="${YELLOW}🟡 Доступны только собственные релизы${NC}"
+                fi
 
+                # ChatGPT
+                local gpt_code; gpt_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com)
+                local gpt_res="${RED}🔴 Заблокирован${NC}"
+                if [[ "$gpt_code" == "200" ]] || [[ "$gpt_code" == "302" ]]; then
+                    gpt_res="${GREEN}🟢 Доступен${NC}"
+                fi
 
-    add_client() {
-        echo -e "\n--- Добавление нового клиента ---"
-        read -p "Введите имя нового устройства (например: client_new): " new_name
-        new_name=$(echo "$new_name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        if [[ -z "$new_name" ]]; then
-            echo "❌ Имя не может быть пустым"
-            return
-        fi
+                # YouTube Region
+                local yt_region; yt_region=$(curl $curl_opts -s --connect-timeout 4 https://www.youtube.com/premium 2>/dev/null | awk -F'"' '/countryCode":/ { for(i=1;i<=NF;i++) if($i=="countryCode") print $(i+2) }')
+                local yt_res="${RED}🔴 Не удалось определить регион${NC}"
+                if [[ -n "$yt_region" ]]; then
+                    yt_res="${GREEN}🟢 Доступен (Регион: $yt_region)${NC}"
+                fi
 
-        local safe_filename=$(echo "$new_name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
-        if [[ -z "$safe_filename" ]]; then
-            safe_filename="client_new"
-        fi
+                echo -e "   👉 ${CYAN}$label:${NC}"
+                echo -e "      - Netflix: $nf_res"
+                echo -e "      - ChatGPT: $gpt_res"
+                echo -e "      - YouTube: $yt_res"
+            }
+            check_media_unlock "Основной IP сервера" ""
+            if [[ "$(get_installed_var "WARP_INSTALLED")" == "true" ]] && ip link show warp >/dev/null 2>&1; then
+                check_media_unlock "Через интерфейс WARP" "warp"
+            fi
 
-        if [ -f "$CLIENT_CONFIG_DIR/${safe_filename}.json" ]; then
-            echo "❌ Клиент с таким именем уже существует!"
-            return
-        fi
+            # 6. Проверка сертификатов SSL
+            echo -e "\n${BOLD}[6] Проверка SSL-сертификатов Let's Encrypt:${NC}"
+            if [[ -f "$SSL_DIR/fullchain.cer" ]] && [[ -f "$SSL_DIR/private.key" ]]; then
+                echo -e " Файлы SSL: 🟢 ${GREEN}Присутствуют в директории $SSL_DIR${NC}"
+                local end_date; end_date=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
+                echo -e " Срок действия сертификата до: ${YELLOW}$end_date${NC}"
+            else
+                echo -e " Файлы SSL: 🔴 ${RED}ОТСУТСТВУЮТ! Xray не сможет работать без TLS-сертификатов.${NC}"
+            fi
 
-        local new_uuid=$(xray uuid)
-        DOMAIN=$(get_installed_var "DOMAIN")
-        local FINGERPRINT=$(get_installed_var "FINGERPRINT")
-        if [ -z "$FINGERPRINT" ]; then FINGERPRINT="random"; fi
+            # 7. Проверка Фаерволов и Правил IPTables
+            echo -e "\n${BOLD}[7] Состояние системных фаерволов и Port Hopping:${NC}"
+            if ufw status | grep -q "Status: active"; then
+                echo -e " UFW Firewall: 🟢 ${GREEN}ACTIVE (Включен)${NC}"
+                if iptables -t nat -S | grep -qi "antizapret"; then
+                    echo -e "  ${YELLOW}⚠️ ПРЕДУПРЕЖДЕНИЕ: UFW активен одновременно с правилами NAT AntiZapret.${NC}"
+                    echo -e "  Это может вызывать сбои маршрутизации. Рекомендуется выполнить: ${CYAN}ufw disable${NC}"
+                fi
+            else
+                echo -e " UFW Firewall: 🔘 ${YELLOW}DISABLED (Отключен)${NC}"
+                echo -e " Убедитесь, что порты 443 и 80 разрешены напрямую в ваших правилах iptables."
+            fi
 
-        cat > "$CLIENT_CONFIG_DIR/${safe_filename}.json" <<EOF
-{
-  "remarks": "$new_name",
-  "id": "$new_uuid",
-  "outbounds": [{
-    "protocol": "vless",
-    "settings": {
-      "vnext": [{
-        "address": "$DOMAIN",
-        "port": 443,
-        "users": [{
-          "id": "$new_uuid",
-          "flow": "xtls-rprx-vision"
-        }]
-      }]
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "tls",
-      "tlsSettings": {
-        "fingerprint": "$FINGERPRINT",
-        "minVersion": "1.3"
-      },
-      "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
+            # Проверка правил Port Hopping
+            local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
+            if $ipt_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
+                echo -e " Port Hopping (IPv4 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
+            else
+                echo -e " Port Hopping (IPv4 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
+            fi
+            
+            local ipt6_path; ipt6_path=$(command -v ip6tables 2>/dev/null || echo "/sbin/ip6tables")
+            if $ipt6_path -t nat -S &>/dev/null; then
+                if $ipt6_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
+                    echo -e " Port Hopping (IPv6 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
+                else
+                    echo -e " Port Hopping (IPv6 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
+                fi
+            fi
+
+            # 8. Использование системных ресурсов
+            echo -e "\n${BOLD}[8] Использование ресурсов процессами Xray и Hysteria 2:${NC}"
+            local xray_pid; xray_pid=$(systemctl show --property=MainPID --value xray)
+            local hysteria_pid; hysteria_pid=$(systemctl show --property=MainPID --value hysteria-server)
+            
+            if [[ -n "$xray_pid" ]] && [[ "$xray_pid" -ne 0 ]] && ps -p "$xray_pid" >/dev/null; then
+                local xray_mem; xray_mem=$(ps -o rss= -p "$xray_pid" | awk '{print int($1/1024)}')
+                local xray_cpu; xray_cpu=$(ps -o %cpu= -p "$xray_pid")
+                echo -e " Xray (PID $xray_pid):   CPU: ${GREEN}${xray_cpu}%${NC} | Memory: ${GREEN}${xray_mem} MB${NC}"
+            else
+                echo -e " Xray: 🔴 Процесс не запущен"
+            fi
+            
+            if [[ -n "$hysteria_pid" ]] && [[ "$hysteria_pid" -ne 0 ]] && ps -p "$hysteria_pid" >/dev/null; then
+                local hysteria_mem; hysteria_mem=$(ps -o rss= -p "$hysteria_pid" | awk '{print int($1/1024)}')
+                local hysteria_cpu; hysteria_cpu=$(ps -o %cpu= -p "$hysteria_pid")
+                echo -e " Hysteria 2 (PID $hysteria_pid): CPU: ${GREEN}${hysteria_cpu}%${NC} | Memory: ${GREEN}${hysteria_mem} MB${NC}"
+            else
+                echo -e " Hysteria 2: 🔴 Процесс не запущен"
+            fi
+
+            echo -e "\n${BOLD}Диагностика завершена. Нажмите Enter, чтобы вернуться назад...${NC}"
+            read -r
         }
-    }
-  }]
-}
-EOF
-        # Устанавливаем права
-        chmod 644 "$CLIENT_CONFIG_DIR/${safe_filename}.json"
-        chown nobody:nogroup "$CLIENT_CONFIG_DIR/${safe_filename}.json"
 
-        # Обновляем конфиг сервера и перезапускаем xray и hysteria
-        generate_server_config
-        generate_hysteria_config
 
-        # Обновляем маркер
-        local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
-        update_marker_val "NUM_DEVICES" "$current_num"
-
-        echo "✅ Клиент '$new_name' успешно добавлен!"
-    }
-
-    # === UI ФУНКЦИИ ===
-    ui_header() {
-        local title="$1"
-        local color="${2:-${CYAN}}"
-        echo -e "\n${color}╭─────── ${BOLD}${title}${NC} ${color}─────────────────────────────────────────${NC}"
-        echo -e "${color}│${NC}"
-    }
-
-    ui_footer() {
-        local color="${1:-${CYAN}}"
-        echo -e "${color}│${NC}"
-        echo -e "${color}╰────────────────────────────────────────────────────────────${NC}"
-    }
-
-    ui_divider() {
-        local color="${1:-${CYAN}}"
-        echo -e "${color}│${NC}"
-        echo -e "${color}├────────────────────────────────────────────────────────────${NC}"
-        echo -e "${color}│${NC}"
-    }
-
-    ui_item() {
-        local num="$1"
-        local text="$2"
-        local color="${3:-${YELLOW}}"
-        if [ -z "$num" ]; then
-             echo -e "${CYAN}│${NC}  ${text}"
-        else
-             echo -e "${CYAN}│${NC}  ${BOLD}${color}${num}.${NC} ${text}"
-        fi
-    }
-
-    ui_item_color() {
-        local num="$1"
-        local text="$2"
-        local num_color="${3:-${YELLOW}}"
-        local border_color="${4:-${CYAN}}"
-        if [ -z "$num" ]; then
-             echo -e "${border_color}│${NC}  ${text}"
-        else
-             echo -e "${border_color}│${NC}  ${BOLD}${num_color}${num}.${NC} ${text}"
-        fi
-    }
-
-    ui_status() {
-        local icon="$1"
-        local key="$2"
-        local val="$3"
-        printf "${CYAN}│${NC} %s ${BOLD}%-12s${NC} %b\n" "$icon" "$key:" "$val"
-    }
-
-    remove_client() {
-        ui_header "🗑️  УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ" "${RED}"
-        
-        mapfile -t config_files < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | sort)
-        if [ ${#config_files[@]} -eq 0 ]; then
-            ui_item_color "" "❌ Нет доступных клиентов для удаления" "" "${RED}"
-            ui_footer "${RED}"
-            return
-        fi
-
-        for i in "${!config_files[@]}"; do
-            remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "${config_files[$i]}" 2>/dev/null)
-            if [ -z "$remarks" ]; then
-                remarks="${config_files[$i]##*/}"
-                remarks="${remarks%.json}"
+        add_client() {
+            echo -e "\n--- Добавление нового клиента ---"
+            read -r -p "Введите имя нового устройства (например: client_new): " new_name
+            new_name=$(echo "$new_name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            if [[ -z "$new_name" ]]; then
+                echo "❌ Имя не может быть пустым"
+                return
             fi
-            ui_item_color "$((i+1))" "$remarks" "${YELLOW}" "${RED}"
-        done
-        ui_item_color "0" "↩️ Отмена и возврат назад" "${CYAN}" "${RED}"
-        ui_footer "${RED}"
 
-        read -p " Выберите клиента (1-${#config_files[@]}, или 0 для выхода): " choice
-        if [ "$choice" == "0" ] || [ -z "$choice" ]; then
-            return
-        fi
+            local safe_filename; safe_filename=$(echo "$new_name" | tr -cd '[:alnum:]_.-' | tr '[:upper:]' '[:lower:]')
+            if [[ -z "$safe_filename" ]]; then
+                safe_filename="client_new"
+            fi
 
-        if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#config_files[@]} ]; then
-            echo -e " ${RED}❌ Неверный выбор!${NC}"
-            return
-        fi
+            if [[ -f "$CLIENT_CONFIG_DIR/${safe_filename}.json" ]]; then
+                echo "❌ Клиент с таким именем уже существует!"
+                return
+            fi
 
-        selected="${config_files[$((choice-1))]}"
-        remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$selected" 2>/dev/null)
-        if [ -z "$remarks" ]; then
-            remarks="${selected##*/}"
-            remarks="${remarks%.json}"
-        fi
+            local new_uuid; new_uuid=$(xray uuid)
+            DOMAIN=$(get_installed_var "DOMAIN")
+            local FINGERPRINT; FINGERPRINT=$(get_installed_var "FINGERPRINT")
+            if [[ -z "$FINGERPRINT" ]]; then FINGERPRINT="random"; fi
 
-        read -p " Вы действительно хотите удалить '$remarks'? [y/N]: " confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            rm -f "$selected"
+            cat > "$CLIENT_CONFIG_DIR/${safe_filename}.json" <<EOF
+    {
+      "remarks": "$new_name",
+      "id": "$new_uuid",
+      "outbounds": [{
+        "protocol": "vless",
+        "settings": {
+          "vnext": [{
+            "address": "$DOMAIN",
+            "port": 443,
+            "users": [{
+              "id": "$new_uuid",
+              "flow": "xtls-rprx-vision"
+            }]
+          }]
+        },
+        "streamSettings": {
+          "network": "tcp",
+          "security": "tls",
+          "tlsSettings": {
+            "fingerprint": "$FINGERPRINT",
+            "minVersion": "1.3"
+          },
+          "sockopt": {
+              "tcpFastOpen": true,
+              "tcpcongestion": "bbr",
+              "tcpKeepAliveIdle": 300
+            }
+        }
+      }]
+    }
+EOF
+            # Устанавливаем права
+            chmod 644 "$CLIENT_CONFIG_DIR/${safe_filename}.json"
+            chown nobody:nogroup "$CLIENT_CONFIG_DIR/${safe_filename}.json"
+
             # Обновляем конфиг сервера и перезапускаем xray и hysteria
             generate_server_config
             generate_hysteria_config
 
             # Обновляем маркер
-            local current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
+            local current_num; current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
             update_marker_val "NUM_DEVICES" "$current_num"
 
-            echo -e " ${GREEN}✅ Клиент '$remarks' успешно удален из системы!${NC}"
-            sleep 1
-        else
-            echo " Отменено."
-        fi
-    }
+            echo "✅ Клиент '$new_name' успешно добавлен!"
+        }
 
-    show_status_dashboard() {
-        local domain=$(get_installed_var "DOMAIN")
-        local clients_count=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
-        
-        # Статусы системных служб
-        local xray_ver=""
-        if [ -f "/usr/local/bin/xray" ]; then
-            xray_ver=$(/usr/local/bin/xray version 2>/dev/null | head -n 1 | awk '{print $2}')
-        elif command -v xray >/dev/null 2>&1; then
-            xray_ver=$(xray version 2>/dev/null | head -n 1 | awk '{print $2}')
-        fi
+        # === UI ФУНКЦИИ ===
+        ui_header() {
+            local title="$1"
+            local color="${2:-${CYAN}}"
+            echo -e "\n${color}╭─────── ${BOLD}${title}${NC} ${color}─────────────────────────────────────────${NC}"
+            echo -e "${color}│${NC}"
+        }
 
-        local xray_status="${RED}OFF${NC}"
-        if [ -n "$xray_ver" ]; then
-            systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC} (v$xray_ver)" || xray_status="${RED}OFF${NC} (v$xray_ver)"
-        else
-            systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}" || xray_status="${RED}OFF${NC}"
-        fi
-        
-        local sub_status="${RED}OFF${NC}"
-        systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}ACTIVE${NC}"
-        
-        local hy2_status="${RED}OFF${NC}"
-        systemctl is-active hysteria-server >/dev/null 2>&1 && hy2_status="${GREEN}ACTIVE${NC}"
-        
-        local warp_installed=$(get_installed_var "WARP_INSTALLED")
-        local warp_enabled=$(get_installed_var "WARP_ENABLED")
-        local warp_mode=$(get_installed_var "WARP_MODE")
-        [ -z "$warp_mode" ] && warp_mode="smart"
-        
-        local warp_status="${RED}NOT INSTALLED${NC}"
-        if [ "$warp_installed" == "true" ]; then
-            if [ "$warp_enabled" == "true" ]; then
-                if [ "$warp_mode" == "full" ]; then
-                    warp_status="${GREEN}ON (FULL)${NC}"
-                else
-                    warp_status="${GREEN}ON (SMART)${NC}"
+        ui_footer() {
+            local color="${1:-${CYAN}}"
+            echo -e "${color}│${NC}"
+            echo -e "${color}╰────────────────────────────────────────────────────────────${NC}"
+        }
+
+        ui_divider() {
+            local color="${1:-${CYAN}}"
+            echo -e "${color}│${NC}"
+            echo -e "${color}├────────────────────────────────────────────────────────────${NC}"
+            echo -e "${color}│${NC}"
+        }
+
+        ui_item() {
+            local num="$1"
+            local text="$2"
+            local color="${3:-${YELLOW}}"
+            if [[ -z "$num" ]]; then
+                 echo -e "${CYAN}│${NC}  ${text}"
+            else
+                 echo -e "${CYAN}│${NC}  ${BOLD}${color}${num}.${NC} ${text}"
+            fi
+        }
+
+        ui_item_color() {
+            local num="$1"
+            local text="$2"
+            local num_color="${3:-${YELLOW}}"
+            local border_color="${4:-${CYAN}}"
+            if [[ -z "$num" ]]; then
+                 echo -e "${border_color}│${NC}  ${text}"
+            else
+                 echo -e "${border_color}│${NC}  ${BOLD}${num_color}${num}.${NC} ${text}"
+            fi
+        }
+
+        ui_status() {
+            local icon="$1"
+            local key="$2"
+            local val="$3"
+            printf "${CYAN}│${NC} %s ${BOLD}%-12s${NC} %b\n" "$icon" "$key:" "$val"
+        }
+
+        remove_client() {
+            ui_header "🗑️  УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ" "${RED}"
+            
+            mapfile -t -d '' config_files < <(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' -print0 | sort -z)
+            if [[ ${#config_files[@]} -eq 0 ]]; then
+                ui_item_color "" "❌ Нет доступных клиентов для удаления" "" "${RED}"
+                ui_footer "${RED}"
+                return
+            fi
+
+            for i in "${!config_files[@]}"; do
+                remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "${config_files[$i]}" 2>/dev/null)
+                if [[ -z "$remarks" ]]; then
+                    remarks="${config_files[$i]##*/}"
+                    remarks="${remarks%.json}"
                 fi
-            else
-                warp_status="${YELLOW}DISABLED${NC}"
+                ui_item_color "$((i+1))" "$remarks" "${YELLOW}" "${RED}"
+            done
+            ui_item_color "0" "↩️ Отмена и возврат назад" "${CYAN}" "${RED}"
+            ui_footer "${RED}"
+
+            read -r -p " Выберите клиента (1-${#config_files[@]}, или 0 для выхода): " choice
+            if [[ "$choice" == "0" ]] || [[ -z "$choice" ]]; then
+                return
             fi
-        fi
 
-        local opera_installed=$(get_installed_var "OPERA_INSTALLED")
-        local opera_enabled=$(get_installed_var "OPERA_ENABLED")
-        local opera_status="${RED}NOT INSTALLED${NC}"
-        if [ "$opera_installed" == "true" ]; then
-            if [ "$opera_enabled" == "true" ]; then
-                opera_status="${GREEN}ON${NC}"
-            else
-                opera_status="${YELLOW}DISABLED${NC}"
+            if ! [[ "$choice" =~ ^[0-9]+$ ]] || [[ "$choice" -lt 1 ]] || [[ "$choice" -gt ${#config_files[@]} ]]; then
+                echo -e " ${RED}❌ Неверный выбор!${NC}"
+                return
             fi
-        fi
 
-        local reality_enabled=$(get_installed_var "REALITY_ENABLED")
-        local reality_sni=$(get_installed_var "REALITY_SNI")
-        [ -z "$reality_sni" ] && reality_sni="max.ru"
-        local reality_status="${RED}OFF${NC}"
-        if [ "$reality_enabled" == "true" ]; then
-            reality_status="${GREEN}ON (${reality_sni})${NC}"
-        fi
+            selected="${config_files[$((choice-1))]}"
+            remarks=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('remarks', ''))" "$selected" 2>/dev/null)
+            if [[ -z "$remarks" ]]; then
+                remarks="${selected##*/}"
+                remarks="${remarks%.json}"
+            fi
 
-        ui_header "🖥️  СТАТУС СЕРВЕРА"
-        ui_status "🌐" "Сервер" "${GREEN}$domain${NC}"
-        ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
-        ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status]"
-        ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
-        ui_footer
-    }
+            read -r -p " Вы действительно хотите удалить '$remarks'? [y/N]: " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                rm -f "$selected"
+                # Обновляем конфиг сервера и перезапускаем xray и hysteria
+                generate_server_config
+                generate_hysteria_config
 
-    change_fingerprint() {
-        ui_header "🛠️  ВЫБОР ОТПЕЧАТКА TLS (FINGERPRINT)"
-        ui_item "1" "chrome (Рекомендуется, самый стабильный)"
-        ui_item "2" "safari (Apple устройства)"
-        ui_item "3" "ios (Мобильный Apple)"
-        ui_item "4" "android (Мобильный Android)"
-        ui_item "5" "edge (Microsoft Edge)"
-        ui_item "6" "firefox (Mozilla Firefox)"
-        ui_item "7" "360 (Браузер 360)"
-        ui_item "8" "qq (Браузер QQ)"
-        ui_item "9" "random (Случайный из списка браузеров)"
-        ui_item "10" "randomized (Полная рандомизация - может вызывать обрывы)"
-        ui_footer
-        read -p " Выберите отпечаток (1-10): " fp_choice
-        case $fp_choice in
-            1) new_fp="chrome" ;;
-            2) new_fp="safari" ;;
-            3) new_fp="ios" ;;
-            4) new_fp="android" ;;
-            5) new_fp="edge" ;;
-            6) new_fp="firefox" ;;
-            7) new_fp="360" ;;
-            8) new_fp="qq" ;;
-            9) new_fp="random" ;;
-            10) new_fp="randomized" ;;
-            *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; return ;;
-        esac
+                # Обновляем маркер
+                local current_num; current_num=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' | wc -l)
+                update_marker_val "NUM_DEVICES" "$current_num"
 
-        update_marker_val "FINGERPRINT" "$new_fp"
-        echo -e "${GREEN}✅ Отпечаток изменен на ${BOLD}${new_fp}${NC}"
+                echo -e " ${GREEN}✅ Клиент '$remarks' успешно удален из системы!${NC}"
+                sleep 1
+            else
+                echo " Отменено."
+            fi
+        }
+
+        show_status_dashboard() {
+            local domain; domain=$(get_installed_var "DOMAIN")
+            local clients_count; clients_count=$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
+            
+            # Статусы системных служб
+            local xray_ver=""
+            if [[ -f "/usr/local/bin/xray" ]]; then
+                xray_ver=$(/usr/local/bin/xray version 2>/dev/null | head -n 1 | awk '{print $2}')
+            elif command -v xray >/dev/null 2>&1; then
+                xray_ver=$(xray version 2>/dev/null | head -n 1 | awk '{print $2}')
+            fi
+
+            local xray_status="${RED}OFF${NC}"
+            if [[ -n "$xray_ver" ]]; then
+                systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC} (v$xray_ver)" || xray_status="${RED}OFF${NC} (v$xray_ver)"
+            else
+                systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}" || xray_status="${RED}OFF${NC}"
+            fi
+            
+            local sub_status="${RED}OFF${NC}"
+            systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}ACTIVE${NC}"
+            
+            local hy2_status="${RED}OFF${NC}"
+            systemctl is-active hysteria-server >/dev/null 2>&1 && hy2_status="${GREEN}ACTIVE${NC}"
+            
+            local warp_installed; warp_installed=$(get_installed_var "WARP_INSTALLED")
+            local warp_enabled; warp_enabled=$(get_installed_var "WARP_ENABLED")
+            local warp_mode; warp_mode=$(get_installed_var "WARP_MODE")
+            [[ -z "$warp_mode" ]] && warp_mode="smart"
+            
+            local warp_status="${RED}NOT INSTALLED${NC}"
+            if [[ "$warp_installed" == "true" ]]; then
+                if [[ "$warp_enabled" == "true" ]]; then
+                    if [[ "$warp_mode" == "full" ]]; then
+                        warp_status="${GREEN}ON (FULL)${NC}"
+                    else
+                        warp_status="${GREEN}ON (SMART)${NC}"
+                    fi
+                else
+                    warp_status="${YELLOW}DISABLED${NC}"
+                fi
+            fi
+
+            local opera_installed; opera_installed=$(get_installed_var "OPERA_INSTALLED")
+            local opera_enabled; opera_enabled=$(get_installed_var "OPERA_ENABLED")
+            local opera_status="${RED}NOT INSTALLED${NC}"
+            if [[ "$opera_installed" == "true" ]]; then
+                if [[ "$opera_enabled" == "true" ]]; then
+                    opera_status="${GREEN}ON${NC}"
+                else
+                    opera_status="${YELLOW}DISABLED${NC}"
+                fi
+            fi
+
+            local reality_enabled; reality_enabled=$(get_installed_var "REALITY_ENABLED")
+            local reality_sni; reality_sni=$(get_installed_var "REALITY_SNI")
+            [[ -z "$reality_sni" ]] && reality_sni="max.ru"
+            local reality_status="${RED}OFF${NC}"
+            if [[ "$reality_enabled" == "true" ]]; then
+                reality_status="${GREEN}ON (${reality_sni})${NC}"
+            fi
+
+            ui_header "🖥️  СТАТУС СЕРВЕРА"
+            ui_status "🌐" "Сервер" "${GREEN}$domain${NC}"
+            ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
+            ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status]"
+            ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
+            ui_footer
+        }
+
+        change_fingerprint() {
+            ui_header "🛠️  ВЫБОР ОТПЕЧАТКА TLS (FINGERPRINT)"
+            ui_item "1" "chrome (Рекомендуется, самый стабильный)"
+            ui_item "2" "safari (Apple устройства)"
+            ui_item "3" "ios (Мобильный Apple)"
+            ui_item "4" "android (Мобильный Android)"
+            ui_item "5" "edge (Microsoft Edge)"
+            ui_item "6" "firefox (Mozilla Firefox)"
+            ui_item "7" "360 (Браузер 360)"
+            ui_item "8" "qq (Браузер QQ)"
+            ui_item "9" "random (Случайный из списка браузеров)"
+            ui_item "10" "randomized (Полная рандомизация - может вызывать обрывы)"
+            ui_footer
+            read -r -p " Выберите отпечаток (1-10): " fp_choice
+            case $fp_choice in
+                1) new_fp="chrome" ;;
+                2) new_fp="safari" ;;
+                3) new_fp="ios" ;;
+                4) new_fp="android" ;;
+                5) new_fp="edge" ;;
+                6) new_fp="firefox" ;;
+                7) new_fp="360" ;;
+                8) new_fp="qq" ;;
+                9) new_fp="random" ;;
+                10) new_fp="randomized" ;;
+                *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; return ;;
+            esac
+
+            update_marker_val "FINGERPRINT" "$new_fp"
+            echo -e "${GREEN}✅ Отпечаток изменен на ${BOLD}${new_fp}${NC}"
+            
+            echo -e "🔄 Перегенерация конфигураций..."
+            generate_server_config
+            setup_subscription_server
+            generate_client_configs
+            install_generate_script
+            
+            echo -e "${GREEN}✅ Сервер обновлен! Обязательно обновите подписку в ваших клиентах.${NC}"
+            sleep 2
+        }
+
+        domain_management_menu() {
+            local current_domain; current_domain=$(get_installed_var "DOMAIN")
+
+            ui_header "🌐  СМЕНА ОСНОВНОГО ДОМЕНА"
+            ui_item "" "Текущий домен: ${GREEN}$current_domain${NC}"
+            ui_divider
+            ui_item "1" "🌐 Изменить основной домен (с перевыпуском SSL)"
+            ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+            ui_footer
+            
+            read -r -p " Выберите действие (0-1): " dchoice
+            case $dchoice in
+                0) main_menu ;;
+                1)
+                    echo -e "\n${BOLD}--- Смена основного домена ---${NC}"
+                    echo -e "Для смены домена потребуется перевыпустить SSL сертификат."
+                    echo -e "Убедитесь, что новый домен направлен A-записью на IP вашего сервера."
+                    read -r -p "Введите новый домен (например, vless.mydomain.com): " new_domain
+                    new_domain=$(echo "$new_domain" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
+                    if [[ -z "$new_domain" ]]; then
+                        echo -e "${RED}❌ Домен не может быть пустым.${NC}"
+                        sleep 1
+                        domain_management_menu
+                        return
+                    fi
+                    if [[ "$new_domain" == "$current_domain" ]]; then
+                        echo -e "${YELLOW}Этот домен уже является основным.${NC}"
+                        sleep 1
+                        domain_management_menu
+                        return
+                    fi
+                    
+                    # Проверим резолв нового домена
+                    local DOMAIN="$new_domain"
+                    check_domain
+                    
+                    # Временно остановим xray, чтобы освободить 80 порт для certbot
+                    echo "🛑 Останавливаем xray для перевыпуска SSL..."
+                    systemctl stop xray
+                    
+                    local EMAIL; EMAIL=$(get_installed_var "EMAIL")
+                    echo "🔐 Запуск Certbot для получения нового сертификата..."
+                    if certbot certonly --standalone -d "$new_domain" --email "$EMAIL" --agree-tos --non-interactive --key-type ecdsa; then
+        log_info "Requested SSL certificate"
+                        echo "✅ SSL-сертификат получен успешно!"
+                        
+                        # Копируем сертификаты
+                        cp "/etc/letsencrypt/live/$new_domain/fullchain.pem" "$SSL_DIR/fullchain.cer"
+                        cp "/etc/letsencrypt/live/$new_domain/privkey.pem" "$SSL_DIR/private.key"
+                        
+                        chown -R nobody:nogroup "$SSL_DIR"
+                        chmod 644 "$SSL_DIR/fullchain.cer"
+                        chmod 600 "$SSL_DIR/private.key"
+                        
+                        # Обновляем крон для автопродления
+                        (crontab -l 2>/dev/null | grep -v 'certbot renew'; \
+                         echo "0 3 * * * certbot renew --quiet --post-hook \"cp /etc/letsencrypt/live/$new_domain/fullchain.pem $SSL_DIR/fullchain.cer && cp /etc/letsencrypt/live/$new_domain/privkey.pem $SSL_DIR/private.key && chown -R nobody:nogroup $SSL_DIR && chmod 644 $SSL_DIR/fullchain.cer && chmod 600 $SSL_DIR/private.key && systemctl restart xray\"") | crontab -
+        log_info "Restarted Xray service"
+                        
+                        # Обновляем маркер
+                        update_marker_val "DOMAIN" "$new_domain"
+                        
+                        # Обновляем конфигурации
+                        DOMAIN="$new_domain"
+                        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                        generate_server_config
+                        setup_subscription_server
+                        generate_client_configs
+                        install_generate_script
+                        
+                        echo -e "${GREEN}✅ Основной домен успешно изменен на $new_domain!${NC}"
+                        sleep 2
+                    else
+                        echo -e "${RED}❌ Не удалось перевыпустить SSL-сертификат для $new_domain.${NC}"
+                        echo "Возвращаем запуск Xray с прежним доменом..."
+                        systemctl start xray
+                        sleep 2
+                    fi
+                    domain_management_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    domain_management_menu
+                    ;;
+            esac
+        }
+
+        reality_management_menu() {
+            local reality_enabled; reality_enabled=$(get_installed_var "REALITY_ENABLED")
+            local reality_sni; reality_sni=$(get_installed_var "REALITY_SNI")
+            [[ -z "$reality_sni" ]] && reality_sni="max.ru"
+            local reality_dest; reality_dest=$(get_installed_var "REALITY_DEST")
+            [[ -z "$reality_dest" ]] && reality_dest="max.ru:443"
+
+            ui_header "🛡️  МАСКИРОВКА ТРАФИКА (VLESS-REALITY)"
+            local status_text="${RED}Выключена${NC}"
+            [[ "$reality_enabled" == "true" ]] && status_text="${GREEN}Активна${NC}"
+            ui_item "" "Текущий статус: $status_text"
+            ui_item "" "Маскировочный SNI: ${CYAN}$reality_sni${NC}"
+            ui_item "" "Адрес назначения (DEST): ${CYAN}$reality_dest${NC}"
+            ui_divider
+            if [[ "$reality_enabled" == "true" ]]; then
+                ui_item "1" "📴 Отключить маскировку Reality (возврат к прямому VLESS-TLS)"
+            else
+                ui_item "1" "🛡️ Включить маскировку Reality (маскироваться под $reality_sni)"
+            fi
+            ui_item "2" "⚙️ Изменить маскировочный сайт (SNI и DEST)"
+            ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+            ui_footer
+
+            read -r -p " Выберите действие (0-2): " rchoice
+            case $rchoice in
+                0) main_menu ;;
+                1)
+                    if [[ "$reality_enabled" == "true" ]]; then
+                        echo "📴 Отключение маскировки Reality..."
+                        update_marker_val "REALITY_ENABLED" "false"
+                    else
+                        echo "🛡️ Включение маскировки Reality..."
+                        update_marker_val "REALITY_ENABLED" "true"
+                        # Инициализируем дефолты если пусты
+                        if [[ -z "$(get_installed_var "REALITY_SNI")" ]]; then
+                            update_marker_val "REALITY_SNI" "max.ru"
+                        fi
+                        if [[ -z "$(get_installed_var "REALITY_DEST")" ]]; then
+                            update_marker_val "REALITY_DEST" "max.ru:443"
+                        fi
+                    fi
+                    
+                    echo "🔄 Пересборка конфигурации сервера..."
+                    generate_server_config
+                    setup_subscription_server
+                    generate_client_configs
+                    install_generate_script
+                    
+                    echo -e "${GREEN}✅ Настройки маскировки применены!${NC}"
+                    sleep 1.5
+                    reality_management_menu
+                    ;;
+                2)
+                    echo -e "\n${BOLD}--- Изменение маскировочного сайта ---${NC}"
+                    echo "Введите домен для маскировки (например, max.ru):"
+                    read -r -p " SNI (по умолчанию max.ru): " new_sni
+                    new_sni=$(echo "$new_sni" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
+                    [[ -z "$new_sni" ]] && new_sni="max.ru"
+
+                    echo "Введите адрес назначения (по умолчанию $new_sni:443):"
+                    read -r -p " DEST (по умолчанию $new_sni:443): " new_dest
+                    new_dest=$(echo "$new_dest" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
+                    [[ -z "$new_dest" ]] && new_dest="$new_sni:443"
+
+                    update_marker_val "REALITY_SNI" "$new_sni"
+                    update_marker_val "REALITY_DEST" "$new_dest"
+
+                    echo -e "${GREEN}✅ Настройки изменены на SNI: $new_sni | DEST: $new_dest${NC}"
+                    
+                    # Если Reality уже включен, пересоберем
+                    if [[ "$(get_installed_var "REALITY_ENABLED")" == "true" ]]; then
+                        echo "🔄 Пересборка конфигурации..."
+                        generate_server_config
+                        setup_subscription_server
+                        generate_client_configs
+                        install_generate_script
+                    fi
+                    sleep 1.5
+                    reality_management_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    reality_management_menu
+                    ;;
+            esac
+        }
+
+        manage_provider_id() {
+            ui_header "🔑 УПРАВЛЕНИЕ PROVIDER ID"
+            local current_pid; current_pid=$(get_installed_var "PROVIDER_ID")
+            if [[ -z "$current_pid" ]]; then
+                echo -e " Текущий статус: ${RED}Не установлен${NC}"
+            else
+                echo -e " Текущий статус: ${GREEN}${current_pid}${NC}"
+            fi
+            ui_divider
+            ui_item "1" "✏️ Указать / Изменить Provider ID"
+            ui_item "2" "🗑️ Удалить Provider ID"
+            ui_item "0" "⬅️ Вернуться в главное меню"
+            ui_footer
+            read -r -p " Выберите действие (0-2): " pid_choice
+            case $pid_choice in
+                1)
+                    read -r -p " Введите ваш Provider ID с happ-proxy.com: " new_pid
+                    if [[ -n "$new_pid" ]]; then
+                        update_marker_val "PROVIDER_ID" "$new_pid"
+                        echo -e "${GREEN}✅ Provider ID успешно сохранен!${NC}"
+                        systemctl restart xray-sub >/dev/null 2>&1
+        log_info "Restarted Xray service"
+                    else
+                        echo -e "${RED}❌ Пустое значение!${NC}"
+                    fi
+                    sleep 1.5
+                    manage_provider_id
+                    ;;
+                2)
+                    update_marker_val "PROVIDER_ID" ""
+                    echo -e "${GREEN}✅ Provider ID удален!${NC}"
+                    systemctl restart xray-sub >/dev/null 2>&1
+                    sleep 1.5
+                    manage_provider_id
+                    ;;
+                0)
+                    main_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    manage_provider_id
+                    ;;
+            esac
+        }
+
+        main_menu() {
+            show_status_dashboard
+            ui_header "⚡  ГЛАВНОЕ МЕНЮ"
+            ui_item "1" "📱 Показать QR-коды и ссылки подключения"
+            ui_item "2" "👤 Добавить нового пользователя / устройство"
+            ui_item "3" "🗑️ Удалить существующего пользователя"
+            ui_item "4" "🌀 Управление обходами блокировок (WARP & Opera Proxy)"
+            ui_divider
+            ui_item "5" "📰 Просмотреть системные логи служб"
+            ui_item "6" "📊 Мониторинг active-соединений (port 443)"
+            ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
+            ui_divider
+            ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
+            ui_item "9" "🌐 Изменить отпечаток TLS (Fingerprint)"
+            ui_item "10" "🌐 Смена основного домена (SSL)"
+            ui_item "11" "🔑 Управление Provider ID (happ-proxy.com)"
+            ui_divider
+            ui_item_color "12" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+            ui_item "13" "🚪 Выйти из терминала" "${CYAN}"
+            ui_footer
+            read -r -p " Выберите действие (1-13): " choice
+            case $choice in
+                1) "$GENERATE_SCRIPT" ; main_menu ;;
+                2) add_client ; main_menu ;;
+                3) remove_client ; main_menu ;;
+                4) bypass_menu ;;
+                5) show_logs ; main_menu ;;
+                6) show_connections ; main_menu ;;
+                7) run_diagnostics ; main_menu ;;
+                8) 
+                    echo -e "\n${BOLD}${GREEN}🔄 Загрузка последней версии скрипта...${NC}"
+                    cd /root || exit
+                    curl -s -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
+                    echo -e "${GREEN}✅ Скрипт обновлен! Применяем обновления ядра и конфигурации...${NC}"
+                    /root/install_xray.sh --update-core
+                    exit 0
+                    ;;
+                9) change_fingerprint ; main_menu ;;
+                10) domain_management_menu ;;
+                11) manage_provider_id ;;
+                12) 
+                    echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
+                    read -r -p "Вы уверены? (y/n): " uconf
+                    if [[ "$uconf" =~ ^[Yy]$ ]]; then
+                        uninstall_all
+                    else
+                        main_menu
+                    fi
+                    ;;
+                13) exit 0 ;;
+                *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
+            esac
+        }
+
+        uninstall_warp() {
+            echo -e "\n${BOLD}${RED}🧹 Полное удаление Cloudflare WARP с сервера...${NC}"
+            
+            systemctl stop wg-quick@warp >/dev/null 2>&1
+            systemctl disable wg-quick@warp >/dev/null 2>&1
+            rm -f /etc/cron.d/warp-native
+            rm -rf /opt/warp-native
+            rm -f /usr/local/bin/warp
+            rm -f /etc/wireguard/warp.conf
+            rm -f /usr/local/bin/wgcf
+            rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
+            rm -f /etc/xray/geoblock.lst
+            
+            # Удаление задачи автообновления из cron
+            if crontab -l &>/dev/null; then
+                crontab -l | grep -v "update-geoblocks" | crontab -
+            fi
+            
+            update_marker_val "WARP_INSTALLED" "false"
+            update_marker_val "WARP_ENABLED" "false"
+            update_marker_val "WARP_MODE" "smart"
+            
+            DOMAIN=$(get_installed_var "DOMAIN")
+            NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+            generate_server_config
+            
+            echo -e "${GREEN}✅ Cloudflare WARP успешно и полностью удален с сервера!${NC}"
+            sleep 1.5
+        }
+
+        toggle_warp_auto_update() {
+            local script_path; script_path=$(realpath "$0")
+            if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
+                echo "📴 Отключение автообновления геоблокировок..."
+                (crontab -l 2>/dev/null | grep -v 'update-geoblocks') | crontab -
+                echo -e "${GREEN}✅ Автообновление отключено${NC}"
+            else
+                echo "🔄 Включение автообновления геоблокировок..."
+                (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; echo "30 3 * * * bash $script_path --update-geoblocks >/dev/null 2>&1") | crontab -
+                echo -e "${GREEN}✅ Автообновление включено (ежедневно в 03:30)${NC}"
+            fi
+            sleep 1.5
+        }
+
+        bypass_menu() {
+            local warp_installed; warp_installed=$(get_installed_var "WARP_INSTALLED")
+            local warp_enabled; warp_enabled=$(get_installed_var "WARP_ENABLED")
+            local warp_mode; warp_mode=$(get_installed_var "WARP_MODE")
+            [[ -z "$warp_mode" ]] && warp_mode="smart"
+
+            local opera_installed; opera_installed=$(get_installed_var "OPERA_INSTALLED")
+            local opera_enabled; opera_enabled=$(get_installed_var "OPERA_ENABLED")
+
+            ui_header "🌀  УПРАВЛЕНИЕ ОБХОДАМИ БЛОКИРОВОК" "${PURPLE}"
+            
+            # Секция Cloudflare WARP
+            ui_item_color "" "${BOLD}[ Cloudflare WARP ]${NC}" "" "${PURPLE}"
+            if [[ "$warp_installed" != "true" ]]; then
+                ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
+                ui_item_color "1" "📥 Установить и активировать Cloudflare WARP" "${YELLOW}" "${PURPLE}"
+            else
+                local warp_status="${RED}Выключен${NC}"
+                [[ "$warp_enabled" == "true" ]] && warp_status="${GREEN}Активен${NC}"
+                local mode_text="${CYAN}Smart-обход${NC}"
+                [[ "$warp_mode" == "full" ]] && mode_text="${PURPLE}Full-обход (весь трафик)${NC}"
+                ui_item_color "" "Статус: $warp_status | Режим: $mode_text" "" "${PURPLE}"
+                if [[ "$warp_enabled" == "true" ]]; then
+                    ui_item_color "1" "📴 Отключить WARP" "${YELLOW}" "${PURPLE}"
+                else
+                    ui_item_color "1" "🌀 Включить WARP" "${YELLOW}" "${PURPLE}"
+                fi
+                ui_item_color "2" "⚙️ Изменить режим WARP (Smart / Full)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "3" "🔄 Обновить список геоблокировок WARP" "${YELLOW}" "${PURPLE}"
+                
+                local cron_status="${RED}Выключено${NC}"
+                if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
+                    cron_status="${GREEN}Включено${NC}"
+                fi
+                ui_item_color "4" "🕒 Автообновление геоблоков: $cron_status" "${YELLOW}" "${PURPLE}"
+                ui_item_color "5" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
+                ui_item_color "6" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
+            fi
+            
+            ui_divider "${PURPLE}"
+            ui_item_color "" "${BOLD}[ Opera Proxy (для OpenAI/ChatGPT) ]${NC}" "" "${PURPLE}"
+            
+            if [[ "$opera_installed" != "true" ]]; then
+                ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
+                ui_item_color "7" "📥 Установить и активировать Opera Proxy" "${YELLOW}" "${PURPLE}"
+            else
+                local opera_status="${RED}Выключен${NC}"
+                [[ "$opera_enabled" == "true" ]] && opera_status="${GREEN}Активен${NC}"
+                ui_item_color "" "Статус: $opera_status" "" "${PURPLE}"
+                if [[ "$opera_enabled" == "true" ]]; then
+                    ui_item_color "7" "📴 Отключить Opera Proxy" "${YELLOW}" "${PURPLE}"
+                else
+                    ui_item_color "7" "🌀 Включить Opera Proxy" "${YELLOW}" "${PURPLE}"
+                fi
+                ui_item_color "8" "📝 Редактировать список доменов Opera Proxy" "${YELLOW}" "${PURPLE}"
+                ui_item_color "9" "${RED}🗑️ Удалить Opera Proxy${NC}" "${RED}" "${PURPLE}"
+            fi
+            
+            ui_divider "${PURPLE}"
+            ui_item_color "" "${BOLD}[ Настройки подписки ]${NC}" "" "${PURPLE}"
+            local routing_enabled; routing_enabled=$(get_installed_var "ROUTING_ENABLED")
+            [[ -z "$routing_enabled" ]] && routing_enabled="true"
+            local routing_status="${RED}Отключена${NC}"
+            [[ "$routing_enabled" == "true" ]] && routing_status="${GREEN}Включена${NC}"
+            ui_item_color "" "Передача маршрутов (Routing): $routing_status" "" "${PURPLE}"
+            if [[ "$routing_enabled" == "true" ]]; then
+                ui_item_color "10" "📴 Отключить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
+            else
+                ui_item_color "10" "🌀 Включить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
+            fi
+            
+            ui_divider "${PURPLE}"
+            ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
+            ui_footer "${PURPLE}"
+            
+            read -r -p " Выберите действие (0-10): " bchoice
+            case $bchoice in
+                0)
+                    main_menu
+                    ;;
+                1)
+                    if [[ "$warp_installed" != "true" ]]; then
+                        install_warp
+                        DOMAIN=$(get_installed_var "DOMAIN")
+                        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                        generate_server_config
+                    else
+                        toggle_warp
+                    fi
+                    bypass_menu
+                    ;;
+                2)
+                    if [[ "$warp_installed" == "true" ]]; then
+                        echo -e "\n${BOLD}Выберите новый режим исходящего трафика:${NC}"
+                        echo -e " ${BOLD}${YELLOW}1.${NC} Smart-обход"
+                        echo -e " ${BOLD}${YELLOW}2.${NC} Full-обход"
+                        read -r -p "Режим (1-2): " mchoice
+                        if [[ "$mchoice" == "1" ]]; then
+                            update_marker_val "WARP_MODE" "smart"
+                            echo -e "${GREEN}✅ Режим изменен на Smart-обход${NC}"
+                        elif [[ "$mchoice" == "2" ]]; then
+                            update_marker_val "WARP_MODE" "full"
+                            echo -e "${GREEN}✅ Режим изменен на Full-обход${NC}"
+                        else
+                            echo -e "${RED}❌ Неверный выбор${NC}"
+                        fi
+                        DOMAIN=$(get_installed_var "DOMAIN")
+                        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                        generate_server_config
+                    else
+                        echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                3)
+                    if [[ "$warp_installed" == "true" ]]; then
+                        update_geoblock_list
+                        DOMAIN=$(get_installed_var "DOMAIN")
+                        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                        generate_server_config
+                        echo -e "${GREEN}✅ Список блокировок успешно обновлен!${NC}"
+                    else
+                        echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                4)
+                    if [[ "$warp_installed" == "true" ]]; then
+                        toggle_warp_auto_update
+                    else
+                        echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                    fi
+                    bypass_menu
+                    ;;
+                5)
+                    if [[ "$warp_installed" == "true" ]]; then
+                        install_warp
+                        DOMAIN=$(get_installed_var "DOMAIN")
+                        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                        generate_server_config
+                    else
+                        echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                6)
+                    if [[ "$warp_installed" == "true" ]]; then
+                        uninstall_warp
+                    else
+                        echo -e "${RED}❌ Установите WARP сначала!${NC}"
+                    fi
+                    bypass_menu
+                    ;;
+                7)
+                    if [[ "$opera_installed" != "true" ]]; then
+                        install_opera_proxy
+                    else
+                        toggle_opera_proxy
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                8)
+                    if [[ "$opera_installed" == "true" ]]; then
+                        if command -v nano &>/dev/null; then
+                            nano /etc/xray/opera.lst
+                        elif command -v vi &>/dev/null; then
+                            vi /etc/xray/opera.lst
+                        else
+                            echo -e "${RED}❌ Редактор не найден. Файл списка доменов находится в /etc/xray/opera.lst${NC}"
+                        fi
+                        DOMAIN=$(get_installed_var "DOMAIN")
+                        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+                        generate_server_config
+                    else
+                        echo -e "${RED}❌ Установите Opera Proxy сначала!${NC}"
+                    fi
+                    bypass_menu
+                    ;;
+                9)
+                    if [[ "$opera_installed" == "true" ]]; then
+                        uninstall_opera_proxy
+                    else
+                        echo -e "${RED}❌ Установите Opera Proxy сначала!${NC}"
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                10)
+                    local current_status; current_status=$(get_installed_var "ROUTING_ENABLED")
+                    if [[ "$current_status" == "false" ]]; then
+                        update_marker_val "ROUTING_ENABLED" "true"
+                        echo -e "${GREEN}✅ Передача маршрутов включена по умолчанию.${NC}"
+                    else
+                        update_marker_val "ROUTING_ENABLED" "false"
+                        echo -e "${GREEN}✅ Передача маршрутов отключена.${NC}"
+                    fi
+                    setup_subscription_server
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    bypass_menu
+                    ;;
+            esac
+        }
+
+        uninstall_all() {
+            echo "🧹 Удаление Xray и конфигураций..."
+            
+            systemctl stop xray-sub >/dev/null 2>&1
+            systemctl disable xray-sub >/dev/null 2>&1
+            rm -f /etc/systemd/system/xray-sub.service
+            systemctl daemon-reload >/dev/null 2>&1
+            rm -f "$SUB_SERVER_SCRIPT"
+
+            # Удаление Cloudflare WARP
+            systemctl stop wg-quick@warp >/dev/null 2>&1
+            systemctl disable wg-quick@warp >/dev/null 2>&1
+            rm -f /etc/cron.d/warp-native
+            rm -rf /opt/warp-native
+            rm -f /usr/local/bin/warp
+            rm -f /etc/wireguard/warp.conf
+            rm -f /usr/local/bin/wgcf
+            rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
+
+            # Удаление Opera Proxy
+            systemctl stop opera-proxy >/dev/null 2>&1
+            systemctl disable opera-proxy >/dev/null 2>&1
+            rm -f /etc/systemd/system/opera-proxy.service
+            rm -f /usr/local/bin/opera-proxy
+            rm -f /etc/xray/opera.lst
+
+            bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
+            rm -rf "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "$GENERATE_SCRIPT"
+            rm -f /var/log/xray/{access.log,error.log}
+            if crontab -l &>/dev/null; then
+                crontab -l | grep -v "certbot renew" | crontab -
+            fi
+            systemctl stop hysteria-server >/dev/null 2>&1
+            systemctl disable hysteria-server >/dev/null 2>&1
+            rm -f /etc/systemd/system/hysteria-server.service
+            rm -rf /etc/hysteria
+            rm -f /usr/local/bin/hysteria
+            systemctl daemon-reload >/dev/null 2>&1
+
+            ufw delete allow 443/tcp > /dev/null
+            ufw delete allow 443/udp > /dev/null
+            ufw delete allow 80/tcp > /dev/null
+            rm -f "$MARKER_FILE"
+            echo "✅ Удалено"
+        }
+
+        echo "⚠️ Xray уже установлен"
         
-        echo -e "🔄 Перегенерация конфигураций..."
+        # Самодиагностика и исправление пустых/отсутствующих UUID
+        repaired=false
+        if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
+            repair_output=$(python3 -c '
+    import json, sys, os, uuid, re
+    domain = "domain.com"
+    try:
+        if os.path.exists("/etc/xray/.installed"):
+            with open("/etc/xray/.installed", "r") as inf:
+                for l in inf:
+                    if l.startswith("DOMAIN="):
+                        domain = l.split("=", 1)[1].strip()
+    except Exception:
+        pass
+
+    for filepath in sys.argv[1:]:
+        if not filepath.endswith(".json") or not os.path.exists(filepath):
+            continue
+        need_repair = False
+        data = {}
+        try:
+            with open(filepath, "r") as f:
+                data = json.load(f)
+            uid = data.get("id", "")
+            if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(uid), re.I):
+                need_repair = True
+        except Exception:
+            need_repair = True
+        
+        if not need_repair:
+            try:
+                if "outbounds" not in data or not isinstance(data["outbounds"], list) or len(data["outbounds"]) == 0:
+                    need_repair = True
+                elif data["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] != data["id"]:
+                    need_repair = True
+            except Exception:
+                need_repair = True
+                
+        if need_repair:
+            try:
+                new_uuid = data.get("id", "")
+                if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(new_uuid), re.I):
+                    new_uuid = str(uuid.uuid4())
+                remarks = data.get("remarks", "")
+                if not remarks:
+                    remarks = os.path.splitext(os.path.basename(filepath))[0]
+                
+                data = {
+                  "remarks": remarks,
+                  "id": new_uuid,
+                  "outbounds": [{
+                    "protocol": "vless",
+                    "settings": {
+                      "vnext": [{
+                        "address": domain,
+                        "port": 443,
+                        "users": [{
+                          "id": new_uuid,
+                          "flow": "xtls-rprx-vision"
+                        }]
+                      }]
+                    },
+                    "streamSettings": {
+                      "network": "tcp",
+                      "security": "tls",
+                      "sockopt": {
+                        "tcpFastOpen": True
+                      }
+                    }
+                  }]
+                }
+                with open(filepath, "w") as f:
+                    json.dump(data, f, indent=2)
+                print(f"REPAIRED:{filepath}")
+            except Exception:
+                pass
+    ' "$CLIENT_CONFIG_DIR"/*.json 2>/dev/null)
+
+            if [[ -n "$repair_output" ]]; then
+                repaired=true
+                echo "$repair_output" | while read -r line; do
+                    if [[ "$line" =~ REPAIRED:(.+) ]]; then
+                        path="${BASH_REMATCH[1]}"
+                        echo "⚙️ Восстановлен корректный UUID в $(basename "$path")"
+                        chown nobody:nogroup "$path"
+                        chmod 644 "$path"
+                    fi
+                done
+            fi
+        fi
+
+        # Автоматически регистрируем быструю команду 'xry'
+        install_xry_command >/dev/null 2>&1
+
+        if [[ "$repaired" = true ]]; then
+            echo "🔄 Пересборка конфигурации сервера после исправления..."
+            DOMAIN=$(get_installed_var "DOMAIN")
+            NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+            generate_server_config
+            generate_hysteria_config
+            install_generate_script
+            echo "✅ Восстановление успешно завершено!"
+        fi
+
+        if [[ "$1" != "--update-core" ]] && [[ "$1" != "--update-geoblocks" ]]; then
+            main_menu
+            exit 0
+        fi
+    fi
+
+    # === Логгирование ===
+    mkdir -p /var/log/xray
+    exec > >(tee -a "$INSTALL_LOG") 2>&1
+
+    # === Обработка флага автоматического обновления геоблокировок ===
+    if [[ "$1" == "--update-geoblocks" ]]; then
+        update_geoblock_list
+        DOMAIN=$(get_installed_var "DOMAIN")
+        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+        if [[ -n "$DOMAIN" ]] && [[ -n "$NUM_DEVICES" ]]; then
+            generate_server_config
+            echo "✅ Конфигурация Xray перегенерирована."
+        fi
+        exit 0
+    fi
+
+    # === Обработка флага обновления ядра (update) ===
+    if [[ "$1" == "--update-core" ]]; then
+        echo "🔄 Запуск автоматического обновления компонентов сервера..."
+        DOMAIN=$(get_installed_var "DOMAIN")
+        EMAIL=$(get_installed_var "EMAIL")
+        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+        if [[ -z "$DOMAIN" || -z "$EMAIL" || -z "$NUM_DEVICES" ]]; then
+            echo "❌ Ошибка: Не найдены данные предыдущей установки в /etc/xray/.installed"
+            exit 1
+        fi
+        FLAG_EMOJI=$(get_flag_emoji)
+        install_dependencies
+        install_xray
+        install_hysteria
         generate_server_config
+        generate_hysteria_config
         setup_subscription_server
         generate_client_configs
         install_generate_script
-        
-        echo -e "${GREEN}✅ Сервер обновлен! Обязательно обновите подписку в ваших клиентах.${NC}"
-        sleep 2
-    }
-
-    domain_management_menu() {
-        local current_domain=$(get_installed_var "DOMAIN")
-
-        ui_header "🌐  СМЕНА ОСНОВНОГО ДОМЕНА"
-        ui_item "" "Текущий домен: ${GREEN}$current_domain${NC}"
-        ui_divider
-        ui_item "1" "🌐 Изменить основной домен (с перевыпуском SSL)"
-        ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
-        ui_footer
-        
-        read -p " Выберите действие (0-1): " dchoice
-        case $dchoice in
-            0) main_menu ;;
-            1)
-                echo -e "\n${BOLD}--- Смена основного домена ---${NC}"
-                echo -e "Для смены домена потребуется перевыпустить SSL сертификат."
-                echo -e "Убедитесь, что новый домен направлен A-записью на IP вашего сервера."
-                read -p "Введите новый домен (например, vless.mydomain.com): " new_domain
-                new_domain=$(echo "$new_domain" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
-                if [[ -z "$new_domain" ]]; then
-                    echo -e "${RED}❌ Домен не может быть пустым.${NC}"
-                    sleep 1
-                    domain_management_menu
-                    return
-                fi
-                if [ "$new_domain" == "$current_domain" ]; then
-                    echo -e "${YELLOW}Этот домен уже является основным.${NC}"
-                    sleep 1
-                    domain_management_menu
-                    return
-                fi
-                
-                # Проверим резолв нового домена
-                local DOMAIN="$new_domain"
-                check_domain
-                
-                # Временно остановим xray, чтобы освободить 80 порт для certbot
-                echo "🛑 Останавливаем xray для перевыпуска SSL..."
-                systemctl stop xray
-                
-                local EMAIL=$(get_installed_var "EMAIL")
-                echo "🔐 Запуск Certbot для получения нового сертификата..."
-                if certbot certonly --standalone -d "$new_domain" --email "$EMAIL" --agree-tos --non-interactive --key-type ecdsa; then
-                    echo "✅ SSL-сертификат получен успешно!"
-                    
-                    # Копируем сертификаты
-                    cp "/etc/letsencrypt/live/$new_domain/fullchain.pem" "$SSL_DIR/fullchain.cer"
-                    cp "/etc/letsencrypt/live/$new_domain/privkey.pem" "$SSL_DIR/private.key"
-                    
-                    chown -R nobody:nogroup "$SSL_DIR"
-                    chmod 644 "$SSL_DIR/fullchain.cer"
-                    chmod 600 "$SSL_DIR/private.key"
-                    
-                    # Обновляем крон для автопродления
-                    (crontab -l 2>/dev/null | grep -v 'certbot renew'; \
-                     echo "0 3 * * * certbot renew --quiet --post-hook \"cp /etc/letsencrypt/live/$new_domain/fullchain.pem $SSL_DIR/fullchain.cer && cp /etc/letsencrypt/live/$new_domain/privkey.pem $SSL_DIR/private.key && chown -R nobody:nogroup $SSL_DIR && chmod 644 $SSL_DIR/fullchain.cer && chmod 600 $SSL_DIR/private.key && systemctl restart xray\"") | crontab -
-                    
-                    # Обновляем маркер
-                    update_marker_val "DOMAIN" "$new_domain"
-                    
-                    # Обновляем конфигурации
-                    DOMAIN="$new_domain"
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                    setup_subscription_server
-                    generate_client_configs
-                    install_generate_script
-                    
-                    echo -e "${GREEN}✅ Основной домен успешно изменен на $new_domain!${NC}"
-                    sleep 2
-                else
-                    echo -e "${RED}❌ Не удалось перевыпустить SSL-сертификат для $new_domain.${NC}"
-                    echo "Возвращаем запуск Xray с прежним доменом..."
-                    systemctl start xray
-                    sleep 2
-                fi
-                domain_management_menu
-                ;;
-            *)
-                echo -e "${RED}❌ Неверный выбор!${NC}"
-                sleep 1
-                domain_management_menu
-                ;;
-        esac
-    }
-
-    reality_management_menu() {
-        local reality_enabled=$(get_installed_var "REALITY_ENABLED")
-        local reality_sni=$(get_installed_var "REALITY_SNI")
-        [ -z "$reality_sni" ] && reality_sni="max.ru"
-        local reality_dest=$(get_installed_var "REALITY_DEST")
-        [ -z "$reality_dest" ] && reality_dest="max.ru:443"
-
-        ui_header "🛡️  МАСКИРОВКА ТРАФИКА (VLESS-REALITY)"
-        local status_text="${RED}Выключена${NC}"
-        [ "$reality_enabled" == "true" ] && status_text="${GREEN}Активна${NC}"
-        ui_item "" "Текущий статус: $status_text"
-        ui_item "" "Маскировочный SNI: ${CYAN}$reality_sni${NC}"
-        ui_item "" "Адрес назначения (DEST): ${CYAN}$reality_dest${NC}"
-        ui_divider
-        if [ "$reality_enabled" == "true" ]; then
-            ui_item "1" "📴 Отключить маскировку Reality (возврат к прямому VLESS-TLS)"
-        else
-            ui_item "1" "🛡️ Включить маскировку Reality (маскироваться под $reality_sni)"
-        fi
-        ui_item "2" "⚙️ Изменить маскировочный сайт (SNI и DEST)"
-        ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
-        ui_footer
-
-        read -p " Выберите действие (0-2): " rchoice
-        case $rchoice in
-            0) main_menu ;;
-            1)
-                if [ "$reality_enabled" == "true" ]; then
-                    echo "📴 Отключение маскировки Reality..."
-                    update_marker_val "REALITY_ENABLED" "false"
-                else
-                    echo "🛡️ Включение маскировки Reality..."
-                    update_marker_val "REALITY_ENABLED" "true"
-                    # Инициализируем дефолты если пусты
-                    if [ -z "$(get_installed_var "REALITY_SNI")" ]; then
-                        update_marker_val "REALITY_SNI" "max.ru"
-                    fi
-                    if [ -z "$(get_installed_var "REALITY_DEST")" ]; then
-                        update_marker_val "REALITY_DEST" "max.ru:443"
-                    fi
-                fi
-                
-                echo "🔄 Пересборка конфигурации сервера..."
-                generate_server_config
-                setup_subscription_server
-                generate_client_configs
-                install_generate_script
-                
-                echo -e "${GREEN}✅ Настройки маскировки применены!${NC}"
-                sleep 1.5
-                reality_management_menu
-                ;;
-            2)
-                echo -e "\n${BOLD}--- Изменение маскировочного сайта ---${NC}"
-                echo "Введите домен для маскировки (например, max.ru):"
-                read -p " SNI (по умолчанию max.ru): " new_sni
-                new_sni=$(echo "$new_sni" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
-                [ -z "$new_sni" ] && new_sni="max.ru"
-
-                echo "Введите адрес назначения (по умолчанию $new_sni:443):"
-                read -p " DEST (по умолчанию $new_sni:443): " new_dest
-                new_dest=$(echo "$new_dest" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
-                [ -z "$new_dest" ] && new_dest="$new_sni:443"
-
-                update_marker_val "REALITY_SNI" "$new_sni"
-                update_marker_val "REALITY_DEST" "$new_dest"
-
-                echo -e "${GREEN}✅ Настройки изменены на SNI: $new_sni | DEST: $new_dest${NC}"
-                
-                # Если Reality уже включен, пересоберем
-                if [ "$(get_installed_var "REALITY_ENABLED")" == "true" ]; then
-                    echo "🔄 Пересборка конфигурации..."
-                    generate_server_config
-                    setup_subscription_server
-                    generate_client_configs
-                    install_generate_script
-                fi
-                sleep 1.5
-                reality_management_menu
-                ;;
-            *)
-                echo -e "${RED}❌ Неверный выбор!${NC}"
-                sleep 1
-                reality_management_menu
-                ;;
-        esac
-    }
-
-    manage_provider_id() {
-        ui_header "🔑 УПРАВЛЕНИЕ PROVIDER ID"
-        local current_pid=$(get_installed_var "PROVIDER_ID")
-        if [ -z "$current_pid" ]; then
-            echo -e " Текущий статус: ${RED}Не установлен${NC}"
-        else
-            echo -e " Текущий статус: ${GREEN}${current_pid}${NC}"
-        fi
-        ui_divider
-        ui_item "1" "✏️ Указать / Изменить Provider ID"
-        ui_item "2" "🗑️ Удалить Provider ID"
-        ui_item "0" "⬅️ Вернуться в главное меню"
-        ui_footer
-        read -p " Выберите действие (0-2): " pid_choice
-        case $pid_choice in
-            1)
-                read -p " Введите ваш Provider ID с happ-proxy.com: " new_pid
-                if [ -n "$new_pid" ]; then
-                    update_marker_val "PROVIDER_ID" "$new_pid"
-                    echo -e "${GREEN}✅ Provider ID успешно сохранен!${NC}"
-                    systemctl restart xray-sub >/dev/null 2>&1
-                else
-                    echo -e "${RED}❌ Пустое значение!${NC}"
-                fi
-                sleep 1.5
-                manage_provider_id
-                ;;
-            2)
-                update_marker_val "PROVIDER_ID" ""
-                echo -e "${GREEN}✅ Provider ID удален!${NC}"
-                systemctl restart xray-sub >/dev/null 2>&1
-                sleep 1.5
-                manage_provider_id
-                ;;
-            0)
-                main_menu
-                ;;
-            *)
-                echo -e "${RED}❌ Неверный выбор!${NC}"
-                sleep 1
-                manage_provider_id
-                ;;
-        esac
-    }
-
-    main_menu() {
-        show_status_dashboard
-        ui_header "⚡  ГЛАВНОЕ МЕНЮ"
-        ui_item "1" "📱 Показать QR-коды и ссылки подключения"
-        ui_item "2" "👤 Добавить нового пользователя / устройство"
-        ui_item "3" "🗑️ Удалить существующего пользователя"
-        ui_item "4" "🌀 Управление обходами блокировок (WARP & Opera Proxy)"
-        ui_divider
-        ui_item "5" "📰 Просмотреть системные логи служб"
-        ui_item "6" "📊 Мониторинг active-соединений (port 443)"
-        ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
-        ui_divider
-        ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
-        ui_item "9" "🌐 Изменить отпечаток TLS (Fingerprint)"
-        ui_item "10" "🌐 Смена основного домена (SSL)"
-        ui_item "11" "🔑 Управление Provider ID (happ-proxy.com)"
-        ui_divider
-        ui_item_color "12" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
-        ui_item "13" "🚪 Выйти из терминала" "${CYAN}"
-        ui_footer
-        read -p " Выберите действие (1-13): " choice
-        case $choice in
-            1) "$GENERATE_SCRIPT" ; main_menu ;;
-            2) add_client ; main_menu ;;
-            3) remove_client ; main_menu ;;
-            4) bypass_menu ;;
-            5) show_logs ; main_menu ;;
-            6) show_connections ; main_menu ;;
-            7) run_diagnostics ; main_menu ;;
-            8) 
-                echo -e "\n${BOLD}${GREEN}🔄 Загрузка последней версии скрипта...${NC}"
-                cd /root || exit
-                curl -s -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
-                echo -e "${GREEN}✅ Скрипт обновлен! Применяем обновления ядра и конфигурации...${NC}"
-                /root/install_xray.sh --update-core
-                exit 0
-                ;;
-            9) change_fingerprint ; main_menu ;;
-            10) domain_management_menu ;;
-            11) manage_provider_id ;;
-            12) 
-                echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
-                read -p "Вы уверены? (y/n): " uconf
-                if [[ "$uconf" =~ ^[Yy]$ ]]; then
-                    uninstall_all
-                else
-                    main_menu
-                fi
-                ;;
-            13) exit 0 ;;
-            *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
-        esac
-    }
-
-    uninstall_warp() {
-        echo -e "\n${BOLD}${RED}🧹 Полное удаление Cloudflare WARP с сервера...${NC}"
-        
-        systemctl stop wg-quick@warp >/dev/null 2>&1
-        systemctl disable wg-quick@warp >/dev/null 2>&1
-        rm -f /etc/cron.d/warp-native
-        rm -rf /opt/warp-native
-        rm -f /usr/local/bin/warp
-        rm -f /etc/wireguard/warp.conf
-        rm -f /usr/local/bin/wgcf
-        rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
-        rm -f /etc/xray/geoblock.lst
-        
-        # Удаление задачи автообновления из cron
-        if crontab -l &>/dev/null; then
-            crontab -l | grep -v "update-geoblocks" | crontab -
-        fi
-        
-        update_marker_val "WARP_INSTALLED" "false"
-        update_marker_val "WARP_ENABLED" "false"
-        update_marker_val "WARP_MODE" "smart"
-        
-        DOMAIN=$(get_installed_var "DOMAIN")
-        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-        generate_server_config
-        
-        echo -e "${GREEN}✅ Cloudflare WARP успешно и полностью удален с сервера!${NC}"
-        sleep 1.5
-    }
-
-    toggle_warp_auto_update() {
-        local script_path=$(realpath "$0")
-        if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
-            echo "📴 Отключение автообновления геоблокировок..."
-            (crontab -l 2>/dev/null | grep -v 'update-geoblocks') | crontab -
-            echo -e "${GREEN}✅ Автообновление отключено${NC}"
-        else
-            echo "🔄 Включение автообновления геоблокировок..."
-            (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; echo "30 3 * * * bash $script_path --update-geoblocks >/dev/null 2>&1") | crontab -
-            echo -e "${GREEN}✅ Автообновление включено (ежедневно в 03:30)${NC}"
-        fi
-        sleep 1.5
-    }
-
-    bypass_menu() {
-        local warp_installed=$(get_installed_var "WARP_INSTALLED")
-        local warp_enabled=$(get_installed_var "WARP_ENABLED")
-        local warp_mode=$(get_installed_var "WARP_MODE")
-        [ -z "$warp_mode" ] && warp_mode="smart"
-
-        local opera_installed=$(get_installed_var "OPERA_INSTALLED")
-        local opera_enabled=$(get_installed_var "OPERA_ENABLED")
-
-        ui_header "🌀  УПРАВЛЕНИЕ ОБХОДАМИ БЛОКИРОВОК" "${PURPLE}"
-        
-        # Секция Cloudflare WARP
-        ui_item_color "" "${BOLD}[ Cloudflare WARP ]${NC}" "" "${PURPLE}"
-        if [ "$warp_installed" != "true" ]; then
-            ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
-            ui_item_color "1" "📥 Установить и активировать Cloudflare WARP" "${YELLOW}" "${PURPLE}"
-        else
-            local warp_status="${RED}Выключен${NC}"
-            [ "$warp_enabled" == "true" ] && warp_status="${GREEN}Активен${NC}"
-            local mode_text="${CYAN}Smart-обход${NC}"
-            [ "$warp_mode" == "full" ] && mode_text="${PURPLE}Full-обход (весь трафик)${NC}"
-            ui_item_color "" "Статус: $warp_status | Режим: $mode_text" "" "${PURPLE}"
-            if [ "$warp_enabled" == "true" ]; then
-                ui_item_color "1" "📴 Отключить WARP" "${YELLOW}" "${PURPLE}"
-            else
-                ui_item_color "1" "🌀 Включить WARP" "${YELLOW}" "${PURPLE}"
-            fi
-            ui_item_color "2" "⚙️ Изменить режим WARP (Smart / Full)" "${YELLOW}" "${PURPLE}"
-            ui_item_color "3" "🔄 Обновить список геоблокировок WARP" "${YELLOW}" "${PURPLE}"
-            
-            local cron_status="${RED}Выключено${NC}"
-            if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
-                cron_status="${GREEN}Включено${NC}"
-            fi
-            ui_item_color "4" "🕒 Автообновление геоблоков: $cron_status" "${YELLOW}" "${PURPLE}"
-            ui_item_color "5" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
-            ui_item_color "6" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
-        fi
-        
-        ui_divider "${PURPLE}"
-        ui_item_color "" "${BOLD}[ Opera Proxy (для OpenAI/ChatGPT) ]${NC}" "" "${PURPLE}"
-        
-        if [ "$opera_installed" != "true" ]; then
-            ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
-            ui_item_color "7" "📥 Установить и активировать Opera Proxy" "${YELLOW}" "${PURPLE}"
-        else
-            local opera_status="${RED}Выключен${NC}"
-            [ "$opera_enabled" == "true" ] && opera_status="${GREEN}Активен${NC}"
-            ui_item_color "" "Статус: $opera_status" "" "${PURPLE}"
-            if [ "$opera_enabled" == "true" ]; then
-                ui_item_color "7" "📴 Отключить Opera Proxy" "${YELLOW}" "${PURPLE}"
-            else
-                ui_item_color "7" "🌀 Включить Opera Proxy" "${YELLOW}" "${PURPLE}"
-            fi
-            ui_item_color "8" "📝 Редактировать список доменов Opera Proxy" "${YELLOW}" "${PURPLE}"
-            ui_item_color "9" "${RED}🗑️ Удалить Opera Proxy${NC}" "${RED}" "${PURPLE}"
-        fi
-        
-        ui_divider "${PURPLE}"
-        ui_item_color "" "${BOLD}[ Настройки подписки ]${NC}" "" "${PURPLE}"
-        local routing_enabled=$(get_installed_var "ROUTING_ENABLED")
-        [ -z "$routing_enabled" ] && routing_enabled="true"
-        local routing_status="${RED}Отключена${NC}"
-        [ "$routing_enabled" == "true" ] && routing_status="${GREEN}Включена${NC}"
-        ui_item_color "" "Передача маршрутов (Routing): $routing_status" "" "${PURPLE}"
-        if [ "$routing_enabled" == "true" ]; then
-            ui_item_color "10" "📴 Отключить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
-        else
-            ui_item_color "10" "🌀 Включить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
-        fi
-        
-        ui_divider "${PURPLE}"
-        ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
-        ui_footer "${PURPLE}"
-        
-        read -p " Выберите действие (0-10): " bchoice
-        case $bchoice in
-            0)
-                main_menu
-                ;;
-            1)
-                if [ "$warp_installed" != "true" ]; then
-                    install_warp
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                else
-                    toggle_warp
-                fi
-                bypass_menu
-                ;;
-            2)
-                if [ "$warp_installed" == "true" ]; then
-                    echo -e "\n${BOLD}Выберите новый режим исходящего трафика:${NC}"
-                    echo -e " ${BOLD}${YELLOW}1.${NC} Smart-обход"
-                    echo -e " ${BOLD}${YELLOW}2.${NC} Full-обход"
-                    read -p "Режим (1-2): " mchoice
-                    if [ "$mchoice" == "1" ]; then
-                        update_marker_val "WARP_MODE" "smart"
-                        echo -e "${GREEN}✅ Режим изменен на Smart-обход${NC}"
-                    elif [ "$mchoice" == "2" ]; then
-                        update_marker_val "WARP_MODE" "full"
-                        echo -e "${GREEN}✅ Режим изменен на Full-обход${NC}"
-                    else
-                        echo -e "${RED}❌ Неверный выбор${NC}"
-                    fi
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                else
-                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
-                fi
-                sleep 1.5
-                bypass_menu
-                ;;
-            3)
-                if [ "$warp_installed" == "true" ]; then
-                    update_geoblock_list
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                    echo -e "${GREEN}✅ Список блокировок успешно обновлен!${NC}"
-                else
-                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
-                fi
-                sleep 1.5
-                bypass_menu
-                ;;
-            4)
-                if [ "$warp_installed" == "true" ]; then
-                    toggle_warp_auto_update
-                else
-                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
-                fi
-                bypass_menu
-                ;;
-            5)
-                if [ "$warp_installed" == "true" ]; then
-                    install_warp
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                else
-                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
-                fi
-                sleep 1.5
-                bypass_menu
-                ;;
-            6)
-                if [ "$warp_installed" == "true" ]; then
-                    uninstall_warp
-                else
-                    echo -e "${RED}❌ Установите WARP сначала!${NC}"
-                fi
-                bypass_menu
-                ;;
-            7)
-                if [ "$opera_installed" != "true" ]; then
-                    install_opera_proxy
-                else
-                    toggle_opera_proxy
-                fi
-                sleep 1.5
-                bypass_menu
-                ;;
-            8)
-                if [ "$opera_installed" == "true" ]; then
-                    if command -v nano &>/dev/null; then
-                        nano /etc/xray/opera.lst
-                    elif command -v vi &>/dev/null; then
-                        vi /etc/xray/opera.lst
-                    else
-                        echo -e "${RED}❌ Редактор не найден. Файл списка доменов находится в /etc/xray/opera.lst${NC}"
-                    fi
-                    DOMAIN=$(get_installed_var "DOMAIN")
-                    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-                    generate_server_config
-                else
-                    echo -e "${RED}❌ Установите Opera Proxy сначала!${NC}"
-                fi
-                bypass_menu
-                ;;
-            9)
-                if [ "$opera_installed" == "true" ]; then
-                    uninstall_opera_proxy
-                else
-                    echo -e "${RED}❌ Установите Opera Proxy сначала!${NC}"
-                fi
-                sleep 1.5
-                bypass_menu
-                ;;
-            10)
-                local current_status=$(get_installed_var "ROUTING_ENABLED")
-                if [ "$current_status" == "false" ]; then
-                    update_marker_val "ROUTING_ENABLED" "true"
-                    echo -e "${GREEN}✅ Передача маршрутов включена по умолчанию.${NC}"
-                else
-                    update_marker_val "ROUTING_ENABLED" "false"
-                    echo -e "${GREEN}✅ Передача маршрутов отключена.${NC}"
-                fi
-                setup_subscription_server
-                sleep 1.5
-                bypass_menu
-                ;;
-            *)
-                echo -e "${RED}❌ Неверный выбор!${NC}"
-                sleep 1
-                bypass_menu
-                ;;
-        esac
-    }
-
-    uninstall_all() {
-        echo "🧹 Удаление Xray и конфигураций..."
-        
-        systemctl stop xray-sub >/dev/null 2>&1
-        systemctl disable xray-sub >/dev/null 2>&1
-        rm -f /etc/systemd/system/xray-sub.service
-        systemctl daemon-reload >/dev/null 2>&1
-        rm -f "$SUB_SERVER_SCRIPT"
-
-        # Удаление Cloudflare WARP
-        systemctl stop wg-quick@warp >/dev/null 2>&1
-        systemctl disable wg-quick@warp >/dev/null 2>&1
-        rm -f /etc/cron.d/warp-native
-        rm -rf /opt/warp-native
-        rm -f /usr/local/bin/warp
-        rm -f /etc/wireguard/warp.conf
-        rm -f /usr/local/bin/wgcf
-        rm -f /root/wgcf-account.toml /root/wgcf-profile.conf
-
-        # Удаление Opera Proxy
-        systemctl stop opera-proxy >/dev/null 2>&1
-        systemctl disable opera-proxy >/dev/null 2>&1
-        rm -f /etc/systemd/system/opera-proxy.service
-        rm -f /usr/local/bin/opera-proxy
-        rm -f /etc/xray/opera.lst
-
-        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
-        rm -rf "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "$GENERATE_SCRIPT"
-        rm -f /var/log/xray/{access.log,error.log}
-        if crontab -l &>/dev/null; then
-            crontab -l | grep -v "certbot renew" | crontab -
-        fi
-        systemctl stop hysteria-server >/dev/null 2>&1
-        systemctl disable hysteria-server >/dev/null 2>&1
-        rm -f /etc/systemd/system/hysteria-server.service
-        rm -rf /etc/hysteria
-        rm -f /usr/local/bin/hysteria
-        systemctl daemon-reload >/dev/null 2>&1
-
-        ufw delete allow 443/tcp > /dev/null
-        ufw delete allow 443/udp > /dev/null
-        ufw delete allow 80/tcp > /dev/null
-        rm -f "$MARKER_FILE"
-        echo "✅ Удалено"
-    }
-
-    echo "⚠️ Xray уже установлен"
-    
-    # Самодиагностика и исправление пустых/отсутствующих UUID
-    repaired=false
-    if [ -d "$CLIENT_CONFIG_DIR" ] && [ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]; then
-        repair_output=$(python3 -c '
-import json, sys, os, uuid, re
-domain = "domain.com"
-try:
-    if os.path.exists("/etc/xray/.installed"):
-        with open("/etc/xray/.installed", "r") as inf:
-            for l in inf:
-                if l.startswith("DOMAIN="):
-                    domain = l.split("=", 1)[1].strip()
-except Exception:
-    pass
-
-for filepath in sys.argv[1:]:
-    if not filepath.endswith(".json") or not os.path.exists(filepath):
-        continue
-    need_repair = False
-    data = {}
-    try:
-        with open(filepath, "r") as f:
-            data = json.load(f)
-        uid = data.get("id", "")
-        if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(uid), re.I):
-            need_repair = True
-    except Exception:
-        need_repair = True
-    
-    if not need_repair:
-        try:
-            if "outbounds" not in data or not isinstance(data["outbounds"], list) or len(data["outbounds"]) == 0:
-                need_repair = True
-            elif data["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] != data["id"]:
-                need_repair = True
-        except Exception:
-            need_repair = True
-            
-    if need_repair:
-        try:
-            new_uuid = data.get("id", "")
-            if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(new_uuid), re.I):
-                new_uuid = str(uuid.uuid4())
-            remarks = data.get("remarks", "")
-            if not remarks:
-                remarks = os.path.splitext(os.path.basename(filepath))[0]
-            
-            data = {
-              "remarks": remarks,
-              "id": new_uuid,
-              "outbounds": [{
-                "protocol": "vless",
-                "settings": {
-                  "vnext": [{
-                    "address": domain,
-                    "port": 443,
-                    "users": [{
-                      "id": new_uuid,
-                      "flow": "xtls-rprx-vision"
-                    }]
-                  }]
-                },
-                "streamSettings": {
-                  "network": "tcp",
-                  "security": "tls",
-                  "sockopt": {
-                    "tcpFastOpen": True
-                  }
-                }
-              }]
-            }
-            with open(filepath, "w") as f:
-                json.dump(data, f, indent=2)
-            print(f"REPAIRED:{filepath}")
-        except Exception:
-            pass
-' "$CLIENT_CONFIG_DIR"/*.json 2>/dev/null)
-
-        if [ -n "$repair_output" ]; then
-            repaired=true
-            echo "$repair_output" | while read -r line; do
-                if [[ "$line" =~ REPAIRED:(.+) ]]; then
-                    path="${BASH_REMATCH[1]}"
-                    echo "⚙️ Восстановлен корректный UUID в $(basename "$path")"
-                    chown nobody:nogroup "$path"
-                    chmod 644 "$path"
-                fi
-            done
-        fi
-    fi
-
-    # Автоматически регистрируем быструю команду 'xry'
-    install_xry_command >/dev/null 2>&1
-
-    if [ "$repaired" = true ]; then
-        echo "🔄 Пересборка конфигурации сервера после исправления..."
-        DOMAIN=$(get_installed_var "DOMAIN")
-        NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-        generate_server_config
-        generate_hysteria_config
-        install_generate_script
-        echo "✅ Восстановление успешно завершено!"
-    fi
-
-    if [ "$1" != "--update-core" ] && [ "$1" != "--update-geoblocks" ]; then
-        main_menu
+        install_xry_command
+        echo "✅ Сервер успешно обновлен до последней версии! Можете вызвать xry для проверки."
         exit 0
     fi
-fi
 
-# === Логгирование ===
-mkdir -p /var/log/xray
-exec > >(tee -a "$INSTALL_LOG") 2>&1
+    # === Обработка флага headless ===
+    if [[ "$1" == "--headless" ]]; then
+        DOMAIN="$2"
+        EMAIL="$3"
+        NUM_DEVICES="$4"
+        CDN_DOMAIN="none"
+        if [[ -z "$DOMAIN" || -z "$EMAIL" || -z "$NUM_DEVICES" ]]; then
+            echo "Использование: $0 --headless <домен> <email> <кол-во устройств> [имена устройств...]"
+            exit 1
+        fi
+        # Очистка и валидация домена
+        DOMAIN=$(echo "$DOMAIN" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
+        # Очистка и валидация email
+        EMAIL=$(echo "$EMAIL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        if [[ ! "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            echo "❌ Некорректный формат Email."
+            exit 1
+        fi
+        # Валидация количества устройств
+        if ! [[ "$NUM_DEVICES" =~ ^[1-9][0-9]*$ ]]; then
+            echo "❌ Количество устройств должно быть положительным числом."
+            exit 1
+        fi
+        shift 4
+        DEVICE_NAMES=()
+        for ((i=1; i<=NUM_DEVICES; i++)); do
+            if [[ -n "$1" ]]; then
+                DEVICE_NAMES[$i]="$1"
+                shift
+            else
+                DEVICE_NAMES[$i]="client_$i"
+            fi
+        done
+    else
+        echo -e "\n${BOLD}${CYAN}🚀  УСТАНОВКА XRAY VLESS СЕРВЕРА${NC}"
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        echo -e " Добро пожаловать! Давайте настроим ваш новый VPN-сервер."
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        
+        if [[ ! -f "$MARKER_FILE" ]]; then
+            echo -e "\n ${BOLD}${YELLOW}ОПТИМИЗАЦИЯ VPS${NC}"
+            read -r -p " Выполнить базовую оптимизацию VPS (установка ядра Xanmod v3 и настройка системных лимитов)? 
+     Рекомендуется для чистой ОС Debian 12/13. Сервер будет перезагружен. [y/N]: " opt_choice
+            if [[ "$opt_choice" =~ ^[Yy]$ ]]; then
+                optimize_vps
+            fi
+            echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        fi
+        
+        # 1. Ввод домена с валидацией
+        while true; do
+            echo -e " ${BOLD}${YELLOW}Шаг 1 из 4:${NC} Укажите ваш домен"
+            read -r -p " 🌐 Введите домен (например, sub.domain.com): " DOMAIN
+            DOMAIN=$(echo "$DOMAIN" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
+            if [[ -n "$DOMAIN" ]]; then
+                break
+            fi
+            echo -e " ${RED}❌ Домен не может быть пустым. Пожалуйста, укажите валидный домен.${NC}"
+        done
+        
+        # 2. Ввод Email с валидацией
+        while true; do
+            echo -e "\n ${BOLD}${YELLOW}Шаг 2 из 4:${NC} Укажите Email для SSL-сертификата Let's Encrypt"
+            read -r -p " 📧 Email: " EMAIL
+            EMAIL=$(echo "$EMAIL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            if [[ "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+                break
+            fi
+            echo -e " ${RED}❌ Некорректный формат Email. Попробуйте еще раз (например: myemail@mail.com).${NC}"
+        done
+        
+        # 3. Ввод количества устройств с валидацией
+        while true; do
+            echo -e "\n ${BOLD}${YELLOW}Шаг 3 из 4:${NC} Сколько клиентских устройств добавить?"
+            read -r -p " 📱 Количество устройств: " NUM_DEVICES
+            if [[ "$NUM_DEVICES" =~ ^[1-9][0-9]*$ ]]; then
+                break
+            fi
+            echo -e " ${RED}❌ Пожалуйста, введите положительное целое число.${NC}"
+        done
+        
+        echo -e "\n ${BOLD}${YELLOW}Шаг 4 из 4:${NC} Задайте имена для ваших устройств"
+        DEVICE_NAMES=()
+        for ((i=1; i<=NUM_DEVICES; i++)); do
+            read -r -p " 👤 Имя для устройства $i (по умолчанию client_$i): " dev_name
+            dev_name=$(echo "$dev_name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            if [[ -z "$dev_name" ]]; then
+                DEVICE_NAMES[$i]="client_$i"
+            else
+                DEVICE_NAMES[$i]="$dev_name"
+            fi
+        done
 
-# === Обработка флага автоматического обновления геоблокировок ===
-if [ "$1" == "--update-geoblocks" ]; then
-    update_geoblock_list
-    DOMAIN=$(get_installed_var "DOMAIN")
-    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-    if [ -n "$DOMAIN" ] && [ -n "$NUM_DEVICES" ]; then
-        generate_server_config
-        echo "✅ Конфигурация Xray перегенерирована."
+        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+        echo -e "${BOLD}${GREEN}⚙️ Запуск процесса автоматической сборки и установки...${NC}\n"
     fi
-    exit 0
-fi
 
-# === Обработка флага обновления ядра (update) ===
-if [ "$1" == "--update-core" ]; then
-    echo "🔄 Запуск автоматического обновления компонентов сервера..."
-    DOMAIN=$(get_installed_var "DOMAIN")
-    EMAIL=$(get_installed_var "EMAIL")
-    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
-    if [[ -z "$DOMAIN" || -z "$EMAIL" || -z "$NUM_DEVICES" ]]; then
-        echo "❌ Ошибка: Не найдены данные предыдущей установки в /etc/xray/.installed"
-        exit 1
-    fi
-    FLAG_EMOJI=$(get_flag_emoji)
+    # === Запуск установки ===
+    check_domain
+    check_port_conflicts
+    create_directories
     install_dependencies
     install_xray
     install_hysteria
+    setup_firewall
+    setup_certificates
+
+    # Определяем эмодзи страны
+    FLAG_EMOJI=$(get_flag_emoji)
+
     generate_server_config
     generate_hysteria_config
     setup_subscription_server
     generate_client_configs
     install_generate_script
+
+    echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCDN_DOMAIN=none" > "$MARKER_FILE"
+    chmod 644 "$MARKER_FILE"
+
+    # Регистрация быстрой команды xry
     install_xry_command
-    echo "✅ Сервер успешно обновлен до последней версии! Можете вызвать xry для проверки."
-    exit 0
-fi
 
-# === Обработка флага headless ===
-if [ "$1" == "--headless" ]; then
-    DOMAIN="$2"
-    EMAIL="$3"
-    NUM_DEVICES="$4"
-    CDN_DOMAIN="none"
-    if [[ -z "$DOMAIN" || -z "$EMAIL" || -z "$NUM_DEVICES" ]]; then
-        echo "Использование: $0 --headless <домен> <email> <кол-во устройств> [имена устройств...]"
-        exit 1
-    fi
-    # Очистка и валидация домена
-    DOMAIN=$(echo "$DOMAIN" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
-    # Очистка и валидация email
-    EMAIL=$(echo "$EMAIL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    if [[ ! "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-        echo "❌ Некорректный формат Email."
-        exit 1
-    fi
-    # Валидация количества устройств
-    if ! [[ "$NUM_DEVICES" =~ ^[1-9][0-9]*$ ]]; then
-        echo "❌ Количество устройств должно быть положительным числом."
-        exit 1
-    fi
-    shift 4
-    DEVICE_NAMES=()
-    for i in $(seq 1 "$NUM_DEVICES"); do
-        if [ -n "$1" ]; then
-            DEVICE_NAMES[$i]="$1"
-            shift
-        else
-            DEVICE_NAMES[$i]="client_$i"
-        fi
-    done
-else
-    echo -e "\n${BOLD}${CYAN}🚀  УСТАНОВКА XRAY VLESS СЕРВЕРА${NC}"
-    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-    echo -e " Добро пожаловать! Давайте настроим ваш новый VPN-сервер."
-    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-    
-    if [ ! -f "$MARKER_FILE" ]; then
-        echo -e "\n ${BOLD}${YELLOW}ОПТИМИЗАЦИЯ VPS${NC}"
-        read -p " Выполнить базовую оптимизацию VPS (установка ядра Xanmod v3 и настройка системных лимитов)? 
- Рекомендуется для чистой ОС Debian 12/13. Сервер будет перезагружен. [y/N]: " opt_choice
-        if [[ "$opt_choice" =~ ^[Yy]$ ]]; then
-            optimize_vps
-        fi
-        echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-    fi
-    
-    # 1. Ввод домена с валидацией
-    while true; do
-        echo -e " ${BOLD}${YELLOW}Шаг 1 из 4:${NC} Укажите ваш домен"
-        read -p " 🌐 Введите домен (например, sub.domain.com): " DOMAIN
-        DOMAIN=$(echo "$DOMAIN" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
-        if [[ -n "$DOMAIN" ]]; then
-            break
-        fi
-        echo -e " ${RED}❌ Домен не может быть пустым. Пожалуйста, укажите валидный домен.${NC}"
-    done
-    
-    # 2. Ввод Email с валидацией
-    while true; do
-        echo -e "\n ${BOLD}${YELLOW}Шаг 2 из 4:${NC} Укажите Email для SSL-сертификата Let's Encrypt"
-        read -p " 📧 Email: " EMAIL
-        EMAIL=$(echo "$EMAIL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        if [[ "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-            break
-        fi
-        echo -e " ${RED}❌ Некорректный формат Email. Попробуйте еще раз (например: myemail@mail.com).${NC}"
-    done
-    
-    # 3. Ввод количества устройств с валидацией
-    while true; do
-        echo -e "\n ${BOLD}${YELLOW}Шаг 3 из 4:${NC} Сколько клиентских устройств добавить?"
-        read -p " 📱 Количество устройств: " NUM_DEVICES
-        if [[ "$NUM_DEVICES" =~ ^[1-9][0-9]*$ ]]; then
-            break
-        fi
-        echo -e " ${RED}❌ Пожалуйста, введите положительное целое число.${NC}"
-    done
-    
-    echo -e "\n ${BOLD}${YELLOW}Шаг 4 из 4:${NC} Задайте имена для ваших устройств"
-    DEVICE_NAMES=()
-    for i in $(seq 1 "$NUM_DEVICES"); do
-        read -p " 👤 Имя для устройства $i (по умолчанию client_$i): " dev_name
-        dev_name=$(echo "$dev_name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        if [[ -z "$dev_name" ]]; then
-            DEVICE_NAMES[$i]="client_$i"
-        else
-            DEVICE_NAMES[$i]="$dev_name"
-        fi
-    done
+    echo -e "\n✅ Установка полностью завершена! Вы можете управлять сервером в любое время, просто введя в терминале: ${BOLD}${YELLOW}xry${NC}"
+    main_menu
 
-    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
-    echo -e "${BOLD}${GREEN}⚙️ Запуск процесса автоматической сборки и установки...${NC}\n"
-fi
+}
 
-# === Запуск установки ===
-check_domain
-check_port_conflicts
-create_directories
-install_dependencies
-install_xray
-install_hysteria
-setup_firewall
-setup_certificates
-
-# Определяем эмодзи страны
-FLAG_EMOJI=$(get_flag_emoji)
-
-generate_server_config
-generate_hysteria_config
-setup_subscription_server
-generate_client_configs
-install_generate_script
-
-echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCDN_DOMAIN=none" > "$MARKER_FILE"
-chmod 644 "$MARKER_FILE"
-
-# Регистрация быстрой команды xry
-install_xry_command
-
-echo -e "\n✅ Установка полностью завершена! Вы можете управлять сервером в любое время, просто введя в терминале: ${BOLD}${YELLOW}xry${NC}"
-main_menu
+main "$@"
