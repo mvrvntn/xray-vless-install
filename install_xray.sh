@@ -1279,7 +1279,7 @@ EOF
         fi
 
         local check_domains=()
-        for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me checkip.amazonaws.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com webrtc.org; do
+        for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io ipinfo.net ip.sb whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me v4.ident.me checkip.amazonaws.com checkip.dyndns.org test-ipv6.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com webrtc.org; do
             check_domains+=("\"domain:$dom\"")
         done
         local check_domains_joined; check_domains_joined=$(IFS=,; echo "${check_domains[*]}")
@@ -1545,14 +1545,15 @@ EOF
   },
   "dns": {
     "servers": [
-      {
-        "address": "https://1.1.1.2/dns-query",
-        "skipFallback": false
-      },
-      "https://9.9.9.9/dns-query",
-      "https://1.0.0.2/dns-query",
+      "1.1.1.2",
+      "9.9.9.9",
+      "8.8.8.8",
+      "1.0.0.2",
+      "8.8.4.4",
+      "208.67.222.222",
       "localhost"
     ],
+    "disableCache": false,
     "queryStrategy": "UseIPv4"
   },
   "inbounds": $inbounds_str,
