@@ -2460,7 +2460,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             domain = self.headers.get('Host', '').split(':')[0]
 
         if emoji:
-            remark_vision = f"{emoji} VLESS-TCP"
+            remark_vision = f"{emoji}🌐 VLESS-TCP"
             remark_hy2 = f"{emoji}⚡ Hysteria2"
             remark_grpc = f"{emoji}↔️ VLESS-gRPC"
             remark_reality = f"{emoji}🪞 VLESS-Reality ({ivars['reality_sni']})"
@@ -3285,7 +3285,7 @@ fi
 
 # Генерация названий с новыми эмодзи-символами и скобками
 if [[ -n "$EMOJI" ]]; then
-  remark_vision="${EMOJI} VLESS-TCP"
+  remark_vision="${EMOJI}🌐 VLESS-TCP"
   remark_hy2="${EMOJI}⚡ Hysteria2"
   remark_grpc="${EMOJI}↔️ VLESS-gRPC"
   remark_reality="${EMOJI}🪞 VLESS-Reality (${REALITY_SNI})"
