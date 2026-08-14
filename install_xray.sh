@@ -2452,14 +2452,14 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
 
         if emoji:
             remark_vision = f"{emoji} VLESS-TCP"
-            remark_hy2 = f"{emoji} Hysteria2"
-            remark_grpc = f"{emoji} VLESS-gRPC"
-            remark_reality = f"{emoji} VLESS-Reality ({ivars['reality_sni']})"
+            remark_hy2 = f"{emoji}⚡ Hysteria2"
+            remark_grpc = f"{emoji}↔️ VLESS-gRPC"
+            remark_reality = f"{emoji}🪞 VLESS-Reality ({ivars['reality_sni']})"
         else:
             remark_vision = "🌐 VLESS-TCP"
             remark_hy2 = "⚡ Hysteria2"
-            remark_grpc = "🚀 VLESS-gRPC"
-            remark_reality = f"🛡️ VLESS-Reality ({ivars['reality_sni']})"
+            remark_grpc = "↔️ VLESS-gRPC"
+            remark_reality = f"🪞 VLESS-Reality ({ivars['reality_sni']})"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
@@ -3277,14 +3277,14 @@ fi
 # Генерация названий с новыми эмодзи-символами и скобками
 if [[ -n "$EMOJI" ]]; then
   remark_vision="${EMOJI} VLESS-TCP"
-  remark_hy2="${EMOJI} Hysteria2"
-  remark_grpc="${EMOJI} VLESS-gRPC"
-  remark_reality="${EMOJI} VLESS-Reality (${REALITY_SNI})"
+  remark_hy2="${EMOJI}⚡ Hysteria2"
+  remark_grpc="${EMOJI}↔️ VLESS-gRPC"
+  remark_reality="${EMOJI}🪞 VLESS-Reality (${REALITY_SNI})"
 else
   remark_vision="🌐 VLESS-TCP"
   remark_hy2="⚡ Hysteria2"
-  remark_grpc="🚀 VLESS-gRPC"
-  remark_reality="🛡️ VLESS-Reality (${REALITY_SNI})"
+  remark_grpc="↔️ VLESS-gRPC"
+  remark_reality="🪞 VLESS-Reality (${REALITY_SNI})"
 fi
 
 urlencode() {
