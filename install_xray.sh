@@ -9,21 +9,26 @@ readonly GENERATE_SCRIPT="/usr/local/bin/generate_client_config"
 readonly SUB_SERVER_SCRIPT="/usr/local/bin/xray_sub_server.py"
 readonly INSTALL_LOG="/var/log/xray/install.log"
 
-readonly SCRIPT_NAME=$(basename "$0")
-readonly SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+SCRIPT_NAME=$(basename "$0")
+readonly SCRIPT_NAME
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC2034
+readonly SCRIPT_DIR
+export SCRIPT_DIR
 
 # Объявление глобального ассоциативного массива для UUID
 declare -A UUIDs
 
 # === Цветовая схема терминала ===
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
+# shellcheck disable=SC2034
+RED='\033[0;31m'; # shellcheck disable=SC2034
+GREEN='\033[0;32m'; # shellcheck disable=SC2034
+YELLOW='\033[0;33m'; # shellcheck disable=SC2034
+BLUE='\033[0;34m'; # shellcheck disable=SC2034
+PURPLE='\033[0;35m'; # shellcheck disable=SC2034
+CYAN='\033[0;36m'; # shellcheck disable=SC2034
+BOLD='\033[1m'; # shellcheck disable=SC2034
+NC='\033[0m'
 
 # === Логирование и Traps (/bash-scripting) ===
 mkdir -p "$(dirname "$INSTALL_LOG")"
@@ -44,10 +49,14 @@ trap 'cleanup' SIGINT SIGTERM
 
 usage() {
     cat <<EOF
-Использование: $0 [ОПЦИИ]
+Использование: $SCRIPT_NAME [ОПЦИИ]
+
 Опции:
--h, --help      Показать эту справку
--v, --version   Показать версию
+  -h, --help                                              Показать эту справку и выйти
+  -v, --version                                           Показать версию скрипта
+  --headless <домен> <email> <кол-во> [имена...]          Установка в автоматическом (headless) режиме
+  --update-core                                           Обновить ядро Xray, Hysteria 2 и подписки
+  --update-geoblocks                                      Обновить списки блокировок Роскомнадзора и Google AI
 EOF
     exit 0
 }
@@ -396,18 +405,16 @@ EOF
         if curl -fsSL https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
             echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
             apt update
-    log_info "Running APT package operation..."
+            log_info "Running APT package operation for Xanmod..."
             
             echo -e "${YELLOW}Установка linux-xanmod-x64v${cpu_level}...${NC}"
-            apt install -y "linux-xanmod-x64v${cpu_level}"
-    log_info "Running APT package operation..."
-            if [[ $? -eq 0 ]]; then
+            if apt install -y "linux-xanmod-x64v${cpu_level}"; then
                 echo -e "${GREEN}✅ Ядро Xanmod успешно установлено!${NC}"
             else
                 echo -e "${RED}❌ Ошибка при установке ядра Xanmod. Продолжаем работу...${NC}"
             fi
         else
-             echo -e "${RED}❌ Не удалось скачать ключ Xanmod. Пропускаем установку ядра.${NC}"
+            echo -e "${RED}❌ Не удалось скачать ключ Xanmod. Пропускаем установку ядра.${NC}"
         fi
     fi
 
@@ -837,8 +844,10 @@ get_flag_emoji() {
     local val1=$(( $(printf "%d" "'$c1") - 65 + 127462 ))
     local val2=$(( $(printf "%d" "'$c2") - 65 + 127462 ))
     
-    local flag
-    printf -v flag "\\U$(printf "%08x" $val1)\\U$(printf "%08x" $val2)"
+    local h1 h2 flag
+    printf -v h1 "%08x" "$val1"
+    printf -v h2 "%08x" "$val2"
+    printf -v flag "\\U%s\\U%s" "$h1" "$h2"
     echo "$flag"
 }
 
@@ -959,8 +968,8 @@ setup_certificates() {
     echo "🔐 Получение TLS-сертификатов для $DOMAIN..."
 
     # Получаем сертификат через certbot
+    log_info "Requesting SSL certificate for $DOMAIN via certbot"
     certbot certonly --standalone -d "$DOMAIN" --email "$EMAIL" \
-    log_info "Requested SSL certificate"
         --agree-tos --non-interactive --key-type ecdsa || {
         echo "❌ Ошибка получения сертификата"
         echo "Возможные причины:"
@@ -1469,9 +1478,7 @@ generate_hysteria_config() {
     mkdir -p /etc/hysteria
     
     local DOMAIN; DOMAIN=$(get_installed_var "DOMAIN")
-    if [[ -z "$DOMAIN" ]]; then
-        DOMAIN="$DOMAIN"
-    fi
+    [[ -z "$DOMAIN" ]] && DOMAIN="${DOMAIN:-}"
     
     local config_yaml="/etc/hysteria/config.yaml"
     
@@ -3417,7 +3424,7 @@ main() {
                     local warp_test; warp_test=$(curl --interface warp -s --connect-timeout 4 https://www.cloudflare.com/cdn-cgi/trace | grep -E "(ip=|warp=)")
                     if [[ -n "$warp_test" ]]; then
                         echo -e " 🟢 ${GREEN}Сеть WARP успешно отвечает:${NC}"
-                        echo "$warp_test" | sed 's/^/   /'
+                        echo "   ${warp_test//$'\n'/$'\n'   }"
                     else
                         echo -e " 🔴 ${RED}Сеть WARP не пропускает трафик! Проверьте wg-quick@warp.${NC}"
                     fi
@@ -3433,13 +3440,13 @@ main() {
             check_media_unlock() {
                 local label="$1"
                 local iface="$2"
-                local curl_opts=""
+                local curl_opts=()
                 if [[ -n "$iface" ]]; then
-                    curl_opts="--interface $iface"
+                    curl_opts=(--interface "$iface")
                 fi
 
                 # Netflix
-                local nf_code; nf_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.netflix.com/title/80018499)
+                local nf_code; nf_code=$(curl "${curl_opts[@]}" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.netflix.com/title/80018499)
                 local nf_res="${RED}🔴 Заблокирован${NC}"
                 if [[ "$nf_code" == "200" ]]; then
                     nf_res="${GREEN}🟢 Доступен (Оригиналы + Каталог)${NC}"
@@ -3448,14 +3455,14 @@ main() {
                 fi
 
                 # ChatGPT
-                local gpt_code; gpt_code=$(curl $curl_opts -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com)
+                local gpt_code; gpt_code=$(curl "${curl_opts[@]}" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com)
                 local gpt_res="${RED}🔴 Заблокирован${NC}"
                 if [[ "$gpt_code" == "200" ]] || [[ "$gpt_code" == "302" ]]; then
                     gpt_res="${GREEN}🟢 Доступен${NC}"
                 fi
 
                 # YouTube Region
-                local yt_region; yt_region=$(curl $curl_opts -s --connect-timeout 4 https://www.youtube.com/premium 2>/dev/null | awk -F'"' '/countryCode":/ { for(i=1;i<=NF;i++) if($i=="countryCode") print $(i+2) }')
+                local yt_region; yt_region=$(curl "${curl_opts[@]}" -s --connect-timeout 4 https://www.youtube.com/premium 2>/dev/null | awk -F'"' '/countryCode":/ { for(i=1;i<=NF;i++) if($i=="countryCode") print $(i+2) }')
                 local yt_res="${RED}🔴 Не удалось определить регион${NC}"
                 if [[ -n "$yt_region" ]]; then
                     yt_res="${GREEN}🟢 Доступен (Регион: $yt_region)${NC}"
@@ -3767,14 +3774,6 @@ EOF
                 else
                     opera_status="${YELLOW}DISABLED${NC}"
                 fi
-            fi
-
-            local reality_enabled; reality_enabled=$(get_installed_var "REALITY_ENABLED")
-            local reality_sni; reality_sni=$(get_installed_var "REALITY_SNI")
-            [[ -z "$reality_sni" ]] && reality_sni="max.ru"
-            local reality_status="${RED}OFF${NC}"
-            if [[ "$reality_enabled" == "true" ]]; then
-                reality_status="${GREEN}ON (${reality_sni})${NC}"
             fi
 
             ui_header "🖥️  СТАТУС СЕРВЕРА"
@@ -4561,7 +4560,6 @@ EOF
         DOMAIN="$2"
         EMAIL="$3"
         NUM_DEVICES="$4"
-        CDN_DOMAIN="none"
         if [[ -z "$DOMAIN" || -z "$EMAIL" || -z "$NUM_DEVICES" ]]; then
             echo "Использование: $0 --headless <домен> <email> <кол-во устройств> [имена устройств...]"
             exit 1
@@ -4583,10 +4581,10 @@ EOF
         DEVICE_NAMES=()
         for ((i=1; i<=NUM_DEVICES; i++)); do
             if [[ -n "$1" ]]; then
-                DEVICE_NAMES[$i]="$1"
+                DEVICE_NAMES[i]="$1"
                 shift
             else
-                DEVICE_NAMES[$i]="client_$i"
+                DEVICE_NAMES[i]="client_$i"
             fi
         done
     else
@@ -4643,9 +4641,9 @@ EOF
             read -r -p " 👤 Имя для устройства $i (по умолчанию client_$i): " dev_name
             dev_name=$(echo "$dev_name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
             if [[ -z "$dev_name" ]]; then
-                DEVICE_NAMES[$i]="client_$i"
+                DEVICE_NAMES[i]="client_$i"
             else
-                DEVICE_NAMES[$i]="$dev_name"
+                DEVICE_NAMES[i]="$dev_name"
             fi
         done
 

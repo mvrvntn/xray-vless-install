@@ -20,3 +20,9 @@ jobs:
         with:
           scandir: '.'
           additional_files: 'install_xray.sh'
+
+      - name: Setup Bats and Run Tests
+        run: |
+          sudo apt-get update -yq
+          sudo apt-get install -y bats
+          bats tests/
