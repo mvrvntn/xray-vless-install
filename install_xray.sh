@@ -456,18 +456,15 @@ update_geoblock_list() {
     local list_file="/etc/xray/geoblock.lst"
     local temp_file; temp_file=$(mktemp)
     local temp_geoblock; temp_geoblock=$(mktemp)
-    local temp_google_ai; temp_google_ai=$(mktemp)
     
-    echo "📥 Обновление списка геоблокированных доменов (itdog геоблок и google ai)..."
+    echo "📥 Обновление списка геоблокированных доменов (itdog геоблок)..."
     
-    # Пытаемся скачать оба списка с GitHub
+    # Пытаемся скачать список с GitHub
     local download_success=false
     curl -sSL --connect-timeout 8 "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/geoblock.lst" -o "$temp_geoblock"
-    curl -sSL --connect-timeout 8 "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Services/google_ai.lst" -o "$temp_google_ai"
     
-    # Если хотя бы один файл скачался успешно и не пуст, объединяем их
-    if [[ -s "$temp_geoblock" ]] || [[ -s "$temp_google_ai" ]]; then
-        cat "$temp_geoblock" "$temp_google_ai" 2>/dev/null > "$temp_file"
+    if [[ -s "$temp_geoblock" ]]; then
+        cat "$temp_geoblock" 2>/dev/null > "$temp_file"
         # Очищаем от Windows CRLF
         sed -i 's/\r//g' "$temp_file"
         # Удаляем пустые строки и комментарии, сортируем и убираем дубликаты
@@ -479,7 +476,7 @@ update_geoblock_list() {
         fi
     fi
     
-    rm -f "$temp_geoblock" "$temp_google_ai"
+    rm -f "$temp_geoblock"
     
     if [[ "$download_success" = true ]]; then
         if ! cmp -s "$temp_file" "$list_file" 2>/dev/null; then
@@ -531,10 +528,6 @@ openrouter.ai
 trae.ai
 windsurf.com
 elevenlabs.io
-gemini.google.com
-generativelapis-pa.googleapis.com
-generativeai.googleapis.com
-proactivebackend-pa.googleapis.com
 EOF
         echo "✅ Создан базовый список геоблокированных доменов."
         return 0
@@ -824,6 +817,26 @@ check_port_conflicts() {
             exit 1
         fi
     fi
+
+    # Проверка порта 8443 (VLESS gRPC)
+    if ss -tln | grep -q ':8443 '; then
+        local port_8443_pid; port_8443_pid=$(ss -tlnp 'sport = :8443' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
+        local port_8443_process=""
+        if [[ -n "$port_8443_pid" ]]; then
+            port_8443_process=$(ps -p "$port_8443_pid" -o comm= 2>/dev/null)
+        fi
+        echo "⚠️ Порт 8443 занят процессом: ${port_8443_process:-неизвестно} (PID: ${port_8443_pid:-неизвестно})"
+        read -r -p "Завершить процесс $port_8443_process и продолжить? [y/N]: " kill_8443
+        if [[ "$kill_8443" =~ ^[Yy]$ ]]; then
+            if [[ -n "$port_8443_pid" ]]; then
+                kill -9 "$port_8443_pid" 2>/dev/null || true
+                echo "Процесс $port_8443_pid завершен."
+            fi
+        else
+            echo "Установка отменена пользователем."
+            exit 1
+        fi
+    fi
 }
 
 # === Получение эмодзи флага страны ===
@@ -935,6 +948,7 @@ setup_firewall() {
         local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
         if [[ -x "$ipt_path" ]]; then
             $ipt_path -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 443 -j ACCEPT
+            $ipt_path -C INPUT -p tcp --dport 8443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 8443 -j ACCEPT
             $ipt_path -C INPUT -p udp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 443 -j ACCEPT
             $ipt_path -C INPUT -p udp --dport 20000:50000 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 20000:50000 -j ACCEPT
             $ipt_path -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 80 -j ACCEPT
@@ -944,6 +958,7 @@ setup_firewall() {
 
     echo "🛡 Настройка UFW..."
     ufw allow 443/tcp > /dev/null
+    ufw allow 8443/tcp > /dev/null
     ufw allow 443/udp > /dev/null
     ufw allow 20000:50000/udp > /dev/null
     ufw allow 80/tcp > /dev/null
@@ -1264,7 +1279,7 @@ EOF
         fi
 
         local check_domains=()
-        for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me checkip.amazonaws.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com gemini.google.com generativelanguage.googleapis.com accounts.google.com googleapis.com gstatic.com googleusercontent.com webrtc.org stun.l.google.com; do
+        for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me checkip.amazonaws.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com webrtc.org; do
             check_domains+=("\"domain:$dom\"")
         done
         local check_domains_joined; check_domains_joined=$(IFS=,; echo "${check_domains[*]}")
@@ -1394,6 +1409,47 @@ EOF
           "tcpKeepAliveIdle": 300
         }
       }
+    },
+    {
+      "tag": "vless-grpc",
+      "port": 8443,
+      "protocol": "vless",
+      "settings": {
+        "clients": ['"$vless_clients_str"'],
+        "decryption": "none"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "routeOnly": true
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [{
+            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
+            "keyFile": "'"$SSL_DIR"'/private.key"
+          }],
+          "alpn": [
+            "h2"
+          ],
+          "minVersion": "1.2"
+        },
+        "grpcSettings": {
+          "serviceName": "vless-grpc",
+          "multiMode": false
+        },
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpcongestion": "bbr",
+          "tcpKeepAliveIdle": 300
+        }
+      }
     }
   ]'
     else
@@ -1427,6 +1483,47 @@ EOF
             "http/1.1"
           ],
           "minVersion": "1.3"
+        },
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpcongestion": "bbr",
+          "tcpKeepAliveIdle": 300
+        }
+      }
+    },
+    {
+      "tag": "vless-grpc",
+      "port": 8443,
+      "protocol": "vless",
+      "settings": {
+        "clients": ['"$vless_clients_str"'],
+        "decryption": "none"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "routeOnly": true
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [{
+            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
+            "keyFile": "'"$SSL_DIR"'/private.key"
+          }],
+          "alpn": [
+            "h2"
+          ],
+          "minVersion": "1.2"
+        },
+        "grpcSettings": {
+          "serviceName": "vless-grpc",
+          "multiMode": false
         },
         "sockopt": {
           "tcpFastOpen": true,
@@ -2402,20 +2499,24 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         if emoji:
             remark_vision = f"{emoji} VLESS-TCP"
             remark_hy2 = f"{emoji} Hysteria2"
+            remark_grpc = f"{emoji} VLESS-gRPC"
             remark_reality = f"{emoji} VLESS-Reality ({ivars['reality_sni']})"
         else:
             remark_vision = "🌐 VLESS-TCP"
             remark_hy2 = "⚡ Hysteria2"
+            remark_grpc = "🚀 VLESS-gRPC"
             remark_reality = f"🛡️ VLESS-Reality ({ivars['reality_sni']})"
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
+        encoded_remark_grpc = urllib.parse.quote(remark_grpc)
         encoded_remark_reality = urllib.parse.quote(remark_reality)
         
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http%2F1.1#{encoded_remark_vision}"
         hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
+        vless_grpc = f"vless://{uuid_param}@{domain}:8443?mode=gun&security=tls&type=grpc&serviceName=vless-grpc&fp={fp}&alpn=h2&sni={domain}#{encoded_remark_grpc}"
         
-        urls = [vless_vision, hy2_link]
+        urls = [vless_vision, hy2_link, vless_grpc]
         if ivars["reality_enabled"] == "true":
             vless_reality = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=reality&sni={ivars['reality_sni']}&pbk={ivars['reality_pbk']}&sid={ivars['reality_sid']}&fp={fp}&type=tcp#{encoded_remark_reality}"
             urls.append(vless_reality)
@@ -2425,7 +2526,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
-        announce_text = f"Профиль: {client_name} • Локации: VLESS (TCP), Hysteria2 (UDP) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
+        announce_text = f"Профиль: {client_name} • Локации: VLESS TCP (443), Hysteria2 (443), VLESS gRPC (8443) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
         support_url = "https://t.me/mavrtunbot"
@@ -3232,10 +3333,12 @@ fi
 if [[ -n "$EMOJI" ]]; then
   remark_vision="${EMOJI} VLESS-TCP"
   remark_hy2="${EMOJI} Hysteria2"
+  remark_grpc="${EMOJI} VLESS-gRPC"
   remark_reality="${EMOJI} VLESS-Reality (${REALITY_SNI})"
 else
   remark_vision="🌐 VLESS-TCP"
   remark_hy2="⚡ Hysteria2"
+  remark_grpc="🚀 VLESS-gRPC"
   remark_reality="🛡️ VLESS-Reality (${REALITY_SNI})"
 fi
 
@@ -3245,11 +3348,13 @@ urlencode() {
 
 encoded_remark_vision=$(urlencode "$remark_vision")
 encoded_remark_hy2=$(urlencode "$remark_hy2")
+encoded_remark_grpc=$(urlencode "$remark_grpc")
 encoded_remark_reality=$(urlencode "$remark_reality")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http%2F1.1#${encoded_remark_vision}"
 HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
+VLESS_GRPC="vless://${UUID}@${DOMAIN}:8443?mode=gun&security=tls&type=grpc&serviceName=vless-grpc&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 if [[ "$REALITY_ENABLED" = "true" ]]; then
@@ -3258,12 +3363,14 @@ fi
 
 echo -e "\n${BOLD}${PURPLE}🔗  ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ${NC}"
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и ПК):${NC}"
+echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и ПК, порт 443):${NC}"
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
-echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход):${NC}"
+echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход, порт 443):${NC}"
 echo -e "    ${GREEN}$HY2_LINK${NC}"
+echo -e " ${BOLD}${YELLOW}3. VLESS gRPC TLS (Резервный протокол, порт 8443):${NC}"
+echo -e "    ${GREEN}$VLESS_GRPC${NC}"
 if [[ "$REALITY_ENABLED" = "true" ]]; then
-echo -e " ${BOLD}${YELLOW}3. VLESS Reality (Маскировка ${REALITY_SNI}):${NC}"
+echo -e " ${BOLD}${YELLOW}4. VLESS Reality (Маскировка ${REALITY_SNI}):${NC}"
 echo -e "    ${GREEN}$VLESS_REALITY${NC}"
 fi
 
@@ -3274,13 +3381,14 @@ echo -e "${PURPLE}────────────────────�
 echo -e "\n${BOLD}${CYAN}🔳  ГЕНЕРАЦИЯ QR-КОДА${NC}"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 echo -e " Выберите, для чего отобразить QR-код:"
-echo -e " ${BOLD}${YELLOW}1.${NC} VLESS TCP Vision"
-echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2"
+echo -e " ${BOLD}${YELLOW}1.${NC} VLESS TCP Vision (порт 443)"
+echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2 (порт 443)"
+echo -e " ${BOLD}${YELLOW}3.${NC} VLESS gRPC TLS (порт 8443)"
 if [[ "$REALITY_ENABLED" = "true" ]]; then
-echo -e " ${BOLD}${YELLOW}3.${NC} VLESS Reality"
-echo -e " ${BOLD}${YELLOW}4.${NC} Ссылка подписки"
+echo -e " ${BOLD}${YELLOW}4.${NC} VLESS Reality"
+echo -e " ${BOLD}${YELLOW}5.${NC} Ссылка подписки"
 else
-echo -e " ${BOLD}${YELLOW}3.${NC} Ссылка подписки"
+echo -e " ${BOLD}${YELLOW}4.${NC} Ссылка подписки"
 fi
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 read -r -p "Ваш выбор: " qr_choice
@@ -3288,15 +3396,17 @@ if [[ "$REALITY_ENABLED" = "true" ]]; then
   case "$qr_choice" in
     1) qrencode -t UTF8 "$VLESS_VISION" ;;
     2) qrencode -t UTF8 "$HY2_LINK" ;;
-    3) qrencode -t UTF8 "$VLESS_REALITY" ;;
-    4) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    3) qrencode -t UTF8 "$VLESS_GRPC" ;;
+    4) qrencode -t UTF8 "$VLESS_REALITY" ;;
+    5) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
 else
   case "$qr_choice" in
     1) qrencode -t UTF8 "$VLESS_VISION" ;;
     2) qrencode -t UTF8 "$HY2_LINK" ;;
-    3) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    3) qrencode -t UTF8 "$VLESS_GRPC" ;;
+    4) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
 fi
@@ -3317,9 +3427,9 @@ main() {
     if [[ -f "$MARKER_FILE" ]]; then
         show_connections() {
             echo -e "\n--- Активные подключения к Xray ---"
-            local conns; conns=$(ss -tnp | grep -E ':443\s' | grep -v '127.0.0.1')
+            local conns; conns=$(ss -tnp | grep -E ':(443|8443)\s' | grep -v '127.0.0.1')
             if [[ -z "$conns" ]]; then
-                echo "Нет активных подключений на порт 443."
+                echo "Нет активных подключений на порты 443 / 8443."
             else
                 echo "Состояние Локальный_Адрес Удаленный_Адрес Процесс"
                 echo "$conns" | awk '{print $1, $4, $5, $6}'
@@ -4397,6 +4507,7 @@ EOF
             systemctl daemon-reload >/dev/null 2>&1
 
             ufw delete allow 443/tcp > /dev/null
+            ufw delete allow 8443/tcp > /dev/null
             ufw delete allow 443/udp > /dev/null
             ufw delete allow 80/tcp > /dev/null
             rm -f "$MARKER_FILE"

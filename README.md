@@ -1,14 +1,14 @@
-# 🌐 Автоматическая установка Xray (VLESS TCP XTLS-Vision) & Hysteria 2 с поддержкой подписок, WARP и Opera Proxy
+# 🌐 Автоматическая установка Xray (VLESS TCP / gRPC) & Hysteria 2 с поддержкой подписок, WARP и Opera Proxy
 
 <p align="center">
   <img src="https://img.shields.io/badge/Xray-Core%20v1.8.0+-blue?style=for-the-badge&logo=linux&logoColor=white" alt="Xray Version">
   <img src="https://img.shields.io/badge/Hysteria-2--latest-cyan?style=for-the-badge" alt="Hysteria Version">
-  <img src="https://img.shields.io/badge/Security-XTLS--Vision-brightgreen?style=for-the-badge" alt="Security XTLS">
+  <img src="https://img.shields.io/badge/Security-XTLS--Vision%20%2F%20gRPC-brightgreen?style=for-the-badge" alt="Security Protocols">
   <img src="https://img.shields.io/badge/WARP-Smart%20%2F%20Full%20Routing-purple?style=for-the-badge" alt="WARP Routing">
   <img src="https://img.shields.io/badge/Opera--Proxy-OpenAI%20Bypass-orange?style=for-the-badge" alt="Opera Proxy">
 </p>
 
-Скрипт `install_xray.sh` — решение «всё в одном» (All-in-One) для быстрой развертки и автоматической настройки прокси-серверов **VLESS TCP XTLS-Vision** и **Hysteria 2** на вашем VPS.
+Скрипт `install_xray.sh` — решение «всё в одном» (All-in-One) для быстрой развертки и автоматической настройки прокси-серверов **VLESS TCP XTLS-Vision**, **VLESS gRPC** и **Hysteria 2** на вашем VPS.
 
 Проект спроектирован с упором на надежность, максимальную скорость обхода DPI-блокировок и простоту администрирования. Главная особенность: скрипт безопасен для параллельной установки на один сервер с VPN-комплексами вроде **AntiZapret**.
 
@@ -17,10 +17,10 @@
 ## 🛠️ Технологический стек (Tech Stack)
 
 - **Языки и автоматизация**: Bash 5.x, Python 3 (для сервера подписок)
-- **Прокси-ядра**: Xray-core (VLESS + XTLS-Vision), Hysteria 2 (UDP QUIC)
+- **Прокси-ядра**: Xray-core (VLESS + XTLS-Vision на порту 443, VLESS + gRPC на порту 8443), Hysteria 2 (UDP QUIC на порту 443)
 - **Поддерживаемые ОС**: Debian 11 / 12 / 13, Ubuntu 20.04 / 22.04 / 24.04 (x86_64)
 - **Ядро и Сеть**: Xanmod Kernel (x64v1-v3), TCP BBR, ZRAM (LZ4) + Disk Swap, PMTU MSS Clamping, Systemd/Journald Tuning
-- **Маршрутизация и обход**: Cloudflare WARP (WireGuard), Opera Residential SOCKS5 Proxy, списки блокировок Роскомнадзора (Geoblock + Google AI)
+- **Маршрутизация и обход**: Cloudflare WARP (WireGuard), Opera Residential SOCKS5 Proxy, списки блокировок Роскомнадзора (Geoblock)
 - **Маскировка (Decoy)**: Локальный веб-сервер с имитацией портала Atlassian Confluence (RU/EN)
 
 ---
@@ -33,6 +33,7 @@
    - `80/tcp` — получение SSL-сертификата Let's Encrypt / Certbot.
    - `443/tcp` — вход VLESS TCP XTLS-Vision.
    - `443/udp` — вход Hysteria 2 (QUIC).
+   - `8443/tcp` — вход VLESS gRPC (запасной/резервный протокол).
 
 ---
 
@@ -42,14 +43,14 @@
                ┌────────────────────────────────────────────────────────┐
                │              Входящий трафик клиентов                 │
                └───────────────────┬────────────────────────────────────┘
-                                   │ (Порт 443 TCP / 443 UDP)
+                                   │ (Порт 443 TCP / 443 UDP / 8443 TCP)
                                    ▼
                        ┌───────────────────────┐
                        │  Xray-core / Hysteria2 │
                        └───────────┬───────────┘
                                    │
          ┌─────────────────────────┼─────────────────────────┐
-         │ (Российские ресурсы)    │ (Блокировки / Google AI) │ (OpenAI / Claude)
+         │ (Российские ресурсы)    │ (Блокировки РКН / IP)   │ (OpenAI / Claude)
          ▼                         ▼                         ▼
 ┌──────────────────┐    ┌────────────────────┐    ┌─────────────────────┐
 │ Прямой исходящий │    │  Cloudflare WARP   │    │     Opera Proxy     │
@@ -63,9 +64,10 @@
 
 * 🚀 **Протокол VLESS TCP XTLS-Vision (Порт 443 TCP)**: Маскирует прокси-трафик под легитимное TLS 1.3 соединение. Случайный отпечаток TLS (`fp=random` по умолчанию, с возможностью ручного выбора `chrome`, `ios`, `firefox`).
 * ⚡ **Hysteria 2 (Порт 443 UDP)**: Ультра-быстрый протокол на базе UDP/QUIC для работы в нестабильных мобильных сетях. Поддерживает автоматическую настройку без оверинжиниринга.
-* 📱 **Динамический сервер подписок (Base64)**: Локальный Python-демон раздает автоматически генерируемые подписки (`https://ваш-домен.com/sub/UUID`). Нативно поддерживается клиентами **Happ**, **Incy**, **Hiddify**, **v2rayN**, **Shadowrocket**.
+* 🚀 **Протокол VLESS gRPC (Порт 8443 TCP)**: Надежный резервный канал поверх gRPC и TLS с поддержкой мультиплексирования.
+* 📱 **Динамический сервер подписок (Base64)**: Локальный Python-демон раздает автоматически генерируемые подписки (`https://ваш-домен.com/sub/UUID`). Нативно поддерживается клиентами **Happ**, **Incy**, **Hiddify**, **v2rayN**, **Shadowrocket**, **Clash/Mihomo**, **SingBox**.
 * 🌀 **Интеллектуальный обход блокировок через Cloudflare WARP**:
-  * **Smart (Рекомендуемый)**: Заворачивает в WARP только заблокированные домены РФ и Google AI (Gemini).
+  * **Smart (Рекомендуемый)**: Заворачивает в WARP только заблокированные домены РФ и детекторы утечки IP.
   * **Full**: Заворачивает весь исходящий трафик сервера через Cloudflare.
 * 🌀 **Opera Proxy для OpenAI / ChatGPT и Claude**: Обходит блокировки провайдеров и защиту Cloudflare/OpenAI за счет маршрутизации через домашние прокси-узлы.
 * ⚡ **Комплексная оптимизация VPS**:
