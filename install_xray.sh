@@ -1013,10 +1013,40 @@ setup_certificates() {
     chmod 644 "$SSL_DIR/fullchain.cer"
     chmod 600 "$SSL_DIR/private.key"
 
-    # Добавляем обновление сертификатов в cron (копирование и рестарт Xray)
+    setup_cert_renew_hook
+}
+
+# === Настройка автопродления сертификатов ===
+setup_cert_renew_hook() {
+    local hook_script="/usr/local/bin/xray-cert-renew.sh"
+    cat > "$hook_script" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SSL_DIR="/etc/xray/ssl"
+DOMAIN="${1:-}"
+
+if [[ -z "$DOMAIN" && -f "/etc/xray/.installed" ]]; then
+    DOMAIN=$(awk -F= '$1 == "DOMAIN" { sub(/^[^=]+=/, ""); print }' /etc/xray/.installed)
+fi
+
+if [[ -n "$DOMAIN" && -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+    mkdir -p "$SSL_DIR"
+    cp -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$SSL_DIR/fullchain.cer"
+    cp -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$SSL_DIR/private.key"
+    chown -R nobody:nogroup "$SSL_DIR"
+    chmod 755 "$SSL_DIR"
+    chmod 644 "$SSL_DIR/fullchain.cer"
+    chmod 600 "$SSL_DIR/private.key"
+    systemctl restart xray 2>/dev/null || true
+    systemctl restart hysteria 2>/dev/null || true
+    systemctl restart xray-sub 2>/dev/null || true
+fi
+EOF
+    chmod +x "$hook_script"
+
     (crontab -l 2>/dev/null | grep -v 'certbot renew'; \
-     echo "0 3 * * * certbot renew --quiet --post-hook \"cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem $SSL_DIR/fullchain.cer && cp /etc/letsencrypt/live/$DOMAIN/privkey.pem $SSL_DIR/private.key && chown -R nobody:nogroup $SSL_DIR && chmod 644 $SSL_DIR/fullchain.cer && chmod 600 $SSL_DIR/private.key && systemctl restart xray\"") | crontab -
-    log_info "Restarted Xray service"
+     echo "0 3 * * * certbot renew --quiet --post-hook \"/usr/local/bin/xray-cert-renew.sh\"") | crontab -
 }
 
 # === Генерация UUID и серверного конфигурационного файла ===
@@ -3943,10 +3973,7 @@ EOF
                         chmod 644 "$SSL_DIR/fullchain.cer"
                         chmod 600 "$SSL_DIR/private.key"
                         
-                        # Обновляем крон для автопродления
-                        (crontab -l 2>/dev/null | grep -v 'certbot renew'; \
-                         echo "0 3 * * * certbot renew --quiet --post-hook \"cp /etc/letsencrypt/live/$new_domain/fullchain.pem $SSL_DIR/fullchain.cer && cp /etc/letsencrypt/live/$new_domain/privkey.pem $SSL_DIR/private.key && chown -R nobody:nogroup $SSL_DIR && chmod 644 $SSL_DIR/fullchain.cer && chmod 600 $SSL_DIR/private.key && systemctl restart xray\"") | crontab -
-        log_info "Restarted Xray service"
+                        setup_cert_renew_hook
                         
                         # Обновляем маркер
                         update_marker_val "DOMAIN" "$new_domain"
@@ -4453,6 +4480,7 @@ EOF
             if crontab -l &>/dev/null; then
                 crontab -l | grep -v "certbot renew" | crontab -
             fi
+            rm -f /usr/local/bin/xray-cert-renew.sh
             systemctl stop hysteria-server >/dev/null 2>&1
             systemctl disable hysteria-server >/dev/null 2>&1
             rm -f /etc/systemd/system/hysteria-server.service

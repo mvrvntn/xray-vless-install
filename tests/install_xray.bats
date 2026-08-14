@@ -39,5 +39,20 @@ setup() {
         skip "shellcheck не установлен"
     fi
     run shellcheck -s bash "$SCRIPT_PATH"
-    [ "$status" -lt 2 ]
+    [ "$status" -eq 0 ]
+}
+
+@test "Синтаксическая проверка bash -n проходит без ошибок" {
+    run bash -n "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Скрипт содержит строго LF окончания строк (без CRLF)" {
+    run grep -U $'\r' "$SCRIPT_PATH"
+    [ "$status" -ne 0 ]
+}
+
+@test "Скрипт содержит конфигурацию VLESS gRPC на порту 8443" {
+    run grep "8443" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
 }
