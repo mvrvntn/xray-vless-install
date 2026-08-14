@@ -957,6 +957,10 @@ setup_firewall() {
     fi
 
     echo "🛡 Настройка UFW..."
+    if [[ -f /etc/default/ufw ]]; then
+        sed -i 's/IPV6=yes/IPV6=no/g' /etc/default/ufw 2>/dev/null || true
+    fi
+
     ufw allow 443/tcp > /dev/null
     ufw allow 8443/tcp > /dev/null
     ufw allow 443/udp > /dev/null
@@ -975,7 +979,12 @@ setup_firewall() {
         ufw allow 22/tcp > /dev/null
     fi
     
-    ufw --force enable > /dev/null
+    if ! ufw --force enable > /dev/null 2>&1; then
+        if [[ -f /usr/share/ufw/after.rules ]]; then
+            cp /usr/share/ufw/after.rules /etc/ufw/after.rules 2>/dev/null || true
+            ufw --force enable > /dev/null 2>&1 || true
+        fi
+    fi
 }
 
 # === Настройка сертификатов ===
