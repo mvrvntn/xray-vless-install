@@ -1787,17 +1787,9 @@ import glob
 import urllib.parse
 import urllib.request
 import json
-import threading
-import time as _time
-
 PORT = 10080
 CONFIG_DIR = "/etc/xray/client_configs"
 INSTALLED_FILE = "/etc/xray/.installed"
-
-_ROSCOMVPN_URLS = {
-    "happ": "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/HAPP/DEFAULT.DEEPLINK",
-    "incy": "https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/main/INCY/DEFAULT.DEEPLINK",
-}
 
 DECOY_HTML = """<!DOCTYPE html>
 <html>
@@ -1975,45 +1967,6 @@ DECOY_HTML = """<!DOCTYPE html>
 </script>
 </body>
 </html>"""
-
-class RoscomVPNResolver:
-    def __init__(self, default_source="default"):
-        self._lock = threading.Lock()
-        self._value = ""
-        self._fetched_at = 0.0
-        self._source = default_source
-        self._is_fetching = False
-
-    def _bg_fetch(self):
-        url = _ROSCOMVPN_URLS.get(self._source)
-        if not url:
-            return
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
-                val = response.read().decode('utf-8').strip()
-            with self._lock:
-                self._value = val
-                self._fetched_at = _time.monotonic()
-        except Exception:
-            with self._lock:
-                # В случае сетевой ошибки делаем задержку в 60 секунд перед следующей попыткой запроса
-                self._fetched_at = _time.monotonic() - 540.0
-        finally:
-            with self._lock:
-                self._is_fetching = False
-
-    def get(self) -> str:
-        now = _time.monotonic()
-        if (not self._value or (now - self._fetched_at) > 600) and not self._is_fetching:
-            with self._lock:
-                if not self._is_fetching:
-                    self._is_fetching = True
-                    threading.Thread(target=self._bg_fetch, daemon=True).start()
-        return self._value
-
-happ_resolver = RoscomVPNResolver("happ")
-incy_resolver = RoscomVPNResolver("incy")
 
 def get_installed_vars():
     vars = {
@@ -2554,34 +2507,25 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             "hide-url": "1",
             "noises-enable": "0",
             "no-limit-enabled": "1",
+            "fragmentation-enable": "0",
             "per-app-proxy-enable": "0",
-            "fragmentation-enable": "1",
-            "fragmentation-packets": "tlshello",
-            "fragmentation-length": "10-30",
-            "fragmentation-interval": "10-20"
+            "server-address-resolve-enable": "0"
         }
         if providerid:
             resp_headers["providerid"] = providerid
-            
+
         if "incy" in user_agent:
             resp_headers.update({
-                "server-address-resolve-enable": "1",
-                "server-address-resolve-dns-domain": "https://common.dot.dns.yandex.net/dns-query",
-                "server-address-resolve-dns-ip": "77.88.8.8",
                 "banner-bg-color": "#F4F4F5",
                 "banner-button-color": "#1A1A1A"
             })
-            
+
         routing_enabled = ivars.get("routing_enabled", "true") != "false"
-        _routing = ""
         if routing_enabled:
-            if "incy" in user_agent:
-                _routing = incy_resolver.get()
+            if "happ" in user_agent:
+                resp_headers["autorouting"] = "happ://autorouting/onadd/https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-routing@main/HAPP/JSONSUB.JSON"
             else:
-                _routing = happ_resolver.get()
-            if _routing:
-                resp_headers["routing"] = _routing
-                resp_headers["routing-enable"] = "true"
+                resp_headers["autorouting"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-routing@main/INCY/JSONSUB.JSON"
 
         if format_param == "singbox" or format_param == "sing-box":
             outbounds_list = []
