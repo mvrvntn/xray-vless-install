@@ -402,7 +402,7 @@ EOF
             cpu_level=3
         fi
 
-        if curl -fsSL https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
+        if curl -fsSL --connect-timeout 10 https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
             echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
             apt update
             log_info "Running APT package operation for Xanmod..."
@@ -655,7 +655,7 @@ install_opera_proxy() {
     fi
 
     echo "📥 Скачивание бинарного файла Opera Proxy..."
-    if curl -sSL -L "$binary_url" -o /usr/local/bin/opera-proxy; then
+    if curl -sSL --connect-timeout 15 -L "$binary_url" -o /usr/local/bin/opera-proxy; then
         chmod +x /usr/local/bin/opera-proxy
         echo "✅ Бинарный файл успешно скачан и установлен."
     else
@@ -908,7 +908,7 @@ install_dependencies() {
 # === Установка Xray ===
 install_xray() {
     echo "🚀 Установка Xray..."
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     systemctl enable xray > /dev/null
 }
 
@@ -916,14 +916,14 @@ install_xray() {
 install_hysteria() {
     echo "🚀 Установка Hysteria 2..."
     systemctl stop hysteria-server >/dev/null 2>&1 || true
-    local latest_ver; latest_ver=$(curl -s "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    local latest_ver; latest_ver=$(curl -sSL --connect-timeout 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [[ -z "$latest_ver" ]]; then
         latest_ver="v2.6.0"
     fi
     echo "Загрузка Hysteria 2 ($latest_ver)..."
     local download_url="https://github.com/apernet/hysteria/releases/download/${latest_ver}/hysteria-linux-amd64"
     rm -f /usr/local/bin/hysteria
-    if curl -sSL -o /usr/local/bin/hysteria "$download_url"; then
+    if curl -sSL --connect-timeout 20 -o /usr/local/bin/hysteria "$download_url"; then
         chmod +x /usr/local/bin/hysteria
         echo "✅ Hysteria 2 успешно установлена."
     else
@@ -4177,7 +4177,7 @@ EOF
                 8) 
                     echo -e "\n${BOLD}${GREEN}🔄 Загрузка последней версии скрипта...${NC}"
                     cd /root || exit
-                    curl -s -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
+                    curl -fsSL --connect-timeout 10 -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
                     echo -e "${GREEN}✅ Скрипт обновлен! Применяем обновления ядра и конфигурации...${NC}"
                     /root/install_xray.sh --update-core
                     exit 0
@@ -4481,7 +4481,7 @@ EOF
             rm -f /usr/local/bin/opera-proxy
             rm -f /etc/xray/opera.lst
 
-            bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
+            bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
             rm -rf "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "$GENERATE_SCRIPT"
             rm -f /var/log/xray/{access.log,error.log}
             if crontab -l &>/dev/null; then
