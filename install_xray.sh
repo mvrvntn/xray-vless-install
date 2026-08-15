@@ -3231,6 +3231,7 @@ if __name__ == "__main__":
 EOF
 
     # Создаём systemd service
+    local py_path; py_path=$(command -v python3 || echo "/usr/bin/python3")
     cat > /etc/systemd/system/xray-sub.service <<EOF
 [Unit]
 Description=Xray Subscription Service
@@ -3240,7 +3241,7 @@ After=network.target
 Type=simple
 User=nobody
 Group=nogroup
-ExecStart=/usr/bin/python3 $SUB_SERVER_SCRIPT
+ExecStart=$py_path $SUB_SERVER_SCRIPT
 Restart=always
 
 [Install]
@@ -3256,7 +3257,8 @@ EOF
 # === Установка утилиты генерации ссылок ===
 install_generate_script() {
     cat > "$GENERATE_SCRIPT" <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Цвета для красивого вывода
 BOLD='\033[1m'
