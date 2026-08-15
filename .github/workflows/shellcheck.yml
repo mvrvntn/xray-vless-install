@@ -21,6 +21,17 @@ jobs:
           scandir: '.'
           additional_files: 'install_xray.sh'
 
+      - name: Validate Embedded Python Syntax
+        run: |
+          python3 -c "
+          import re, ast
+          with open('install_xray.sh', 'r', encoding='utf-8') as f:
+              content = f.read()
+          blocks = re.findall(r'python3\s+<<\s*[\'\"]?EOF[\'\"]?\s*\n(.*?)\nEOF', content, re.DOTALL)
+          for i, block in enumerate(blocks):
+              ast.parse(block)
+          "
+
       - name: Setup Bats and Run Tests
         run: |
           sudo apt-get update -yq

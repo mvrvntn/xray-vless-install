@@ -9,9 +9,9 @@ readonly GENERATE_SCRIPT="/usr/local/bin/generate_client_config"
 readonly SUB_SERVER_SCRIPT="/usr/local/bin/xray_sub_server.py"
 readonly INSTALL_LOG="/var/log/xray/install.log"
 
-SCRIPT_NAME=$(basename "$0")
+SCRIPT_NAME="$(basename -- "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC2034
 readonly SCRIPT_DIR
 export SCRIPT_DIR
