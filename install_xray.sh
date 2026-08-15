@@ -77,17 +77,40 @@ install_xry_command() {
 optimize_vps() {
     echo -e "\n${BOLD}${CYAN}🔧 Запуск оптимизации VPS...${NC}"
     
-        # 1. Часовой пояс и синхронизация времени (NTP)
+    local is_container=false
+    local virt="none"
+    if command -v systemd-detect-virt &>/dev/null; then
+        virt="$(systemd-detect-virt 2>/dev/null || echo "none")"
+    fi
+    if [[ "$virt" =~ ^(lxc|openvz|docker|podman|container)$ ]]; then
+        is_container=true
+        echo -e "${YELLOW}[!] Обнаружена контейнерная виртуализация ($virt). Операции со swap и модулями ядра адаптированы.${NC}"
+    fi
+
+    # 1. Часовой пояс и синхронизация времени (NTP)
     echo -e "${YELLOW}[!] Настройка часового пояса (Europe/Moscow) и NTP...${NC}"
-    timedatectl set-timezone Europe/Moscow || true
+    timedatectl set-timezone Europe/Moscow 2>/dev/null || true
     timedatectl set-ntp true 2>/dev/null || true
     systemctl enable --now systemd-timesyncd 2>/dev/null || true
     echo -e "${GREEN}[✓] Часовой пояс и NTP синхронизация настроены.${NC}"
 
-    # 2. Установка пакетов
+    # 2. Установка пакетов с ожиданием снятия блокировок apt/dpkg
     echo -e "${YELLOW}[!] Обновление кэша и установка базовых утилит...${NC}"
+    if command -v fuser &>/dev/null; then
+        local waited=0
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock >/dev/null 2>&1; do
+            if (( waited >= 120 )); then
+                echo -e "${YELLOW}[!] Превышен таймаут ожидания блокировок apt/dpkg. Продолжаем...${NC}"
+                break
+            fi
+            echo -e "${YELLOW}[!] Ожидание освобождения замка apt/dpkg... [${waited}s]${NC}"
+            sleep 3
+            waited=$((waited + 3))
+        done
+    fi
     DEBIAN_FRONTEND=noninteractive apt-get update -yq
-    DEBIAN_FRONTEND=noninteractive apt-get install -yq curl wget jq unzip htop net-tools ufw iptables zram-tools
+    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+        curl wget jq unzip htop net-tools ufw iptables zram-tools psmisc
     echo -e "${GREEN}[✓] Утилиты установлены.${NC}"
 
     # 2.1. Отключение неиспользуемых и опасных служб (rpcbind, apt-daily)
@@ -97,31 +120,44 @@ optimize_vps() {
     systemctl mask rpcbind rpcbind.socket 2>/dev/null || true
 
     # 2.2. Ограничение размера логов journald (до 100MB)
-    if [[ -f /etc/systemd/journald.conf ]]; then
-        sed -i -E 's/^#?SystemMaxUse=.*/SystemMaxUse=100M/g' /etc/systemd/journald.conf
-        systemctl restart systemd-journald 2>/dev/null || true
-    fi
+    mkdir -p /etc/systemd/journald.conf.d
+    cat << 'EOF' > /etc/systemd/journald.conf.d/99-max-size.conf
+[Journal]
+SystemMaxUse=100M
+RuntimeMaxUse=50M
+EOF
+    systemctl restart systemd-journald 2>/dev/null || true
     echo -e "${GREEN}[✓] Лишние службы отключены, логи journald ограничены 100MB.${NC}"
 
     # 3. Настройка SWAP (Гибридная память: ZRAM + Disk Swap)
     echo -e "${YELLOW}[!] Настройка Swap файла...${NC}"
-    # Удаляем старые фантомные записи /swap, вызывающие сбои в systemd
-    sed -i -E '\|^/swap[[:space:]]+swap|d' /etc/fstab 2>/dev/null || true
-    if ! grep -q "/swapfile" /etc/fstab; then
-        if [[ ! -f /swapfile ]]; then
-            fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null
-            chmod 600 /swapfile
-            mkswap /swapfile >/dev/null 2>&1
+    if [[ "$is_container" == "false" ]]; then
+        # Удаляем старые фантомные записи /swap, вызывающие сбои в systemd
+        sed -i -E '\|^/swap[[:space:]]+swap|d' /etc/fstab 2>/dev/null || true
+        if ! grep -q "/swapfile" /etc/fstab; then
+            local free_space_mb
+            free_space_mb="$(LANG=C df -BM / 2>/dev/null | awk 'NR==2 {gsub(/M/,"",$4); print $4}')"
+            if [[ "${free_space_mb:-0}" -ge 4000 ]]; then
+                if [[ ! -f /swapfile ]]; then
+                    if ! fallocate -l 2G /swapfile 2>/dev/null; then
+                        dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+                    fi
+                    chmod 600 /swapfile
+                    mkswap /swapfile >/dev/null 2>&1
+                fi
+                swapon -p -2 /swapfile 2>/dev/null || true
+                echo "/swapfile   none    swap    sw,pri=-2    0   0" >> /etc/fstab
+                echo -e "${GREEN}[✓] Disk Swap 2GB создан с приоритетом -2.${NC}"
+            else
+                echo -e "${YELLOW}[!] Свободного места на диске менее 4GB (${free_space_mb:-0}MB). Создание swapfile пропущено.${NC}"
+            fi
+        else
+            swapon -a 2>/dev/null || true
+            echo -e "${GREEN}[✓] Disk Swap уже существует.${NC}"
         fi
-        swapon -p -2 /swapfile 2>/dev/null || true
-        echo "/swapfile   none    swap    sw,pri=-2    0   0" >> /etc/fstab
-        echo -e "${GREEN}[✓] Disk Swap 2GB создан с приоритетом -2.${NC}"
-    else
-        swapon -a 2>/dev/null || true
-        echo -e "${GREEN}[✓] Disk Swap уже существует.${NC}"
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl reset-failed swap.swap 2>/dev/null || true
     fi
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl reset-failed swap.swap 2>/dev/null || true
 
     # Включение и оптимизация ZRAM (lz4, умный процент в зависимости от RAM, Priority 100)
     echo -e "${YELLOW}[!] Запуск и настройка ZRAM...${NC}"
@@ -135,77 +171,118 @@ optimize_vps() {
         echo -e "${GREEN}[✓] Детектировано ${TOTAL_RAM_MB}MB RAM (2GB+). Автоматически выбираем ZRAM = 60%.${NC}"
     else
         ZRAM_PERCENT=50
-        echo -e "${GREEN}[✓] Детектировано ${TOTAL_RAM_MB}MB RAM (1GB). Выбираем ZRAM = 50% (оптимально под XHTTP).${NC}"
+        echo -e "${GREEN}[✓] Детектировано ${TOTAL_RAM_MB}MB RAM (1GB). Выбираем ZRAM = 50%.${NC}"
     fi
 
-    if [[ -f /etc/default/zramswap ]]; then
-        sed -i -E 's/^#?ALGO=.*/ALGO=lz4/g' /etc/default/zramswap
-        sed -i -E "s/^#?PERCENT=.*/PERCENT=${ZRAM_PERCENT}/g" /etc/default/zramswap
-        sed -i -E 's/^#?PRIORITY=.*/PRIORITY=100/g' /etc/default/zramswap
-    fi
-    systemctl enable --now zramswap 2>/dev/null || true
+    cat << EOF > /etc/default/zramswap
+ALGO=lz4
+PERCENT=${ZRAM_PERCENT}
+PRIORITY=100
+EOF
+    systemctl restart zramswap 2>/dev/null || systemctl enable --now zramswap 2>/dev/null || true
     echo -e "${GREEN}[✓] ZRAM настроен (lz4, ${ZRAM_PERCENT}% RAM, Priority 100).${NC}"
 
-    # 4. Настройка DNS (Google & Cloudflare)
+    # 4. Настройка DNS (Cloudflare & Google)
     echo -e "${YELLOW}[!] Настройка DNS...${NC}"
-    dns_configured=false
+    local dns_configured=false
 
     if [[ -f /etc/dhcp/dhclient.conf ]]; then
         sed -i -E '/^#?[[:space:]]*prepend domain-name-servers/d' /etc/dhcp/dhclient.conf
-        echo "prepend domain-name-servers 8.8.8.8, 1.1.1.1;" >> /etc/dhcp/dhclient.conf
-        echo -e "${GREEN}[✓] DNS внесен в dhclient.conf.${NC}"
+        echo "prepend domain-name-servers 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4;" >> /etc/dhcp/dhclient.conf
+        echo -e "${GREEN}[✓] DNS внесен в dhclient.conf (Cloudflare + Google).${NC}"
         dns_configured=true
     fi
 
-    if [[ -f /etc/systemd/resolved.conf ]]; then
-        # Удаляем старую строку DNS, если она была
+    if [[ -d /etc/systemd/resolved.conf.d ]]; then
+        cat << 'EOF' > /etc/systemd/resolved.conf.d/99-dns.conf
+[Resolve]
+DNS=1.1.1.1 1.0.0.1
+FallbackDNS=8.8.8.8 8.8.4.4
+EOF
+        systemctl restart systemd-resolved 2>/dev/null || true
+        echo -e "${GREEN}[✓] DNS внесен в systemd-resolved drop-in.${NC}"
+        dns_configured=true
+    elif [[ -f /etc/systemd/resolved.conf ]]; then
         sed -i -E '/^[[:space:]]*DNS=/d' /etc/systemd/resolved.conf
-        # Вставляем DNS сразу после секции [Resolve]
-        sed -i '/^\[Resolve\]/a DNS=8.8.8.8 1.1.1.1' /etc/systemd/resolved.conf
-        systemctl restart systemd-resolved || true
+        if grep -q '^\[Resolve\]' /etc/systemd/resolved.conf; then
+            sed -i '/^\[Resolve\]/a DNS=1.1.1.1 1.0.0.1 8.8.8.8 8.8.4.4' /etc/systemd/resolved.conf
+        else
+            printf "\n[Resolve]\nDNS=1.1.1.1 1.0.0.1 8.8.8.8 8.8.4.4\n" >> /etc/systemd/resolved.conf
+        fi
+        systemctl restart systemd-resolved 2>/dev/null || true
         echo -e "${GREEN}[✓] DNS внесен в systemd-resolved.${NC}"
         dns_configured=true
     fi
 
     if [[ "$dns_configured" == false ]]; then
-        if [[ ! -L /etc/resolv.conf ]]; then
+        if [[ ! -L /etc/resolv.conf && -f /etc/resolv.conf ]]; then
             sed -i -E '/^[[:space:]]*nameserver/d' /etc/resolv.conf
-            echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-            echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+            {
+                echo "nameserver 1.1.1.1"
+                echo "nameserver 1.0.0.1"
+                echo "nameserver 8.8.8.8"
+            } >> /etc/resolv.conf
             echo -e "${GREEN}[✓] DNS внесен напрямую в resolv.conf.${NC}"
         else
-            echo -e "${GREEN}[✓] resolv.conf является ссылкой, прямая запись пропущена.${NC}"
+            echo -e "${GREEN}[✓] resolv.conf управляется внешней системой резолвинга.${NC}"
         fi
     fi
 
-    # 5. Настройка SSH
+    # 5. Настройка SSH и защита от lockout
     echo -e "${YELLOW}[!] Оптимизация SSH лимитов и безопасности...${NC}"
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-    sed -i -E '/^#?[[:space:]]*(TCPKeepAlive|ClientAliveInterval|ClientAliveCountMax|X11Forwarding|AllowTcpForwarding|PermitTunnel|GatewayPorts)/d' /etc/ssh/sshd_config
-    cat << 'EOF' >> /etc/ssh/sshd_config
+    if [[ -f /etc/ssh/sshd_config ]]; then
+        local bak_ssh
+        bak_ssh="/etc/ssh/sshd_config.bak.$(date +%Y%m%d%H%M%S)"
+        cp /etc/ssh/sshd_config "$bak_ssh"
+        if [[ -d /etc/ssh/sshd_config.d ]]; then
+            cat << 'EOF' > /etc/ssh/sshd_config.d/99-vpn-optimization.conf
 TCPKeepAlive yes
 ClientAliveInterval 120
 ClientAliveCountMax 3
 X11Forwarding no
-AllowTcpForwarding no
 PermitTunnel no
 GatewayPorts no
 EOF
-    systemctl restart ssh || true
-    echo -e "${GREEN}[✓] SSH оптимизирован и перезапущен.${NC}"
+        else
+            sed -i -E '/^#?[[:space:]]*(TCPKeepAlive|ClientAliveInterval|ClientAliveCountMax|X11Forwarding|PermitTunnel|GatewayPorts)/d' /etc/ssh/sshd_config
+            cat << 'EOF' >> /etc/ssh/sshd_config
+TCPKeepAlive yes
+ClientAliveInterval 120
+ClientAliveCountMax 3
+X11Forwarding no
+PermitTunnel no
+GatewayPorts no
+EOF
+        fi
+
+        local sshd_bin
+        sshd_bin="$(command -v sshd || echo "/usr/sbin/sshd")"
+        if [[ -x "$sshd_bin" ]] && ! "$sshd_bin" -t 2>/dev/null; then
+            echo -e "${RED}[✗] Тест sshd -t завершился с ошибкой! Откат к бэкапу во избежание lockout.${NC}"
+            rm -f /etc/ssh/sshd_config.d/99-vpn-optimization.conf 2>/dev/null || true
+            cp "$bak_ssh" /etc/ssh/sshd_config
+        else
+            systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+            echo -e "${GREEN}[✓] SSH оптимизирован, протестирован (sshd -t) и перезапущен.${NC}"
+        fi
+    fi
 
     # 6. Загрузка модулей ядра
     echo -e "${YELLOW}[!] Настройка модулей ядра...${NC}"
+    mkdir -p /etc/modules-load.d
     cat << 'EOF' > /etc/modules-load.d/vpn-performance.conf
 tcp_bbr
 nf_conntrack
 EOF
-    modprobe tcp_bbr || true
-    modprobe nf_conntrack || true
+    if [[ "$is_container" == "false" ]]; then
+        modprobe tcp_bbr 2>/dev/null || true
+        modprobe nf_conntrack 2>/dev/null || true
+    fi
     echo -e "${GREEN}[✓] Модули ядра добавлены.${NC}"
 
     # 7. Лимиты процессов и файлов (limits.conf)
     echo -e "${YELLOW}[!] Увеличение системных лимитов (limits.conf)...${NC}"
+    mkdir -p /etc/security/limits.d
     cat << 'EOF' > /etc/security/limits.d/99-vpn-limits.conf
 * soft nproc 1048576
 * hard nproc 1048576
@@ -217,56 +294,64 @@ root soft nofile 1048576
 root hard nofile 1048576
 EOF
 
-    if ! grep -q "pam_limits.so" /etc/pam.d/common-session; then
-        echo "session required pam_limits.so" >> /etc/pam.d/common-session
-    fi
-    if ! grep -q "pam_limits.so" /etc/pam.d/common-session-noninteractive; then
-        echo "session required pam_limits.so" >> /etc/pam.d/common-session-noninteractive
-    fi
-
-    # Настройка лимитов Systemd (system.conf и user.conf)
-    echo -e "${YELLOW}[!] Настройка лимитов Systemd (system.conf и user.conf)...${NC}"
-    for conf in /etc/systemd/system.conf /etc/systemd/user.conf; do
-        if [[ -f "$conf" ]]; then
-            sed -i -E 's/^#?DefaultLimitNOFILE=.*/DefaultLimitNOFILE=1048576/g' "$conf"
-            sed -i -E 's/^#?DefaultLimitNPROC=.*/DefaultLimitNPROC=1048576/g' "$conf"
-            # Если строк не было, добавляем их
-            if ! grep -q "^DefaultLimitNOFILE=1048576" "$conf"; then
-                echo "DefaultLimitNOFILE=1048576" >> "$conf"
-            fi
-            if ! grep -q "^DefaultLimitNPROC=1048576" "$conf"; then
-                echo "DefaultLimitNPROC=1048576" >> "$conf"
+    local pam_file
+    for pam_file in /etc/pam.d/common-session /etc/pam.d/common-session-noninteractive; do
+        if [[ -f "$pam_file" ]]; then
+            if grep -qE '^[[:space:]]*#[[:space:]]*session[[:space:]]+required[[:space:]]+pam_limits\.so' "$pam_file"; then
+                sed -i -E 's/^[[:space:]]*#[[:space:]]*(session[[:space:]]+required[[:space:]]+pam_limits\.so)/\1/' "$pam_file"
+            elif ! grep -qE '^[[:space:]]*session[[:space:]]+required[[:space:]]+pam_limits\.so' "$pam_file"; then
+                echo "session required pam_limits.so" >> "$pam_file"
             fi
         fi
     done
-    systemctl daemon-reexec || true
 
+    # Настройка лимитов Systemd (system.conf и user.conf)
+    echo -e "${YELLOW}[!] Настройка лимитов Systemd (system.conf и user.conf)...${NC}"
+    mkdir -p /etc/systemd/system.conf.d /etc/systemd/user.conf.d
+    cat << 'EOF' > /etc/systemd/system.conf.d/99-vpn-limits.conf
+[Manager]
+DefaultLimitNOFILE=1048576
+DefaultLimitNPROC=1048576
+EOF
+    cat << 'EOF' > /etc/systemd/user.conf.d/99-vpn-limits.conf
+[Manager]
+DefaultLimitNOFILE=1048576
+DefaultLimitNPROC=1048576
+EOF
+    systemctl daemon-reexec 2>/dev/null || true
     echo -e "${GREEN}[✓] Системные лимиты обновлены.${NC}"
 
-    # 8. Настройка Sysctl параметров
+    # 8. Настройка Sysctl параметров с динамическими буферами под RAM
     echo -e "${YELLOW}[!] Применение оптимизаций sysctl...${NC}"
+    local total_pages tcp_mem_min tcp_mem_def tcp_mem_max
+    total_pages="$(getconf _PHYS_PAGES 2>/dev/null || echo "262144")"
+    if [[ ! "$total_pages" =~ ^[0-9]+$ ]]; then
+        total_pages=262144
+    fi
+    tcp_mem_min=$(( total_pages * 3 / 16 ))
+    tcp_mem_def=$(( total_pages * 3 / 8 ))
+    tcp_mem_max=$(( total_pages * 3 / 4 ))
+
     # Удаляем все старые и конфликтующие файлы от прошлых оптимизаторов
     rm -f /etc/sysctl.d/99-*.conf /etc/sysctl.d/98-*.conf 2>/dev/null || true
-    # Очищаем основной /etc/sysctl.conf (делаем бэкап), чтобы старые скрипты не перебивали настройки
-    cp /etc/sysctl.conf /etc/sysctl.conf.bak2 2>/dev/null || true
+    if [[ -f /etc/sysctl.conf ]]; then
+        local bak_sysctl
+        bak_sysctl="/etc/sysctl.conf.bak.$(date +%Y%m%d%H%M%S)"
+        cp /etc/sysctl.conf "$bak_sysctl" 2>/dev/null || true
+    fi
     echo "# Все оптимизации перенесены в /etc/sysctl.d/99-zzz-node-optimization.conf" > /etc/sysctl.conf
 
-    cat << 'EOF' > /etc/sysctl.d/99-zzz-node-optimization.conf
+    cat << EOF > /etc/sysctl.d/99-zzz-node-optimization.conf
 # Forwarding
 net.ipv4.ip_forward = 1
 net.ipv4.conf.all.forwarding = 1
-net.ipv6.conf.all.forwarding = 1
-
-# Отключение IPv6 (по запросу)
-net.ipv6.conf.all.disable_ipv6 = 1
-net.ipv6.conf.default.disable_ipv6 = 1
-net.ipv6.conf.lo.disable_ipv6 = 1
+net.ipv4.conf.default.forwarding = 1
 
 # QDisc & BBR
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 
-# Limits & Maximum Buffers (Максимальный разгон под 5-10G каналы и 1-2GB RAM)
+# Limits & Buffers (До 32MB на сокет под Reality, Vision и Hysteria2)
 fs.file-max = 67108864
 net.core.netdev_max_backlog = 250000
 net.core.optmem_max = 262144
@@ -276,19 +361,19 @@ net.core.rmem_default = 262144
 net.core.wmem_max = 33554432
 net.core.wmem_default = 262144
 
-# TCP buffers (Авто-подстройка от 4KB до 32MB без риска OOM при 1000+ юзерах)
+# TCP buffers (Авто-подстройка от 4KB до 32MB)
 net.ipv4.tcp_rmem = 4096 87380 33554432
 net.ipv4.tcp_wmem = 4096 65536 33554432
-net.ipv4.tcp_mem = 65536 1048576 33554432
 
-# UDP buffers (Для Hysteria2 / QUIC)
-net.ipv4.udp_mem = 65536 1048576 33554432
+# TCP & UDP memory thresholds (в страницах памяти под RAM хоста)
+net.ipv4.tcp_mem = ${tcp_mem_min} ${tcp_mem_def} ${tcp_mem_max}
+net.ipv4.udp_mem = ${tcp_mem_min} ${tcp_mem_def} ${tcp_mem_max}
 
-# TCP Tunings & Keepalive (Безопасные значения против обрывов туннелей)
+# TCP Tunings & Mobile Keepalive (Защита от сбросов сотовых CGNAT РФ и спящих смартфонов)
 net.ipv4.tcp_fin_timeout = 30
-net.ipv4.tcp_keepalive_time = 600
-net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_probes = 4
+net.ipv4.tcp_keepalive_intvl = 10
 net.ipv4.tcp_max_orphans = 819200
 net.ipv4.tcp_max_syn_backlog = 65535
 net.ipv4.tcp_max_tw_buckets = 1440000
@@ -300,7 +385,7 @@ net.ipv4.tcp_synack_retries = 5
 net.ipv4.tcp_syn_retries = 6
 net.ipv4.tcp_retries2 = 15
 
-# Conntrack (Безопасные таймауты, чтобы соединения не рвались при паузах)
+# Conntrack (Увеличенные таймауты против сброса сессий при паузах)
 net.netfilter.nf_conntrack_max = 8388608
 net.netfilter.nf_conntrack_tcp_timeout_established = 86400
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 60
@@ -309,7 +394,7 @@ net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
 net.netfilter.nf_conntrack_udp_timeout = 60
 net.netfilter.nf_conntrack_udp_timeout_stream = 300
 
-# Безопасность ядра (Kernel Hardening - из утилиты Решала)
+# Kernel Hardening & Routing
 net.ipv4.conf.all.accept_source_route = 0
 net.ipv4.conf.default.accept_source_route = 0
 net.ipv4.conf.all.rp_filter = 0
@@ -323,9 +408,11 @@ net.ipv4.icmp_echo_ignore_broadcasts = 1
 net.ipv4.icmp_ignore_bogus_error_responses = 1
 kernel.randomize_va_space = 2
 kernel.dmesg_restrict = 1
+kernel.kptr_restrict = 2
 kernel.yama.ptrace_scope = 1
 fs.protected_symlinks = 1
 fs.protected_hardlinks = 1
+fs.suid_dumpable = 0
 
 # VM settings
 vm.min_free_kbytes = 65536
@@ -340,16 +427,31 @@ vm.dirty_writeback_centisecs = 500
 net.ipv4.ip_local_port_range = 1024 65535
 net.ipv4.tcp_slow_start_after_idle = 0
 
-# Настройки кэша ARP-соседей (Neighbour Table)
+# Настройки кэша ARP-соседей
 net.ipv4.neigh.default.gc_thresh1 = 1024
 net.ipv4.neigh.default.gc_thresh2 = 4096
 net.ipv4.neigh.default.gc_thresh3 = 32768
 EOF
 
-    sysctl --system || true
+    sysctl --system 2>/dev/null || sysctl -p /etc/sysctl.d/99-zzz-node-optimization.conf 2>/dev/null || true
     echo -e "${GREEN}[✓] Параметры Sysctl успешно применены.${NC}"
 
-    # 8.1. TCP MSS Clamping (Защита от зависаний пакетов при нестандартном MTU оператора)
+    # 8.1. Receive Packet Steering (RPS) для многоядерных процессоров
+    local cpus
+    cpus="$(nproc 2>/dev/null || echo 1)"
+    if (( cpus > 1 )); then
+        echo -e "${YELLOW}[!] Настройка Receive Packet Steering (RPS) для $cpus ядер...${NC}"
+        local rps_mask rps_file
+        rps_mask="$(printf "%x" $(( (1 << cpus) - 1 )))"
+        for rps_file in /sys/class/net/*/queues/rx-*/rps_cpus; do
+            if [[ -f "$rps_file" ]]; then
+                echo "$rps_mask" > "$rps_file" 2>/dev/null || true
+            fi
+        done
+        echo -e "${GREEN}[✓] RPS настроен для параллельной обработки сетевых пакетов.${NC}"
+    fi
+
+    # 8.2. TCP MSS Clamping (Защита от зависаний пакетов при нестандартном MTU оператора)
     echo -e "${YELLOW}[!] Настройка TCP MSS Clamping (PMTU Clamp)...${NC}"
     iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
     iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
@@ -359,7 +461,7 @@ EOF
     # Внедряем персистентность PMTU Clamp в /etc/ufw/before.rules (сохраняется при перезагрузке)
     UFW_BEFORE="/etc/ufw/before.rules"
     if [[ -f "$UFW_BEFORE" ]]; then
-        sed -i '/\*mangle/,/COMMIT/d' "$UFW_BEFORE" 2>/dev/null || true
+        sed -i -E '/^\*mangle/,/^COMMIT/d' "$UFW_BEFORE" 2>/dev/null || true
         cat << 'EOF' >> "$UFW_BEFORE"
 
 *mangle
