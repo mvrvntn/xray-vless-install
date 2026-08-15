@@ -56,3 +56,14 @@ setup() {
     run grep "8443" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Запуск с неизвестным флагом возвращает ненулевой статус и ошибку" {
+    run bash "$SCRIPT_PATH" --unknown-flag-test
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Неизвестная опция" ]]
+}
+
+@test "Запуск --headless без параметров возвращает код 1" {
+    run bash "$SCRIPT_PATH" --headless
+    [ "$status" -eq 1 ]
+}

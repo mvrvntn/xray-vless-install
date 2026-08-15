@@ -3403,12 +3403,23 @@ EOF
 
 # === Проверка предыдущей установки (до запроса данных) ===
 main() {
-    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-        usage
-    elif [[ "${1:-}" == "-v" || "${1:-}" == "--version" ]]; then
-        echo "$SCRIPT_NAME version 1.0.0"
-        exit 0
-    fi
+    case "${1:-}" in
+        -h|--help)
+            usage
+            ;;
+        -v|--version)
+            echo "$SCRIPT_NAME version 1.0.0"
+            exit 0
+            ;;
+        --update-core|--update-geoblocks|--headless|"")
+            # Корректные режимы работы, продолжаем выполнение
+            ;;
+        -*)
+            echo "❌ Неизвестная опция: $1" >&2
+            echo "Используйте $SCRIPT_NAME --help для справки." >&2
+            exit 1
+            ;;
+    esac
 
     if [[ -f "$MARKER_FILE" ]]; then
         show_connections() {
