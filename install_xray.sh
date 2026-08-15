@@ -3443,6 +3443,7 @@ main() {
             # 1. Проверка конфликтов портов 443 и 80
             echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
             local port_443_process; port_443_process=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+            local port_8443_process; port_8443_process=$(ss -tlnp 'sport = :8443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
             local port_443_udp_process; port_443_udp_process=$(ss -ulnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
             local port_80_process; port_80_process=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
             
@@ -3453,6 +3454,12 @@ main() {
                 fi
             else
                 echo -e " 🔴 ${RED}Порт 443 (TCP) Свободен или Xray не запущен!${NC}"
+            fi
+
+            if [[ -n "$port_8443_process" ]]; then
+                echo -e " 🟢 Порт 8443 (TCP - gRPC) успешно занят процессом: ${GREEN}$port_8443_process${NC}"
+            else
+                echo -e " 🔴 ${RED}Порт 8443 (TCP - gRPC) Свободен или Xray не запущен!${NC}"
             fi
 
             if [[ -n "$port_443_udp_process" ]]; then
@@ -4147,7 +4154,7 @@ EOF
             ui_item "4" "🌀 Управление обходами блокировок (WARP & Opera Proxy)"
             ui_divider
             ui_item "5" "📰 Просмотреть системные логи служб"
-            ui_item "6" "📊 Мониторинг active-соединений (port 443)"
+            ui_item "6" "📊 Мониторинг active-соединений (порты 443 / 8443)"
             ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
             ui_divider
             ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
