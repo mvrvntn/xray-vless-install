@@ -74,6 +74,22 @@ install_xry_command() {
     fi
 }
 
+# === Ожидание освобождения блокировок APT/DPKG ===
+wait_for_apt() {
+    if command -v fuser &>/dev/null; then
+        local waited=0
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock >/dev/null 2>&1; do
+            if (( waited >= 120 )); then
+                echo -e "${YELLOW}[!] Превышен таймаут ожидания блокировок apt/dpkg. Продолжаем...${NC}"
+                break
+            fi
+            echo -e "${YELLOW}[!] Ожидание освобождения замка apt/dpkg... [${waited}s]${NC}"
+            sleep 3
+            waited=$((waited + 3))
+        done
+    fi
+}
+
 # === Оптимизация VPS (Xanmod + Limits + Sysctl) ===
 optimize_vps() {
     echo -e "\n${BOLD}${CYAN}🔧 Запуск оптимизации VPS...${NC}"
@@ -97,18 +113,7 @@ optimize_vps() {
 
     # 2. Установка пакетов с ожиданием снятия блокировок apt/dpkg
     echo -e "${YELLOW}[!] Обновление кэша и установка базовых утилит...${NC}"
-    if command -v fuser &>/dev/null; then
-        local waited=0
-        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock >/dev/null 2>&1; do
-            if (( waited >= 120 )); then
-                echo -e "${YELLOW}[!] Превышен таймаут ожидания блокировок apt/dpkg. Продолжаем...${NC}"
-                break
-            fi
-            echo -e "${YELLOW}[!] Ожидание освобождения замка apt/dpkg... [${waited}s]${NC}"
-            sleep 3
-            waited=$((waited + 3))
-        done
-    fi
+    wait_for_apt
     DEBIAN_FRONTEND=noninteractive apt-get update -yq
     DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
         curl wget jq unzip htop net-tools ufw iptables zram-tools psmisc
@@ -2284,9 +2289,11 @@ def vless_url_to_sing_box_outbound(url: str):
                 }
             }
         elif security == "tls":
+            alpn_list = ["h2"] if transport_type == "grpc" else ["http/1.1"]
             outbound["tls"] = {
                 "enabled": True,
                 "server_name": sni or host,
+                "alpn": alpn_list,
                 "utls": {
                     "enabled": True,
                     "fingerprint": fp
@@ -2343,6 +2350,7 @@ def hysteria2_url_to_sing_box_outbound(url: str):
             return val[0] if val else None
 
         sni = get_param("sni")
+        hop = get_param("hop") or get_param("mport") or get_param("ports")
         tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else host
         
         outbound = {
@@ -2357,6 +2365,9 @@ def hysteria2_url_to_sing_box_outbound(url: str):
                 "insecure": False
             }
         }
+        if hop:
+            outbound["server_ports"] = hop.replace("-", ":")
+            outbound["hop_interval"] = "30s"
         return outbound
     except Exception:
         return None
@@ -2521,6 +2532,10 @@ def vless_url_to_mihomo_proxy(url: str):
             proxy["client-fingerprint"] = fp
             if sni:
                 proxy["servername"] = sni
+            if transport_type == "grpc":
+                proxy["alpn"] = ["h2"]
+            else:
+                proxy["alpn"] = ["http/1.1"]
                 
         if transport_type == "ws":
             proxy["ws-opts"] = {
@@ -2574,6 +2589,7 @@ def hysteria2_url_to_mihomo_proxy(url: str):
             return val[0] if val else None
 
         sni = get_param("sni")
+        hop = get_param("hop") or get_param("mport") or get_param("ports")
         tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else host
         
         proxy = {
@@ -2587,6 +2603,9 @@ def hysteria2_url_to_mihomo_proxy(url: str):
             "skip-cert-verify": False,
             "alpn": ["h3"]
         }
+        if hop:
+            proxy["ports"] = hop
+            proxy["hop-interval"] = "30s"
         return proxy
     except Exception:
         return None
@@ -2648,7 +2667,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         encoded_remark_reality = urllib.parse.quote(remark_reality)
         
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http%2F1.1#{encoded_remark_vision}"
-        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000#{encoded_remark_hy2}"
+        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000&mport=20000-50000#{encoded_remark_hy2}"
         vless_grpc = f"vless://{uuid_param}@{domain}:8443?mode=gun&security=tls&type=grpc&serviceName=vless-grpc&fp={fp}&alpn=h2&sni={domain}#{encoded_remark_grpc}"
         
         urls = [vless_vision, hy2_link, vless_grpc]
@@ -3481,7 +3500,7 @@ encoded_remark_reality=$(urlencode "$remark_reality")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http%2F1.1#${encoded_remark_vision}"
-HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000#${encoded_remark_hy2}"
+HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000&mport=20000-50000#${encoded_remark_hy2}"
 VLESS_GRPC="vless://${UUID}@${DOMAIN}:8443?mode=gun&security=tls&type=grpc&serviceName=vless-grpc&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
