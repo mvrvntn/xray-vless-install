@@ -1643,7 +1643,7 @@ EOF
         },
         "grpcSettings": {
           "serviceName": "vless-grpc",
-          "multiMode": false
+          "multiMode": true
         },
         "sockopt": {
           "tcpFastOpen": true,
@@ -1724,7 +1724,7 @@ EOF
         },
         "grpcSettings": {
           "serviceName": "vless-grpc",
-          "multiMode": false
+          "multiMode": true
         },
         "sockopt": {
           "tcpFastOpen": true,
@@ -2381,7 +2381,7 @@ def hysteria2_url_to_sing_box_outbound(url: str):
             }
         }
         if hop:
-            outbound["server_ports"] = hop.replace("-", ":")
+            outbound["server_ports"] = [hop.replace("-", ":")]
             outbound["hop_interval"] = "30s"
         return outbound
     except Exception:
@@ -2683,7 +2683,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http%2F1.1#{encoded_remark_vision}"
         hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000&mport=20000-50000#{encoded_remark_hy2}"
-        vless_grpc = f"vless://{uuid_param}@{domain}:8443?mode=gun&security=tls&type=grpc&serviceName=vless-grpc&fp={fp}&alpn=h2&sni={domain}#{encoded_remark_grpc}"
+        vless_grpc = f"vless://{uuid_param}@{domain}:8443?mode=multi&security=tls&type=grpc&serviceName=vless-grpc&fp={fp}&alpn=h2&sni={domain}#{encoded_remark_grpc}"
         
         urls = [vless_vision, hy2_link, vless_grpc]
         if ivars["reality_enabled"] == "true":
@@ -3516,7 +3516,7 @@ encoded_remark_reality=$(urlencode "$remark_reality")
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http%2F1.1#${encoded_remark_vision}"
 HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000&mport=20000-50000#${encoded_remark_hy2}"
-VLESS_GRPC="vless://${UUID}@${DOMAIN}:8443?mode=gun&security=tls&type=grpc&serviceName=vless-grpc&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
+VLESS_GRPC="vless://${UUID}@${DOMAIN}:8443?mode=multi&security=tls&type=grpc&serviceName=vless-grpc&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
 if [[ "$REALITY_ENABLED" = "true" ]]; then
