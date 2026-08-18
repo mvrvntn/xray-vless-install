@@ -475,61 +475,70 @@ EOF
     fi
     echo -e "${GREEN}[✓] TCP MSS Clamping применен и сохранен в автозагрузку UFW.${NC}"
 
-    # Установка ядра Xanmod
-    echo -e "${YELLOW}Определение архитектуры процессора и установка ядра Xanmod...${NC}"
-    wait_for_apt
-    DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
-        ca-certificates curl gnupg lsb-release gawk >/dev/null 2>&1
-    log_info "Running APT package operation..."
+    # Опциональная установка ядра Xanmod
+    echo -e "\n${BOLD}${YELLOW}[?] УСТАНОВКА ЯДРА XANMOD (ОПЦИОНАЛЬНО)${NC}"
+    echo -e " Все системные настройки (Sysctl, BBR, RPS, ZRAM, лимиты, PMTU) уже применены на текущем ядре."
+    read -r -p " Желаете также установить кастомное ядро Xanmod (потребуется перезагрузка ОС)? [y/N]: " xanmod_choice
     
-    local cpu_level
-    cpu_level=$(awk -f - <<'EOF'
-    BEGIN {
-        while (!/flags/) if (getline < "/proc/cpuinfo" != 1) exit 1
-        if (/lm/&&/cmov/&&/cx8/&&/fpu/&&/fxsr/&&/mmx/&&/syscall/&&/sse2/) level = 1
-        if (level == 1 && /cx16/&&/lahf/&&/popcnt/&&/sse4_1/&&/sse4_2/&&/ssse3/) level = 2
-        if (level == 2 && /avx/&&/avx2/&&/bmi1/&&/bmi2/&&/f16c/&&/fma/&&/abm/&&/movbe/&&/xsave/) level = 3
-        if (level == 3 && /avx512f/&&/avx512bw/&&/avx512cd/&&/avx512dq/&&/avx512vl/) level = 4
-        if (level > 0) { print level; exit level + 1 }
-        exit 1
-    }
-EOF
-    )
-
-    if [[ -z "$cpu_level" ]] || [[ "$cpu_level" -lt 1 ]]; then
-        echo -e "${RED}❌ Не удалось определить уровень CPU или архитектура не поддерживается.${NC}"
-    else
-        echo -e "${GREEN}👉 Определен уровень CPU: v${cpu_level}${NC}"
+    if [[ "$xanmod_choice" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Определение архитектуры процессора и установка ядра Xanmod...${NC}"
+        wait_for_apt
+        DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+            ca-certificates curl gnupg lsb-release gawk >/dev/null 2>&1
+        log_info "Running APT package operation..."
         
-        # Переопределяем v4 на v3
-        if [[ "$cpu_level" -eq 4 ]]; then
-            echo -e "${YELLOW}👉 Уровень CPU v4 понижен до v3 по требованию стабильности.${NC}"
-            cpu_level=3
-        fi
+        local cpu_level
+        cpu_level=$(awk -f - <<'EOF'
+        BEGIN {
+            while (!/flags/) if (getline < "/proc/cpuinfo" != 1) exit 1
+            if (/lm/&&/cmov/&&/cx8/&&/fpu/&&/fxsr/&&/mmx/&&/syscall/&&/sse2/) level = 1
+            if (level == 1 && /cx16/&&/lahf/&&/popcnt/&&/sse4_1/&&/sse4_2/&&/ssse3/) level = 2
+            if (level == 2 && /avx/&&/avx2/&&/bmi1/&&/bmi2/&&/f16c/&&/fma/&&/abm/&&/movbe/&&/xsave/) level = 3
+            if (level == 3 && /avx512f/&&/avx512bw/&&/avx512cd/&&/avx512dq/&&/avx512vl/) level = 4
+            if (level > 0) { print level; exit level + 1 }
+            exit 1
+        }
+EOF
+        )
 
-        if curl -fsSL --connect-timeout 10 https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
-            echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
-            wait_for_apt
-            DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
-            log_info "Running APT package operation for Xanmod..."
-            
-            echo -e "${YELLOW}Установка linux-xanmod-x64v${cpu_level}...${NC}"
-            if DEBIAN_FRONTEND=noninteractive apt-get install -yq "linux-xanmod-x64v${cpu_level}"; then
-                echo -e "${GREEN}✅ Ядро Xanmod успешно установлено!${NC}"
-            else
-                echo -e "${RED}❌ Ошибка при установке ядра Xanmod. Продолжаем работу...${NC}"
-            fi
+        if [[ -z "$cpu_level" ]] || [[ "$cpu_level" -lt 1 ]]; then
+            echo -e "${RED}❌ Не удалось определить уровень CPU или архитектура не поддерживается.${NC}"
         else
-            echo -e "${RED}❌ Не удалось скачать ключ Xanmod. Пропускаем установку ядра.${NC}"
-        fi
-    fi
+            echo -e "${GREEN}👉 Определен уровень CPU: v${cpu_level}${NC}"
+            
+            # Переопределяем v4 на v3
+            if [[ "$cpu_level" -eq 4 ]]; then
+                echo -e "${YELLOW}👉 Уровень CPU v4 понижен до v3 по требованию стабильности.${NC}"
+                cpu_level=3
+            fi
 
-    echo -e "\n${BOLD}${GREEN}✅ Оптимизация завершена! Сервер будет перезагружен.${NC}"
-    echo -e "${BOLD}${YELLOW}ВАЖНО: После перезагрузки запустите скрипт установки Xray СНОВА, чтобы продолжить!${NC}"
-    read -r -p "Нажмите Enter для перезагрузки..."
-    reboot
-    exit 0
+            if curl -fsSL --connect-timeout 10 https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
+                echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
+                wait_for_apt
+                DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
+                log_info "Running APT package operation for Xanmod..."
+                
+                echo -e "${YELLOW}Установка linux-xanmod-x64v${cpu_level}...${NC}"
+                if DEBIAN_FRONTEND=noninteractive apt-get install -yq "linux-xanmod-x64v${cpu_level}"; then
+                    echo -e "${GREEN}✅ Ядро Xanmod успешно установлено!${NC}"
+                else
+                    echo -e "${RED}❌ Ошибка при установке ядра Xanmod. Продолжаем работу...${NC}"
+                fi
+            else
+                echo -e "${RED}❌ Не удалось скачать ключ Xanmod. Пропускаем установку ядра.${NC}"
+            fi
+        fi
+
+        echo -e "\n${BOLD}${GREEN}✅ Оптимизация завершена! Сервер будет перезагружен для загрузки нового ядра.${NC}"
+        echo -e "${BOLD}${YELLOW}ВАЖНО: После перезагрузки запустите скрипт установки Xray СНОВА, чтобы продолжить!${NC}"
+        read -r -p "Нажмите Enter для перезагрузки..."
+        reboot
+        exit 0
+    else
+        echo -e "\n${BOLD}${GREEN}✅ Базовая оптимизация VPS успешно применена на лету (без смены ядра и без перезагрузки)!${NC}"
+        sleep 2
+    fi
 }
 
 # === Проверка прав root ===
@@ -4826,8 +4835,7 @@ EOF
         
         if [[ ! -f "$MARKER_FILE" ]]; then
             echo -e "\n ${BOLD}${YELLOW}ОПТИМИЗАЦИЯ VPS${NC}"
-            read -r -p " Выполнить базовую оптимизацию VPS (установка ядра Xanmod v3 и настройка системных лимитов)? 
-     Рекомендуется для чистой ОС Debian 12/13. Сервер будет перезагружен. [y/N]: " opt_choice
+            read -r -p " Выполнить оптимизацию VPS (Sysctl, BBR, RPS, ZRAM, лимиты сети)? [y/N]: " opt_choice
             if [[ "$opt_choice" =~ ^[Yy]$ ]]; then
                 optimize_vps
             fi
