@@ -3544,7 +3544,7 @@ echo -e "\n${BOLD}${CYAN}🔳  ГЕНЕРАЦИЯ QR-КОДА${NC}"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 echo -e " Выберите, для чего отобразить QR-код:"
 echo -e " ${BOLD}${YELLOW}1.${NC} VLESS TCP Vision (порт 443)"
-echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2 (порт 443)"
+echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2 (порт 20443/hopping)"
 echo -e " ${BOLD}${YELLOW}3.${NC} VLESS gRPC TLS (порт 8443)"
 if [[ "$REALITY_ENABLED" = "true" ]]; then
 echo -e " ${BOLD}${YELLOW}4.${NC} VLESS Reality"
