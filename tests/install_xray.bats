@@ -67,3 +67,9 @@ setup() {
     run bash "$SCRIPT_PATH" --headless
     [ "$status" -eq 1 ]
 }
+
+@test "Справка --help содержит опцию --optimize" {
+    run bash "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--optimize" ]]
+}

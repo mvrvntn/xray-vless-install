@@ -54,6 +54,7 @@ usage() {
 Опции:
   -h, --help                                              Показать эту справку и выйти
   -v, --version                                           Показать версию скрипта
+  --optimize                                              Запустить полную системную оптимизацию VPS (Xanmod, BBR, RPS, Sysctl, ZRAM)
   --headless <домен> <email> <кол-во> [имена...]          Установка в автоматическом (headless) режиме
   --update-core                                           Обновить ядро Xray, Hysteria 2 и подписки
   --update-geoblocks                                      Обновить списки блокировок Роскомнадзора и Google AI
@@ -476,7 +477,10 @@ EOF
 
     # Установка ядра Xanmod
     echo -e "${YELLOW}Определение архитектуры процессора и установка ядра Xanmod...${NC}"
-    apt update && apt install -y ca-certificates curl gnupg lsb-release gawk
+    wait_for_apt
+    DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+        ca-certificates curl gnupg lsb-release gawk >/dev/null 2>&1
     log_info "Running APT package operation..."
     
     local cpu_level
@@ -506,11 +510,12 @@ EOF
 
         if curl -fsSL --connect-timeout 10 https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
             echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
-            apt update
+            wait_for_apt
+            DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
             log_info "Running APT package operation for Xanmod..."
             
             echo -e "${YELLOW}Установка linux-xanmod-x64v${cpu_level}...${NC}"
-            if apt install -y "linux-xanmod-x64v${cpu_level}"; then
+            if DEBIAN_FRONTEND=noninteractive apt-get install -yq "linux-xanmod-x64v${cpu_level}"; then
                 echo -e "${GREEN}✅ Ядро Xanmod успешно установлено!${NC}"
             else
                 echo -e "${RED}❌ Ошибка при установке ядра Xanmod. Продолжаем работу...${NC}"
@@ -642,10 +647,12 @@ install_warp() {
     echo "🌀 Установка Cloudflare WARP..."
     if ! command -v wg-quick &>/dev/null || ! command -v wireguard &>/dev/null; then
         echo "📦 Установка WireGuard..."
-        apt update >/dev/null
-    log_info "Running APT package operation..."
-        apt install -y wireguard wireguard-tools >/dev/null
-    log_info "Running APT package operation..."
+        wait_for_apt
+        DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
+        log_info "Running APT package operation..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+            wireguard wireguard-tools >/dev/null 2>&1
+        log_info "Running APT package operation..."
     fi
 
     if [[ ! -f "/etc/wireguard/warp.conf" ]]; then
@@ -656,8 +663,10 @@ install_warp() {
         # Устанавливаем git если его нет
         if ! command -v git &>/dev/null; then
             echo "📦 Установка git..."
-            apt update >/dev/null
-            apt install -y git >/dev/null
+            wait_for_apt
+            DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+                git >/dev/null 2>&1
         fi
 
         # Попытка 1: Клонирование репозитория через git (самый надежный способ со всеми зависимыми файлами)
@@ -945,25 +954,25 @@ check_port_conflicts() {
 get_flag_emoji() {
     local country_code
     # Сначала пробуем наиболее точный ipinfo.io
-    country_code=$(curl -s --connect-timeout 3 https://ipinfo.io/country | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+    country_code=$(curl -s --connect-timeout 3 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
     if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
         # В качестве резерва используем ipapi.co
-        country_code=$(curl -s --connect-timeout 3 https://ipapi.co/country/ | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        country_code=$(curl -s --connect-timeout 3 https://ipapi.co/country/ 2>/dev/null | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
     fi
     if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
         country_code="UN"
     fi
 
-    local c1=${country_code:0:1}
-    local c2=${country_code:1:1}
-    local val1=$(( $(printf "%d" "'$c1") - 65 + 127462 ))
-    local val2=$(( $(printf "%d" "'$c2") - 65 + 127462 ))
-    
-    local h1 h2 flag
-    printf -v h1 "%08x" "$val1"
-    printf -v h2 "%08x" "$val2"
-    printf -v flag "\\U%s\\U%s" "$h1" "$h2"
-    echo "$flag"
+    if command -v python3 &>/dev/null; then
+        python3 -c "import sys; cc = sys.argv[1]; print(''.join(chr(127397 + ord(c)) for c in cc))" "$country_code" 2>/dev/null || echo "🌐"
+    else
+        local c1=${country_code:0:1}
+        local c2=${country_code:1:1}
+        local h1 h2
+        printf -v h1 "%08x" "$(( $(printf "%d" "'$c1") - 65 + 127462 ))"
+        printf -v h2 "%08x" "$(( $(printf "%d" "'$c2") - 65 + 127462 ))"
+        printf "%b\n" "\\U${h1}\\U${h2}"
+    fi
 }
 
 # === Создание директорий ===
@@ -980,31 +989,33 @@ create_directories() {
 # === Установка зависимостей ===
 install_dependencies() {
     echo "📦 Установка зависимостей..."
-    apt update > /dev/null
-    apt install -y curl git qrencode ufw cron certbot python3 jq lsof > /dev/null
+    wait_for_apt
+    DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+        curl git qrencode ufw cron certbot python3 jq lsof >/dev/null 2>&1
 
     echo "⚡ Включение BBR и TCP Fast Open..."
     # Включаем BBR и FQ
-    if ! sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
+    if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
     fi
     # Оптимизация буферов UDP для Hysteria 2 (QUIC)
-    if ! grep -q "net.core.rmem_max" /etc/sysctl.conf; then
+    if ! grep -q "net.core.rmem_max" /etc/sysctl.conf 2>/dev/null; then
         echo "net.core.rmem_max=8388608" >> /etc/sysctl.conf
         echo "net.core.wmem_max=8388608" >> /etc/sysctl.conf
     fi
     # Включаем TCP Fast Open (значение 3 включает и на отправку, и на прием данных)
-    if ! sysctl net.ipv4.tcp_fastopen | grep -q "3"; then
+    if ! sysctl net.ipv4.tcp_fastopen 2>/dev/null | grep -q "3"; then
         echo "net.ipv4.tcp_fastopen=3" >> /etc/sysctl.conf
     fi
-    if ! sysctl net.ipv4.tcp_slow_start_after_idle | grep -q "0"; then
+    if ! sysctl net.ipv4.tcp_slow_start_after_idle 2>/dev/null | grep -q "0"; then
         echo "net.ipv4.tcp_slow_start_after_idle=0" >> /etc/sysctl.conf
     fi
-    if ! sysctl net.ipv4.tcp_notsent_lowat | grep -q "16384"; then
+    if ! sysctl net.ipv4.tcp_notsent_lowat 2>/dev/null | grep -q "16384"; then
         echo "net.ipv4.tcp_notsent_lowat=16384" >> /etc/sysctl.conf
     fi
-    sysctl -p > /dev/null 2>&1
+    sysctl -p > /dev/null 2>&1 || true
 }
 
 # === Установка Xray ===
@@ -3513,6 +3524,9 @@ main() {
             echo "$SCRIPT_NAME version 1.0.0"
             exit 0
             ;;
+        --optimize)
+            optimize_vps
+            ;;
         --update-core|--update-geoblocks|--headless|"")
             # Корректные режимы работы, продолжаем выполнение
             ;;
@@ -4272,15 +4286,16 @@ EOF
             ui_item "6" "📊 Мониторинг active-соединений (порты 443 / 8443)"
             ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
             ui_divider
-            ui_item "8" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
-            ui_item "9" "🌐 Изменить отпечаток TLS (Fingerprint)"
-            ui_item "10" "🌐 Смена основного домена (SSL)"
-            ui_item "11" "🔑 Управление Provider ID (happ-proxy.com)"
+            ui_item "8" "🔧 Оптимизация VPS (Xanmod ядро, BBR, RPS, Sysctl, ZRAM)"
+            ui_item "9" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
+            ui_item "10" "🌐 Изменить отпечаток TLS (Fingerprint)"
+            ui_item "11" "🌐 Смена основного домена (SSL)"
+            ui_item "12" "🔑 Управление Provider ID (happ-proxy.com)"
             ui_divider
-            ui_item_color "12" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
-            ui_item "13" "🚪 Выйти из терминала" "${CYAN}"
+            ui_item_color "13" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+            ui_item "14" "🚪 Выйти из терминала" "${CYAN}"
             ui_footer
-            read -r -p " Выберите действие (1-13): " choice
+            read -r -p " Выберите действие (1-14): " choice
             case $choice in
                 1) "$GENERATE_SCRIPT" ; main_menu ;;
                 2) add_client ; main_menu ;;
@@ -4289,7 +4304,8 @@ EOF
                 5) show_logs ; main_menu ;;
                 6) show_connections ; main_menu ;;
                 7) run_diagnostics ; main_menu ;;
-                8) 
+                8) optimize_vps ;;
+                9) 
                     echo -e "\n${BOLD}${GREEN}🔄 Загрузка последней версии скрипта...${NC}"
                     cd /root || exit
                     curl -fsSL --connect-timeout 10 -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
@@ -4297,10 +4313,10 @@ EOF
                     /root/install_xray.sh --update-core
                     exit 0
                     ;;
-                9) change_fingerprint ; main_menu ;;
-                10) domain_management_menu ;;
-                11) manage_provider_id ;;
-                12) 
+                10) change_fingerprint ; main_menu ;;
+                11) domain_management_menu ;;
+                12) manage_provider_id ;;
+                13) 
                     echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
                     read -r -p "Вы уверены? (y/n): " uconf
                     if [[ "$uconf" =~ ^[Yy]$ ]]; then
@@ -4309,7 +4325,7 @@ EOF
                         main_menu
                     fi
                     ;;
-                13) exit 0 ;;
+                14) exit 0 ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
             esac
         }
