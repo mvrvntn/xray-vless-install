@@ -130,6 +130,26 @@ EOF
     systemctl restart systemd-journald 2>/dev/null || true
     echo -e "${GREEN}[✓] Лишние службы отключены, логи journald ограничены 100MB.${NC}"
 
+    # 2.3. Ограничение логов Docker и live-restore (если Docker установлен на сервере)
+    if command -v docker &>/dev/null || [[ -d /etc/docker ]]; then
+        mkdir -p /etc/docker
+        local daemon_json="/etc/docker/daemon.json"
+        if [[ ! -f "$daemon_json" ]]; then
+            cat << 'EOF' > "$daemon_json"
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "50m",
+    "max-file": "3"
+  },
+  "live-restore": true
+}
+EOF
+            systemctl reload docker 2>/dev/null || true
+            echo -e "${GREEN}[✓] Docker daemon настроен (ротация логов 50MB, live-restore).${NC}"
+        fi
+    fi
+
     # 3. Настройка SWAP (Гибридная память: ZRAM + Disk Swap)
     echo -e "${YELLOW}[!] Настройка Swap файла...${NC}"
     if [[ "$is_container" == "false" ]]; then
