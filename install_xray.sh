@@ -2682,7 +2682,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         encoded_remark_reality = urllib.parse.quote(remark_reality)
         
         vless_vision = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=tls&type=tcp&fp={fp}&alpn=http%2F1.1#{encoded_remark_vision}"
-        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:443?sni={domain}&hop=20000-50000&mport=20000-50000#{encoded_remark_hy2}"
+        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:20443?sni={domain}&hop=20000-50000&mport=20000-50000#{encoded_remark_hy2}"
         vless_grpc = f"vless://{uuid_param}@{domain}:8443?mode=multi&security=tls&type=grpc&serviceName=vless-grpc&fp={fp}&alpn=h2&sni={domain}#{encoded_remark_grpc}"
         
         urls = [vless_vision, hy2_link, vless_grpc]
@@ -2695,7 +2695,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
-        announce_text = f"Профиль: {client_name} • Локации: VLESS TCP (443), Hysteria2 (443), VLESS gRPC (8443) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
+        announce_text = f"Профиль: {client_name} • Локации: VLESS TCP (443), Hysteria2 (20443), VLESS gRPC (8443) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
         support_url = "https://t.me/mavrtunbot"
@@ -2724,7 +2724,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             "no-limit-enabled": "1",
             "fragmentation-enable": "0",
             "per-app-proxy-enable": "0",
-            "server-address-resolve-enable": "0"
+            "server-address-resolve-enable": "1"
         }
         if providerid:
             resp_headers["providerid"] = providerid
@@ -2777,12 +2777,12 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "servers": [
                         {
                             "tag": "cf-dns",
-                            "address": "tls://1.1.1.1"
+                            "address": "https://1.1.1.1/dns-query"
                         },
                         {
                             "tag": "local",
                             "detour": "direct",
-                            "address": "tcp://1.1.1.1",
+                            "address": "https://77.88.8.8/dns-query",
                             "strategy": "ipv4_only",
                             "address_strategy": "prefer_ipv4"
                         },
@@ -3515,7 +3515,7 @@ encoded_remark_reality=$(urlencode "$remark_reality")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=tls&type=tcp&fp=${FINGERPRINT}&alpn=http%2F1.1#${encoded_remark_vision}"
-HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:443?sni=${DOMAIN}&hop=20000-50000&mport=20000-50000#${encoded_remark_hy2}"
+HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:20443?sni=${DOMAIN}&hop=20000-50000&mport=20000-50000#${encoded_remark_hy2}"
 VLESS_GRPC="vless://${UUID}@${DOMAIN}:8443?mode=multi&security=tls&type=grpc&serviceName=vless-grpc&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 
@@ -3527,7 +3527,7 @@ echo -e "\n${BOLD}${PURPLE}🔗  ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ${NC}
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и ПК, порт 443):${NC}"
 echo -e "    ${GREEN}$VLESS_VISION${NC}"
-echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход, порт 443):${NC}"
+echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход, порт 20443/hopping):${NC}"
 echo -e "    ${GREEN}$HY2_LINK${NC}"
 echo -e " ${BOLD}${YELLOW}3. VLESS gRPC TLS (Резервный протокол, порт 8443):${NC}"
 echo -e "    ${GREEN}$VLESS_GRPC${NC}"
