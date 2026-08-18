@@ -1208,6 +1208,7 @@ generate_server_config() {
     
     # Инициализация массивов для клиентов
     local vless_clients=()
+    local vless_grpc_clients=()
     
     # Проверяем, есть ли уже клиенты
     if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
@@ -1219,6 +1220,10 @@ generate_server_config() {
                 vless_clients+=("{
                   \"id\": \"$uuid\",
                   \"flow\": \"xtls-rprx-vision\",
+                  \"email\": \"client-$idx\"
+                }")
+                vless_grpc_clients+=("{
+                  \"id\": \"$uuid\",
                   \"email\": \"client-$idx\"
                 }")
                 idx=$((idx + 1))
@@ -1235,10 +1240,15 @@ generate_server_config() {
               \"flow\": \"xtls-rprx-vision\",
               \"email\": \"client-$i\"
             }")
+            vless_grpc_clients+=("{
+              \"id\": \"$uuid\",
+              \"email\": \"client-$i\"
+            }")
         done
     fi
     
     local vless_clients_str; vless_clients_str=$(IFS=,; echo "${vless_clients[*]}")
+    local vless_grpc_clients_str; vless_grpc_clients_str=$(IFS=,; echo "${vless_grpc_clients[*]}")
     
     # Проверяем статус WARP и Opera Proxy
     local warp_enabled; warp_enabled=$(get_installed_var "WARP_ENABLED")
@@ -1606,7 +1616,7 @@ EOF
       "port": 8443,
       "protocol": "vless",
       "settings": {
-        "clients": ['"$vless_clients_str"'],
+        "clients": ['"$vless_grpc_clients_str"'],
         "decryption": "none"
       },
       "sniffing": {
@@ -1687,7 +1697,7 @@ EOF
       "port": 8443,
       "protocol": "vless",
       "settings": {
-        "clients": ['"$vless_clients_str"'],
+        "clients": ['"$vless_grpc_clients_str"'],
         "decryption": "none"
       },
       "sniffing": {
