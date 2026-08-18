@@ -1088,17 +1088,22 @@ setup_firewall() {
 
     if [[ "$antizapret_detected" = "true" ]]; then
         echo "⚠️ Обнаружен AntiZapret-VPN! Для предотвращения сбоев маршрутизации UFW не будет включен."
-        echo "🔌 Отключаем UFW и разрешаем порты в iptables напрямую..."
+        echo "🔌 Отключаем UFW и разрешаем порты Xray/Hysteria в iptables напрямую..."
         ufw disable >/dev/null 2>&1 || true
         
-        # Гарантируем доступ к нужным портам в iptables напрямую
+        # Сбрасываем блокировки AntiZapret
+        if command -v ipset &>/dev/null; then
+            ipset flush antizapret-block >/dev/null 2>&1 || true
+        fi
+
+        # Гарантируем доступ к нужным портам в iptables на самых первых позициях цепочки INPUT
         local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
         if [[ -x "$ipt_path" ]]; then
-            $ipt_path -C INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 443 -j ACCEPT
-            $ipt_path -C INPUT -p tcp --dport 8443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 8443 -j ACCEPT
-            $ipt_path -C INPUT -p udp --dport 443 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 443 -j ACCEPT
-            $ipt_path -C INPUT -p udp --dport 20000:50000 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p udp --dport 20000:50000 -j ACCEPT
-            $ipt_path -C INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || $ipt_path -I INPUT 1 -p tcp --dport 80 -j ACCEPT
+            $ipt_path -D INPUT -p tcp -m multiport --dports 80,443,8443 -j ACCEPT >/dev/null 2>&1 || true
+            $ipt_path -I INPUT 1 -p tcp -m multiport --dports 80,443,8443 -j ACCEPT
+            
+            $ipt_path -D INPUT -p udp -m multiport --dports 443,20000:50000 -j ACCEPT >/dev/null 2>&1 || true
+            $ipt_path -I INPUT 2 -p udp -m multiport --dports 443,20000:50000 -j ACCEPT
         fi
         return 0
     fi
