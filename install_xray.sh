@@ -1557,7 +1557,8 @@ generate_server_config() {
       }')
     routing_rules_list+=('{
         "type": "field",
-        "port": "25,465,587",
+        "port": "25,135,137,138,139,445,465,587",
+        "network": "tcp,udp",
         "outboundTag": "BLOCK"
       }')
 
@@ -2857,6 +2858,14 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         if client_param in ("happ", "incy"):
             user_agent += f" {client_param}"
 
+        if not format_param:
+            if "sing-box" in user_agent or "singbox" in user_agent or "sfa" in user_agent or "sfi" in user_agent:
+                format_param = "singbox"
+            elif any(c in user_agent for c in ("clash", "mihomo", "meta", "flclash", "stash")):
+                format_param = "clash"
+            elif "xray" in user_agent or "v2ray" in user_agent:
+                format_param = "xray"
+
         resp_headers = {
             "Cache-Control": "no-store",
             "profile-title": b64_client_display,
@@ -2970,7 +2979,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                             "ip_is_private": True
                         },
                         {
-                            "port": [25],
+                            "port": [25, 135, 137, 138, 139, 445, 465, 587],
                             "outbound": "block"
                         },
                         {
@@ -2981,6 +2990,15 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                             "port": [443],
                             "network": ["udp"],
                             "outbound": "block"
+                        },
+                        {
+                            "domain_suffix": [
+                                "lava.ru",
+                                "lava.top",
+                                "lava.link",
+                                "lava.money"
+                            ],
+                            "outbound": "→ Remnawave"
                         },
                         {
                             "outbound": "direct",
@@ -3146,6 +3164,11 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         {
                             "address": "https://8.8.8.8/dns-query",
                             "domains": [
+                                "domain:lava.ru",
+                                "domain:lava.top",
+                                "domain:lava.link",
+                                "domain:lava.money",
+                                "geosite:google-play",
                                 "geosite:github",
                                 "geosite:twitch-ads",
                                 "geosite:youtube",
@@ -3160,7 +3183,6 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                                 "geosite:whitelist",
                                 "geosite:microsoft",
                                 "geosite:apple",
-                                "geosite:google-play",
                                 "geosite:epicgames",
                                 "geosite:riot",
                                 "geosite:escapefromtarkov",
@@ -3201,6 +3223,12 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                             "outboundTag": "dns-out"
                         },
                         {
+                            "port": "25,135,137,138,139,445,465,587",
+                            "type": "field",
+                            "network": "tcp,udp",
+                            "outboundTag": "block"
+                        },
+                        {
                             "port": 443,
                             "type": "field",
                             "network": "udp",
@@ -3228,6 +3256,11 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         {
                             "type": "field",
                             "domain": [
+                                "domain:lava.ru",
+                                "domain:lava.top",
+                                "domain:lava.link",
+                                "domain:lava.money",
+                                "geosite:google-play",
                                 "geosite:github",
                                 "geosite:twitch-ads",
                                 "geosite:youtube",
@@ -3243,7 +3276,6 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                                 "geosite:whitelist",
                                 "geosite:microsoft",
                                 "geosite:apple",
-                                "geosite:google-play",
                                 "geosite:epicgames",
                                 "geosite:riot",
                                 "geosite:escapefromtarkov",

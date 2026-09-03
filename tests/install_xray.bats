@@ -94,9 +94,16 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "Маршрутизация Xray содержит domainStrategy IPIfNonMatch и блокировку SMTP" {
+@test "Маршрутизация Xray содержит domainStrategy IPIfNonMatch и блокировку SMB/NetBIOS/SMTP" {
     run grep "IPIfNonMatch" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
-    run grep "25,465,587" "$SCRIPT_PATH"
+    run grep "25,135,137,138,139,445,465,587" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Подписка содержит домены Lava и автоопределение User-Agent" {
+    run grep "domain:lava.ru" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "sing-box.*in user_agent" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
