@@ -58,6 +58,7 @@ usage() {
   --headless <домен> <email> <кол-во> [имена...]          Установка в автоматическом (headless) режиме
   --update-core                                           Обновить ядро Xray, Hysteria 2 и подписки
   --update-geoblocks                                      Обновить списки блокировок Роскомнадзора и Google AI
+  --renew-cert                                            Принудительно обновить SSL-сертификат и перезапустить службы
 EOF
     exit 0
 }
@@ -565,6 +566,17 @@ EOF
         sleep 2
     fi
 }
+
+# === Проверка флагов справки и версии (не требуют root) ===
+case "${1:-}" in
+    -h|--help)
+        usage
+        ;;
+    -v|--version)
+        echo "$SCRIPT_NAME version 1.0.0"
+        exit 0
+        ;;
+esac
 
 # === Проверка прав root ===
 if [[ "$(id -u)" != "0" ]]; then
@@ -1175,7 +1187,7 @@ setup_cert_renew_hook() {
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SSL_DIR="/etc/xray/ssl"
+SSL_DIR="/etc/ssl/vless"
 DOMAIN="${1:-}"
 
 if [[ -z "$DOMAIN" && -f "/etc/xray/.installed" ]]; then
@@ -1191,14 +1203,108 @@ if [[ -n "$DOMAIN" && -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
     chmod 644 "$SSL_DIR/fullchain.cer"
     chmod 600 "$SSL_DIR/private.key"
     systemctl restart xray 2>/dev/null || true
-    systemctl restart hysteria 2>/dev/null || true
+    systemctl restart hysteria-server 2>/dev/null || true
     systemctl restart xray-sub 2>/dev/null || true
 fi
 EOF
     chmod +x "$hook_script"
 
+    # Регистрируем нативный deploy-hook Certbot (срабатывает только при фактическом обновлении)
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+    ln -sf "$hook_script" /etc/letsencrypt/renewal-hooks/deploy/xray-cert-renew.sh
+
+    # cron резерв на случай отсутствия systemd timer, без назойливого перезапуска
     (crontab -l 2>/dev/null | grep -v 'certbot renew'; \
-     echo "0 3 * * * certbot renew --quiet --post-hook \"/usr/local/bin/xray-cert-renew.sh\"") | crontab -
+     echo "0 3 * * * certbot renew --quiet") | crontab -
+
+    # Активируем системный таймер certbot, если доступен
+    systemctl enable --now certbot.timer 2>/dev/null || true
+}
+
+# === Ручное / принудительное обновление сертификата ===
+renew_ssl_certificate() {
+    local force="${1:-false}"
+    local domain; domain=$(get_installed_var "DOMAIN")
+    local email; email=$(get_installed_var "EMAIL")
+
+    if [[ -z "$domain" ]]; then
+        echo -e "${RED}❌ Ошибка: Домен не определен в маркерах (/etc/xray/.installed).${NC}"
+        return 1
+    fi
+
+    echo -e "\n${BOLD}${CYAN}🔐 Запуск обновления SSL-сертификата для $domain...${NC}"
+
+    # Проверка конфликтов порта 80
+    local port_80_pid
+    port_80_pid=$(ss -tlnp 'sport = :80' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
+    local stopped_temp_service=""
+    if [[ -n "$port_80_pid" ]]; then
+        local proc_name; proc_name=$(ps -p "$port_80_pid" -o comm= 2>/dev/null)
+        echo -e "${YELLOW}⚠️ Порт 80 занят процессом $proc_name (PID: $port_80_pid). Временно останавливаем...${NC}"
+        if systemctl is-active --quiet "$proc_name" 2>/dev/null; then
+            systemctl stop "$proc_name" 2>/dev/null || true
+            stopped_temp_service="$proc_name"
+        fi
+    fi
+
+    local renew_success=false
+    if [[ "$force" == "true" || "$force" == "--force" ]]; then
+        echo "Запрос принудительного перевыпуска сертификата через Certbot..."
+        if certbot certonly --standalone -d "$domain" --email "$email" --agree-tos --non-interactive --key-type ecdsa --force-renewal; then
+            renew_success=true
+        elif certbot renew --force-renewal; then
+            renew_success=true
+        fi
+    else
+        echo "Запуск стандартной процедуры certbot renew..."
+        if certbot renew; then
+            renew_success=true
+        fi
+    fi
+
+    # Возврат временной службы порта 80, если была
+    if [[ -n "$stopped_temp_service" ]]; then
+        systemctl start "$stopped_temp_service" 2>/dev/null || true
+    fi
+
+    if [[ "$renew_success" == "true" && -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]]; then
+        mkdir -p "$SSL_DIR"
+        cp -f "/etc/letsencrypt/live/$domain/fullchain.pem" "$SSL_DIR/fullchain.cer"
+        cp -f "/etc/letsencrypt/live/$domain/privkey.pem" "$SSL_DIR/private.key"
+        chown -R nobody:nogroup "$SSL_DIR"
+        chmod 755 "$SSL_DIR"
+        chmod 644 "$SSL_DIR/fullchain.cer"
+        chmod 600 "$SSL_DIR/private.key"
+
+        # Обновляем хук автопродления
+        setup_cert_renew_hook
+
+        # Перезапуск сервисов
+        systemctl restart xray 2>/dev/null || true
+        systemctl restart hysteria-server 2>/dev/null || true
+        systemctl restart xray-sub 2>/dev/null || true
+
+        local end_date; end_date=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
+        echo -e "\n${GREEN}✅ SSL-сертификат успешно обновлен и применен!${NC}"
+        echo -e "Срок действия: ${BOLD}${YELLOW}$end_date${NC}"
+        return 0
+    else
+        echo -e "\n${RED}❌ Ошибка при обновлении SSL-сертификата.${NC}"
+        echo "Проверьте: свободен ли порт 80 и указывает ли DNS A-запись $domain на IP сервера."
+        return 1
+    fi
+}
+
+# === Тестирование автопродления (Dry-Run) ===
+test_ssl_renewal() {
+    echo -e "\n${BOLD}${CYAN}🧪 Тестирование автопродления SSL (Dry-Run)...${NC}"
+    if certbot renew --dry-run; then
+        echo -e "\n${GREEN}✅ Тест пройден успешно! Автопродление настроено корректно.${NC}"
+    else
+        echo -e "\n${RED}❌ Тест автопродления завершился с ошибкой.${NC}"
+    fi
+    echo -e "\nНажмите Enter для продолжения..."
+    read -r
 }
 
 # === Генерация UUID и серверного конфигурационного файла ===
@@ -3590,6 +3696,10 @@ main() {
         --optimize)
             optimize_vps
             ;;
+        --renew-cert)
+            renew_ssl_certificate --force
+            exit 0
+            ;;
         --update-core|--update-geoblocks|--headless|"")
             # Корректные режимы работы, продолжаем выполнение
             ;;
@@ -4069,8 +4179,23 @@ EOF
                 fi
             fi
 
+            local ssl_badge="${RED}ОТСУТСТВУЕТ${NC}"
+            if [[ -f "$SSL_DIR/fullchain.cer" ]]; then
+                local cert_end; cert_end=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
+                local end_epoch; end_epoch=$(date -d "$cert_end" +%s 2>/dev/null || echo 0)
+                local now_epoch; now_epoch=$(date +%s)
+                local days_left=$(( (end_epoch - now_epoch) / 86400 ))
+                if (( days_left < 0 )); then
+                    ssl_badge="${RED}ИСТЕК!${NC}"
+                elif (( days_left < 15 )); then
+                    ssl_badge="${YELLOW}Истекает ($days_left дн.)${NC}"
+                else
+                    ssl_badge="${GREEN}OK ($days_left дн.)${NC}"
+                fi
+            fi
+
             ui_header "🖥️  СТАТУС СЕРВЕРА"
-            ui_status "🌐" "Сервер" "${GREEN}$domain${NC}"
+            ui_status "🌐" "Сервер" "${GREEN}$domain${NC} | SSL: [$ssl_badge]"
             ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
             ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status]"
             ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
@@ -4118,20 +4243,50 @@ EOF
             sleep 2
         }
 
-        domain_management_menu() {
+        ssl_and_domain_menu() {
             local current_domain; current_domain=$(get_installed_var "DOMAIN")
+            local ssl_status="${RED}ОТСУТСТВУЕТ${NC}"
+            local end_date="неизвестно"
+            local days_left=0
+            if [[ -f "$SSL_DIR/fullchain.cer" ]]; then
+                end_date=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
+                local end_epoch; end_epoch=$(date -d "$end_date" +%s 2>/dev/null || echo 0)
+                local now_epoch; now_epoch=$(date +%s)
+                days_left=$(( (end_epoch - now_epoch) / 86400 ))
+                if (( days_left < 0 )); then
+                    ssl_status="${RED}ИСТЕК (${days_left#-} дн. назад)!${NC}"
+                elif (( days_left < 15 )); then
+                    ssl_status="${YELLOW}ИСТЕКАЕТ СКОРО ($days_left дн. осталось)${NC}"
+                else
+                    ssl_status="${GREEN}АКТИВЕН ($days_left дн. осталось)${NC}"
+                fi
+            fi
 
-            ui_header "🌐  СМЕНА ОСНОВНОГО ДОМЕНА"
-            ui_item "" "Текущий домен: ${GREEN}$current_domain${NC}"
+            ui_header "🔐  УПРАВЛЕНИЕ SSL-СЕРТИФИКАТОМ И ДОМЕНОМ"
+            ui_item "" "🌐 Текущий домен: ${GREEN}$current_domain${NC}"
+            ui_item "" "📜 Статус сертификата: $ssl_status"
+            ui_item "" "📅 Срок действия до: ${YELLOW}$end_date${NC}"
             ui_divider
-            ui_item "1" "🌐 Изменить основной домен (с перевыпуском SSL)"
+            ui_item "1" "🔄 Принудительно обновить SSL-сертификат прямо сейчас"
+            ui_item "2" "🧪 Проверить автопродление (Dry-run тест)"
+            ui_item "3" "🌐 Сменить основной домен (с перевыпуском SSL)"
             ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
             ui_footer
             
-            read -r -p " Выберите действие (0-1): " dchoice
+            read -r -p " Выберите действие (0-3): " dchoice
             case $dchoice in
                 0) main_menu ;;
                 1)
+                    renew_ssl_certificate --force
+                    echo -e "\nНажмите Enter для возврата в меню..."
+                    read -r
+                    ssl_and_domain_menu
+                    ;;
+                2)
+                    test_ssl_renewal
+                    ssl_and_domain_menu
+                    ;;
+                3)
                     echo -e "\n${BOLD}--- Смена основного домена ---${NC}"
                     echo -e "Для смены домена потребуется перевыпустить SSL сертификат."
                     echo -e "Убедитесь, что новый домен направлен A-записью на IP вашего сервера."
@@ -4140,13 +4295,13 @@ EOF
                     if [[ -z "$new_domain" ]]; then
                         echo -e "${RED}❌ Домен не может быть пустым.${NC}"
                         sleep 1
-                        domain_management_menu
+                        ssl_and_domain_menu
                         return
                     fi
                     if [[ "$new_domain" == "$current_domain" ]]; then
                         echo -e "${YELLOW}Этот домен уже является основным.${NC}"
                         sleep 1
-                        domain_management_menu
+                        ssl_and_domain_menu
                         return
                     fi
                     
@@ -4155,23 +4310,30 @@ EOF
                     check_domain
                     
                     # Временно остановим xray, чтобы освободить 80 порт для certbot
-                    echo "🛑 Останавливаем xray для перевыпуска SSL..."
-                    systemctl stop xray
+                    echo "🛑 Останавливаем службы для перевыпуска SSL..."
+                    systemctl stop xray 2>/dev/null || true
                     
                     local EMAIL; EMAIL=$(get_installed_var "EMAIL")
                     echo "🔐 Запуск Certbot для получения нового сертификата..."
                     if certbot certonly --standalone -d "$new_domain" --email "$EMAIL" --agree-tos --non-interactive --key-type ecdsa; then
-        log_info "Requested SSL certificate"
+                        log_info "Requested SSL certificate for $new_domain"
                         echo "✅ SSL-сертификат получен успешно!"
                         
                         # Копируем сертификаты
-                        cp "/etc/letsencrypt/live/$new_domain/fullchain.pem" "$SSL_DIR/fullchain.cer"
-                        cp "/etc/letsencrypt/live/$new_domain/privkey.pem" "$SSL_DIR/private.key"
+                        mkdir -p "$SSL_DIR"
+                        cp -f "/etc/letsencrypt/live/$new_domain/fullchain.pem" "$SSL_DIR/fullchain.cer"
+                        cp -f "/etc/letsencrypt/live/$new_domain/privkey.pem" "$SSL_DIR/private.key"
                         
                         chown -R nobody:nogroup "$SSL_DIR"
+                        chmod 755 "$SSL_DIR"
                         chmod 644 "$SSL_DIR/fullchain.cer"
                         chmod 600 "$SSL_DIR/private.key"
                         
+                        # Удаляем старый сертификат из certbot, чтобы не засорять автопродление
+                        if [[ -n "$current_domain" && "$current_domain" != "$new_domain" ]]; then
+                            certbot delete --cert-name "$current_domain" --non-interactive 2>/dev/null || true
+                        fi
+
                         setup_cert_renew_hook
                         
                         # Обновляем маркер
@@ -4181,24 +4343,26 @@ EOF
                         DOMAIN="$new_domain"
                         NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
                         generate_server_config
+                        generate_hysteria_config
                         setup_subscription_server
                         generate_client_configs
                         install_generate_script
+                        systemctl restart hysteria-server 2>/dev/null || true
                         
                         echo -e "${GREEN}✅ Основной домен успешно изменен на $new_domain!${NC}"
                         sleep 2
                     else
                         echo -e "${RED}❌ Не удалось перевыпустить SSL-сертификат для $new_domain.${NC}"
                         echo "Возвращаем запуск Xray с прежним доменом..."
-                        systemctl start xray
+                        systemctl start xray 2>/dev/null || true
                         sleep 2
                     fi
-                    domain_management_menu
+                    ssl_and_domain_menu
                     ;;
                 *)
                     echo -e "${RED}❌ Неверный выбор!${NC}"
                     sleep 1
-                    domain_management_menu
+                    ssl_and_domain_menu
                     ;;
             esac
         }
@@ -4352,7 +4516,7 @@ EOF
             ui_item "8" "🔧 Оптимизация VPS (Xanmod ядро, BBR, RPS, Sysctl, ZRAM)"
             ui_item "9" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
             ui_item "10" "🌐 Изменить отпечаток TLS (Fingerprint)"
-            ui_item "11" "🌐 Смена основного домена (SSL)"
+            ui_item "11" "🔐 Управление SSL-сертификатом и доменом"
             ui_item "12" "🔑 Управление Provider ID (happ-proxy.com)"
             ui_divider
             ui_item_color "13" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
@@ -4377,7 +4541,7 @@ EOF
                     exit 0
                     ;;
                 10) change_fingerprint ; main_menu ;;
-                11) domain_management_menu ;;
+                11) ssl_and_domain_menu ;;
                 12) manage_provider_id ;;
                 13) 
                     echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP и Opera Proxy!${NC}"
@@ -4682,6 +4846,7 @@ EOF
                 crontab -l | grep -v "certbot renew" | crontab -
             fi
             rm -f /usr/local/bin/xray-cert-renew.sh
+            rm -f /etc/letsencrypt/renewal-hooks/deploy/xray-cert-renew.sh
             systemctl stop hysteria-server >/dev/null 2>&1
             systemctl disable hysteria-server >/dev/null 2>&1
             rm -f /etc/systemd/system/hysteria-server.service
@@ -4845,6 +5010,13 @@ EOF
         generate_client_configs
         install_generate_script
         install_xry_command
+        setup_cert_renew_hook
+        if [[ -f "$SSL_DIR/fullchain.cer" ]]; then
+            if ! openssl x509 -checkend 86400 -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null; then
+                echo "⚠️ Обнаружен истекший или заканчивающийся SSL-сертификат, обновляем..."
+                renew_ssl_certificate --force || true
+            fi
+        fi
         echo "✅ Сервер успешно обновлен до последней версии! Можете вызвать xry для проверки."
         exit 0
     fi

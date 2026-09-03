@@ -73,3 +73,9 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" =~ "--optimize" ]]
 }
+
+@test "Справка --help содержит опцию --renew-cert" {
+    run bash "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--renew-cert" ]]
+}
