@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+# Проверка версии интерпретатора Bash (требуется 4.0+ для declare -A)
+if (( BASH_VERSINFO[0] < 4 )); then
+    echo "❌ Ошибка: Требуется Bash версии 4.0 или выше (текущая: ${BASH_VERSION:-неизвестно})" >&2
+    exit 1
+fi
+
 # === Конфигурационные параметры ===
 readonly XRAY_CONFIG_DIR="/usr/local/etc/xray"
 readonly CLIENT_CONFIG_DIR="/etc/xray/client_configs"
@@ -31,14 +37,18 @@ BOLD='\033[1m'; # shellcheck disable=SC2034
 NC='\033[0m'
 
 # === Логирование и Traps (/bash-scripting) ===
-mkdir -p "$(dirname "$INSTALL_LOG")"
+mkdir -p "$(dirname "$INSTALL_LOG")" 2>/dev/null || true
 
 log_info() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $*" >> "$INSTALL_LOG"
+    if [[ -d "$(dirname "$INSTALL_LOG")" ]]; then
+        echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $*" >> "$INSTALL_LOG" 2>/dev/null || true
+    fi
 }
 
 log_error() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >> "$INSTALL_LOG"
+    if [[ -d "$(dirname "$INSTALL_LOG")" ]]; then
+        echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >> "$INSTALL_LOG" 2>/dev/null || true
+    fi
 }
 
 cleanup() {
@@ -758,7 +768,7 @@ install_warp() {
             fi
         fi
 
-        [[ -n "${temp_dir:-}" && -d "$temp_dir" ]] && rm -rf "$temp_dir"
+        [[ -n "${temp_dir:-}" && -d "$temp_dir" ]] && rm -rf -- "$temp_dir"
     fi
 
     if [[ -f "/etc/wireguard/warp.conf" ]]; then
@@ -1042,6 +1052,7 @@ get_flag_emoji() {
 create_directories() {
     echo "📁 Создание директорий..."
     mkdir -p "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "/var/log/xray"
+    chmod 755 "$CLIENT_CONFIG_DIR"
     mkdir -p "/etc/xray"
     chmod 755 /etc/xray
     touch /var/log/xray/{access.log,error.log}
@@ -4860,10 +4871,10 @@ EOF
             rm -f /usr/local/bin/opera-proxy
             rm -f /etc/xray/opera.lst
 
-            [[ -n "${XRAY_CONFIG_DIR:-}" ]] && rm -rf "$XRAY_CONFIG_DIR"
-            [[ -n "${CLIENT_CONFIG_DIR:-}" ]] && rm -rf "$CLIENT_CONFIG_DIR"
-            [[ -n "${SSL_DIR:-}" ]] && rm -rf "$SSL_DIR"
-            [[ -n "${GENERATE_SCRIPT:-}" ]] && rm -f "$GENERATE_SCRIPT"
+            [[ -n "${XRAY_CONFIG_DIR:-}" ]] && rm -rf -- "$XRAY_CONFIG_DIR"
+            [[ -n "${CLIENT_CONFIG_DIR:-}" ]] && rm -rf -- "$CLIENT_CONFIG_DIR"
+            [[ -n "${SSL_DIR:-}" ]] && rm -rf -- "$SSL_DIR"
+            [[ -n "${GENERATE_SCRIPT:-}" ]] && rm -f -- "$GENERATE_SCRIPT"
             rm -f /var/log/xray/{access.log,error.log}
             if crontab -l &>/dev/null; then
                 crontab -l | grep -v "certbot renew" | crontab -
@@ -4873,7 +4884,7 @@ EOF
             systemctl stop hysteria-server >/dev/null 2>&1
             systemctl disable hysteria-server >/dev/null 2>&1
             rm -f /etc/systemd/system/hysteria-server.service
-            rm -rf /etc/hysteria
+            rm -rf -- /etc/hysteria
             rm -f /usr/local/bin/hysteria
             systemctl daemon-reload >/dev/null 2>&1
 
