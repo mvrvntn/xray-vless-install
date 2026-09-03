@@ -541,7 +541,8 @@ EOF
                 cpu_level=3
             fi
 
-            if curl -fsSL --connect-timeout 10 https://dl.xanmod.org/archive.key | gpg --dearmor -yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
+            mkdir -p /etc/apt/keyrings
+            if curl -fsSL --connect-timeout 10 https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg; then
                 echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org $(lsb_release -sc) main" > /etc/apt/sources.list.d/xanmod-release.list
                 wait_for_apt
                 DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
@@ -569,7 +570,7 @@ EOF
     fi
 }
 
-# === Проверка флагов справки и версии (не требуют root) ===
+# === Проверка флагов справки и аргументов (не требуют root) ===
 case "${1:-}" in
     -h|--help)
         usage
@@ -577,6 +578,14 @@ case "${1:-}" in
     -v|--version)
         echo "$SCRIPT_NAME version 1.0.0"
         exit 0
+        ;;
+    --optimize|--renew-cert|--update-core|--update-geoblocks|--headless|"")
+        # Допустимые режимы работы (требуют root)
+        ;;
+    -*)
+        echo "❌ Неизвестная опция: $1" >&2
+        echo "Используйте $SCRIPT_NAME --help для справки." >&2
+        exit 1
         ;;
 esac
 
@@ -908,8 +917,8 @@ uninstall_opera_proxy() {
 }
 
 # === Проверка домена ===
-echo "🔍 Проверка резолва домена..."
 check_domain() {
+    echo "🔍 Проверка резолва домена..."
     if ! getent hosts "$DOMAIN" >/dev/null; then
         echo "⚠️ Локальное разрешение домена не удалось, выполняем резервную проверку через внешние DNS..."
         local resolved_ip
@@ -937,7 +946,7 @@ check_domain() {
 check_port_conflicts() {
     echo "🔍 Проверка конфликтов портов 80/443..."
     # Проверка порта 443
-    if ss -tln | grep -q ':443 '; then
+    if ss -tln | grep -qE ':(443)(\s|$)'; then
         local port_443_pid; port_443_pid=$(ss -tlnp 'sport = :443' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
         local port_443_process=""
         if [[ -n "$port_443_pid" ]]; then
@@ -948,7 +957,9 @@ check_port_conflicts() {
         read -r -p "Завершить процесс $port_443_process и продолжить? [y/N]: " kill_443
         if [[ "$kill_443" =~ ^[Yy]$ ]]; then
             if [[ -n "$port_443_pid" ]]; then
-                kill -9 "$port_443_pid" 2>/dev/null || true
+                kill "$port_443_pid" 2>/dev/null || true
+                sleep 0.5
+                kill -0 "$port_443_pid" 2>/dev/null && kill -9 "$port_443_pid" 2>/dev/null || true
                 echo "Процесс $port_443_pid завершен."
             fi
         else
@@ -958,7 +969,7 @@ check_port_conflicts() {
     fi
 
     # Проверка порта 80
-    if ss -tln | grep -q ':80 '; then
+    if ss -tln | grep -qE ':(80)(\s|$)'; then
         local port_80_pid; port_80_pid=$(ss -tlnp 'sport = :80' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
         local port_80_process=""
         if [[ -n "$port_80_pid" ]]; then
@@ -968,7 +979,9 @@ check_port_conflicts() {
         read -r -p "Завершить процесс $port_80_process и продолжить? [y/N]: " kill_80
         if [[ "$kill_80" =~ ^[Yy]$ ]]; then
             if [[ -n "$port_80_pid" ]]; then
-                kill -9 "$port_80_pid" 2>/dev/null || true
+                kill "$port_80_pid" 2>/dev/null || true
+                sleep 0.5
+                kill -0 "$port_80_pid" 2>/dev/null && kill -9 "$port_80_pid" 2>/dev/null || true
                 echo "Процесс $port_80_pid завершен."
             fi
         else
@@ -978,7 +991,7 @@ check_port_conflicts() {
     fi
 
     # Проверка порта 8443 (VLESS gRPC)
-    if ss -tln | grep -q ':8443 '; then
+    if ss -tln | grep -qE ':(8443)(\s|$)'; then
         local port_8443_pid; port_8443_pid=$(ss -tlnp 'sport = :8443' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
         local port_8443_process=""
         if [[ -n "$port_8443_pid" ]]; then
@@ -988,7 +1001,9 @@ check_port_conflicts() {
         read -r -p "Завершить процесс $port_8443_process и продолжить? [y/N]: " kill_8443
         if [[ "$kill_8443" =~ ^[Yy]$ ]]; then
             if [[ -n "$port_8443_pid" ]]; then
-                kill -9 "$port_8443_pid" 2>/dev/null || true
+                kill "$port_8443_pid" 2>/dev/null || true
+                sleep 0.5
+                kill -0 "$port_8443_pid" 2>/dev/null && kill -9 "$port_8443_pid" 2>/dev/null || true
                 echo "Процесс $port_8443_pid завершен."
             fi
         else
@@ -3535,7 +3550,7 @@ EOF
     systemctl daemon-reload
     systemctl enable xray-sub >/dev/null 2>&1
     systemctl restart xray-sub
-    log_info "Restarted Xray service"
+    log_info "Restarted Xray Subscription service"
 }
 
 # === Установка утилиты генерации ссылок ===
@@ -4482,7 +4497,7 @@ EOF
                         update_marker_val "PROVIDER_ID" "$new_pid"
                         echo -e "${GREEN}✅ Provider ID успешно сохранен!${NC}"
                         systemctl restart xray-sub >/dev/null 2>&1
-        log_info "Restarted Xray service"
+                        log_info "Restarted Xray Subscription service"
                     else
                         echo -e "${RED}❌ Пустое значение!${NC}"
                     fi
