@@ -1528,18 +1528,21 @@ generate_server_config() {
 
     # Базовые правила блокировки
     routing_rules_list+=('{
+        "type": "field",
         "ip": [
           "geoip:private"
         ],
         "outboundTag": "BLOCK"
       }')
     routing_rules_list+=('{
+        "type": "field",
         "domain": [
           "geosite:private"
         ],
         "outboundTag": "BLOCK"
       }')
     routing_rules_list+=('{
+        "type": "field",
         "protocol": [
           "bittorrent"
         ],
@@ -1553,8 +1556,8 @@ generate_server_config() {
         "outboundTag": "BLOCK"
       }')
     routing_rules_list+=('{
-        "port": "25",
         "type": "field",
+        "port": "25,465,587",
         "outboundTag": "BLOCK"
       }')
 
@@ -1905,6 +1908,7 @@ EOF
   "inbounds": $inbounds_str,
   "outbounds": $outbounds_str,
   "routing": {
+    "domainStrategy": "IPIfNonMatch",
     "rules": [
       $routing_rules_str
     ]
@@ -3189,6 +3193,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     }
                 },
                 "routing": {
+                    "domainStrategy": "IPIfNonMatch",
                     "rules": [
                         {
                             "port": 53,

@@ -93,3 +93,10 @@ setup() {
     run grep "log_warn()" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Маршрутизация Xray содержит domainStrategy IPIfNonMatch и блокировку SMTP" {
+    run grep "IPIfNonMatch" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "25,465,587" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
