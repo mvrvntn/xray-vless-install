@@ -42,8 +42,10 @@ log_error() {
 }
 
 cleanup() {
-    echo -ne "${NC}" # Сброс цвета консоли
-    log_info "Скрипт прерван (SIGINT/SIGTERM) или завершен."
+    trap - SIGINT SIGTERM
+    echo -ne "${NC}\n" # Сброс цвета консоли
+    log_info "Скрипт прерван сигналом (SIGINT/SIGTERM)."
+    exit 130
 }
 trap 'cleanup' SIGINT SIGTERM
 
@@ -747,7 +749,7 @@ install_warp() {
             fi
         fi
 
-        rm -rf "$temp_dir"
+        [[ -n "${temp_dir:-}" && -d "$temp_dir" ]] && rm -rf "$temp_dir"
     fi
 
     if [[ -f "/etc/wireguard/warp.conf" ]]; then
@@ -765,7 +767,7 @@ install_warp() {
         # Добавляем обновление списка геоблокировок в cron
         local script_path; script_path=$(realpath "$0")
         (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; \
-         echo "30 3 * * * bash $script_path --update-geoblocks >/dev/null 2>&1") | crontab -
+         echo "30 3 * * * bash \"$script_path\" --update-geoblocks >/dev/null 2>&1") | crontab -
 
         echo "✅ Cloudflare WARP успешно установлен и запущен!"
         update_marker_val "WARP_INSTALLED" "true"
@@ -4184,13 +4186,17 @@ EOF
                 local cert_end; cert_end=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
                 local end_epoch; end_epoch=$(date -d "$cert_end" +%s 2>/dev/null || echo 0)
                 local now_epoch; now_epoch=$(date +%s)
-                local days_left=$(( (end_epoch - now_epoch) / 86400 ))
-                if (( days_left < 0 )); then
-                    ssl_badge="${RED}ИСТЕК!${NC}"
-                elif (( days_left < 15 )); then
-                    ssl_badge="${YELLOW}Истекает ($days_left дн.)${NC}"
+                if [[ -z "$cert_end" || "$end_epoch" -eq 0 ]]; then
+                    ssl_badge="${YELLOW}Ошибка даты${NC}"
                 else
-                    ssl_badge="${GREEN}OK ($days_left дн.)${NC}"
+                    local days_left=$(( (end_epoch - now_epoch) / 86400 ))
+                    if (( days_left < 0 )); then
+                        ssl_badge="${RED}ИСТЕК!${NC}"
+                    elif (( days_left < 15 )); then
+                        ssl_badge="${YELLOW}Истекает ($days_left дн.)${NC}"
+                    else
+                        ssl_badge="${GREEN}OK ($days_left дн.)${NC}"
+                    fi
                 fi
             fi
 
@@ -4595,7 +4601,7 @@ EOF
                 echo -e "${GREEN}✅ Автообновление отключено${NC}"
             else
                 echo "🔄 Включение автообновления геоблокировок..."
-                (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; echo "30 3 * * * bash $script_path --update-geoblocks >/dev/null 2>&1") | crontab -
+                (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; echo "30 3 * * * bash \"$script_path\" --update-geoblocks >/dev/null 2>&1") | crontab -
                 echo -e "${GREEN}✅ Автообновление включено (ежедневно в 03:30)${NC}"
             fi
             sleep 1.5
@@ -4839,8 +4845,10 @@ EOF
             rm -f /usr/local/bin/opera-proxy
             rm -f /etc/xray/opera.lst
 
-            bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
-            rm -rf "$XRAY_CONFIG_DIR" "$CLIENT_CONFIG_DIR" "$SSL_DIR" "$GENERATE_SCRIPT"
+            [[ -n "${XRAY_CONFIG_DIR:-}" ]] && rm -rf "$XRAY_CONFIG_DIR"
+            [[ -n "${CLIENT_CONFIG_DIR:-}" ]] && rm -rf "$CLIENT_CONFIG_DIR"
+            [[ -n "${SSL_DIR:-}" ]] && rm -rf "$SSL_DIR"
+            [[ -n "${GENERATE_SCRIPT:-}" ]] && rm -f "$GENERATE_SCRIPT"
             rm -f /var/log/xray/{access.log,error.log}
             if crontab -l &>/dev/null; then
                 crontab -l | grep -v "certbot renew" | crontab -
