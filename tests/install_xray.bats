@@ -79,3 +79,10 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" =~ "--renew-cert" ]]
 }
+
+@test "VLESS ссылки содержат encryption=none и service_name для ZeroBlock" {
+    run grep "service_name=vless-grpc" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "encryption=none" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
