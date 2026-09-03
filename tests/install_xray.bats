@@ -86,3 +86,10 @@ setup() {
     run grep "encryption=none" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Скрипт содержит проверку версии Bash 4+ и функцию log_warn" {
+    run grep "BASH_VERSINFO" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "log_warn()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}

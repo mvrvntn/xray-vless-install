@@ -45,6 +45,12 @@ log_info() {
     fi
 }
 
+log_warn() {
+    if [[ -d "$(dirname "$INSTALL_LOG")" ]]; then
+        echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] WARN: $*" >> "$INSTALL_LOG" 2>/dev/null || true
+    fi
+}
+
 log_error() {
     if [[ -d "$(dirname "$INSTALL_LOG")" ]]; then
         echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >> "$INSTALL_LOG" 2>/dev/null || true
@@ -79,11 +85,16 @@ EOF
 # Регистрация команды xry
 install_xry_command() {
     local target_bin="/usr/local/bin/xry"
-    if cp "$0" "$target_bin" 2>/dev/null; then
+    local current_script
+    current_script=$(realpath "$0" 2>/dev/null || echo "$0")
+    if [[ "$current_script" == "$target_bin" ]]; then
+        return 0
+    fi
+    if cp -f "$0" "$target_bin" 2>/dev/null; then
         chmod +x "$target_bin"
-        echo -e "${GREEN}🚀 Команда быстрого запуска 'xry' успешно зарегистрирована! Используйте её для вызова этого меню из любой директории. ${NC}"
+        echo -e "${GREEN}🚀 Команда быстрого запуска 'xry' успешно зарегистрирована! Используйте её для вызова этого меню из любой директории.${NC}"
     else
-        ln -sf "$(realpath "$0")" "$target_bin" 2>/dev/null
+        ln -sf "$current_script" "$target_bin" 2>/dev/null || true
     fi
 }
 
