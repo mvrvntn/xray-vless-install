@@ -2820,6 +2820,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         if not found:
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex")
             self.end_headers()
             self.wfile.write(DECOY_HTML.encode("utf-8"))
             return
@@ -2885,6 +2886,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
 
         resp_headers = {
             "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet, noimageindex",
             "profile-title": b64_client_display,
             "profile-update-interval": "1",
             "support-url": support_url,
@@ -2894,6 +2896,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             "subscription-ping-onopen-enabled": "1",
             "subscription-autoconnect": "1",
             "subscription-autoconnect-type": "lastused",
+            "subscription-userinfo": "0",
+            "sort-order": "ping",
             "hide-url": "1",
             "noises-enable": "0",
             "no-limit-enabled": "1",
@@ -3594,6 +3598,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 f"#support-url: {support_url}\n"
                 f"#profile-web-page-url: https://mvrvntn.github.io/koridor/\n"
                 f"#announce: {b64_announce}\n"
+                f"#subscription-userinfo: 0\n"
+                f"#sort-order: ping\n"
                 f"#fragmentation-enable: 1\n"
                 f"#fragmentation-packets: tlshello\n"
                 f"#fragmentation-length: 10-30\n"

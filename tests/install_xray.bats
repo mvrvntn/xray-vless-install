@@ -114,3 +114,13 @@ setup() {
     run grep "geox-url" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Сервер подписок содержит заголовки X-Robots-Tag, subscription-userinfo и sort-order" {
+    run grep "X-Robots-Tag" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "subscription-userinfo" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "sort-order" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
