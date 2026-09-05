@@ -124,3 +124,9 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
+@test "Заголовок server-address-resolve-enable отключен (значение 0)" {
+    run grep '"server-address-resolve-enable": "0"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+

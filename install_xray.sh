@@ -2903,7 +2903,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             "no-limit-enabled": "1",
             "fragmentation-enable": "0",
             "per-app-proxy-enable": "0",
-            "server-address-resolve-enable": "1"
+            "server-address-resolve-enable": "0"
         }
         if providerid:
             resp_headers["providerid"] = providerid
@@ -3613,9 +3613,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 sub_metadata = f"#providerid {providerid}\n" + sub_metadata
             if "incy" in user_agent:
                 sub_metadata += (
-                    "#server-address-resolve-enable: 1\n"
-                    "#server-address-resolve-dns-domain: https://common.dot.dns.yandex.net/dns-query\n"
-                    "#server-address-resolve-dns-ip: 77.88.8.8\n"
+                    "#server-address-resolve-enable: 0\n"
                     "#banner-bg-color: #F4F4F5\n"
                     "#banner-button-color: #1A1A1A\n"
                 )
