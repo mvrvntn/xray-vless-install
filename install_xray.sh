@@ -1906,6 +1906,23 @@ EOF
     "disableCache": false,
     "queryStrategy": "UseIPv4"
   },
+  "policy": {
+    "levels": {
+      "0": {
+        "handshake": 4,
+        "connIdle": 300,
+        "uplinkOnly": 2,
+        "downlinkOnly": 5,
+        "bufferSize": 4
+      }
+    },
+    "system": {
+      "statsInboundUplink": false,
+      "statsInboundDownlink": false,
+      "statsOutboundUplink": false,
+      "statsOutboundDownlink": false
+    }
+  },
   "inbounds": $inbounds_str,
   "outbounds": $outbounds_str,
   "routing": {
@@ -3412,11 +3429,24 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 "log-level": "warning",
                 "ipv6": False,
                 "external-controller": "127.0.0.1:9090",
+                "geox-url": {
+                    "geoip": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat",
+                    "geosite": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat",
+                    "mmdb": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb"
+                },
                 "dns": {
                     "enable": True,
                     "ipv6": False,
                     "enhanced-mode": "fake-ip",
                     "fake-ip-range": "198.18.0.1/16",
+                    "default-nameserver": [
+                        "77.88.8.8",
+                        "1.1.1.1"
+                    ],
+                    "proxy-server-nameserver": [
+                        "77.88.8.8",
+                        "1.1.1.1"
+                    ],
                     "nameserver": [
                         "77.88.8.8"
                     ],
@@ -3512,7 +3542,14 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 },
                 "proxies": proxies_list,
                 "rules": [
-                    "PORT,25,REJECT",
+                    "DST-PORT,25,REJECT",
+                    "DST-PORT,135,REJECT",
+                    "DST-PORT,137,REJECT",
+                    "DST-PORT,138,REJECT",
+                    "DST-PORT,139,REJECT",
+                    "DST-PORT,445,REJECT",
+                    "DST-PORT,465,REJECT",
+                    "DST-PORT,587,REJECT",
                     "AND,((NETWORK,udp),(PORT,443)),REJECT",
                     "RULE-SET,private-domains,DIRECT",
                     "RULE-SET,category-ru,DIRECT",
@@ -3528,6 +3565,11 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "DOMAIN-SUFFIX,ytimg.com,📺 Youtube",
                     "DOMAIN-SUFFIX,youtube-nocookie.com,📺 Youtube",
                     "DOMAIN-SUFFIX,youtu.be,📺 Youtube",
+                    "DOMAIN-SUFFIX,lava.ru,🛡️ VPN",
+                    "DOMAIN-SUFFIX,lava.top,🛡️ VPN",
+                    "DOMAIN-SUFFIX,lava.link,🛡️ VPN",
+                    "DOMAIN-SUFFIX,lava.money,🛡️ VPN",
+                    "GEOSITE,google-play,🛡️ VPN",
                     "RULE-SET,torrent,DIRECT",
                     "GEOIP,private,DIRECT",
                     "MATCH,🛡️ VPN"

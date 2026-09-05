@@ -107,3 +107,10 @@ setup() {
     run grep "sing-box.*in user_agent" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Сервер Xray содержит policy таймауты и Clash содержит geox-url" {
+    run grep "connIdle" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "geox-url" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
