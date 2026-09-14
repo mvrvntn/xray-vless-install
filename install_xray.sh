@@ -1467,11 +1467,10 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
+          "domainStrategy": "UseIPv4",
           "interface": "warp",
           "tcpFastOpen": true,
           "tcpcongestion": "bbr",
@@ -1482,11 +1481,10 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "DIRECT",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
+          "domainStrategy": "UseIPv4",
           "tcpFastOpen": true,
           "tcpcongestion": "bbr",
           "tcpKeepAliveIdle": 300
@@ -1497,11 +1495,10 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "DIRECT",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
+          "domainStrategy": "UseIPv4",
           "tcpFastOpen": true,
           "tcpcongestion": "bbr",
           "tcpKeepAliveIdle": 300
@@ -1512,11 +1509,10 @@ generate_server_config() {
             outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
+          "domainStrategy": "UseIPv4",
           "interface": "warp",
           "tcpFastOpen": true,
           "tcpcongestion": "bbr",
@@ -3671,8 +3667,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=nobody
-Group=nogroup
+DynamicUser=yes
 ExecStart=$py_path $SUB_SERVER_SCRIPT
 Restart=always
 
