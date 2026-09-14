@@ -176,3 +176,25 @@ setup() {
     run grep 'net.ipv6.conf.all.disable_ipv6' "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Правила маршрутизации содержат явный роутинг DNS (порт 53) в DIRECT" {
+    run grep '"port": "53"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Исходящие соединения (DIRECT и WARP) не используют tcpFastOpen" {
+    # В функции generate_server_config outbound sockopt не должен содержать tcpFastOpen: true
+    run python3 -c "
+with open('$SCRIPT_PATH', 'r') as f:
+    text = f.read()
+# Extract generate_server_config
+import re
+gen = re.search(r'generate_server_config\(\) \{(.*?)\} \n\n# ===', text, re.DOTALL)
+assert gen, 'generate_server_config not found'
+outbounds_block = re.search(r'outbounds_list\+=.*?(?=local outbounds_str)', gen.group(1), re.DOTALL)
+assert outbounds_block, 'outbounds_list not found'
+assert 'tcpFastOpen' not in outbounds_block.group(0), 'tcpFastOpen found in outbounds_list'
+print('OK')
+"
+    [ "$status" -eq 0 ]
+}

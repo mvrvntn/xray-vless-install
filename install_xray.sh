@@ -1473,7 +1473,6 @@ generate_server_config() {
         "sockopt": {
           "domainStrategy": "UseIPv4",
           "interface": "warp",
-          "tcpFastOpen": true,
           "tcpcongestion": "bbr",
           "tcpKeepAliveIdle": 300
         }
@@ -1486,7 +1485,6 @@ generate_server_config() {
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
-          "tcpFastOpen": true,
           "tcpcongestion": "bbr",
           "tcpKeepAliveIdle": 300
         }
@@ -1500,7 +1498,6 @@ generate_server_config() {
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
-          "tcpFastOpen": true,
           "tcpcongestion": "bbr",
           "tcpKeepAliveIdle": 300
         }
@@ -1515,7 +1512,6 @@ generate_server_config() {
         "sockopt": {
           "domainStrategy": "UseIPv4",
           "interface": "warp",
-          "tcpFastOpen": true,
           "tcpcongestion": "bbr",
           "tcpKeepAliveIdle": 300
         }
@@ -1584,6 +1580,12 @@ generate_server_config() {
         "port": "25,135,137,138,139,445,465,587",
         "network": "tcp,udp",
         "outboundTag": "BLOCK"
+      }')
+    routing_rules_list+=('{
+        "type": "field",
+        "port": "53",
+        "network": "tcp,udp",
+        "outboundTag": "DIRECT"
       }')
 
     # Правило для Opera Proxy (приоритет выше, чем у WARP)
@@ -1919,11 +1921,11 @@ EOF
   },
   "dns": {
     "servers": [
-      "1.1.1.2",
-      "9.9.9.9",
+      "1.1.1.1",
       "8.8.8.8",
-      "1.0.0.2",
+      "1.0.0.1",
       "8.8.4.4",
+      "9.9.9.9",
       "208.67.222.222",
       "localhost"
     ],
@@ -5365,6 +5367,8 @@ EOF
         install_generate_script
         install_xry_command
         setup_cert_renew_hook
+        setup_firewall
+        ip tcp_metrics flush all >/dev/null 2>&1 || true
         if [[ -f "$SSL_DIR/fullchain.cer" ]]; then
             if ! openssl x509 -checkend 86400 -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null; then
                 echo "⚠️ Обнаружен истекший или заканчивающийся SSL-сертификат, обновляем..."
