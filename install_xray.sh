@@ -1116,8 +1116,8 @@ install_dependencies() {
 
 # === Установка Xray ===
 install_xray() {
-    echo "🚀 Установка / обновление Xray..."
-    bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    echo "🚀 Установка / обновление Xray (актуальная версия / pre-release)..."
+    bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --beta
     bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install-geodata >/dev/null 2>&1 || true
     systemctl enable xray >/dev/null 2>&1 || true
     local xray_v; xray_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
