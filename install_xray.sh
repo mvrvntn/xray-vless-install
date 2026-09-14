@@ -3683,7 +3683,8 @@ After=network.target
 
 [Service]
 Type=simple
-DynamicUser=yes
+User=nobody
+Group=nogroup
 ExecStart=$py_path $SUB_SERVER_SCRIPT
 Restart=always
 
