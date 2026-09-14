@@ -52,8 +52,13 @@ setup() {
     [ "$status" -ne 0 ]
 }
 
-@test "Скрипт содержит конфигурацию VLESS gRPC на порту 8443" {
+@test "Скрипт содержит конфигурацию VLESS XHTTP на порту 8443" {
     run grep "8443" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Скрипт содержит конфигурацию VLESS gRPC на порту 2053" {
+    run grep "2053" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
 
@@ -156,10 +161,12 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "Сервер подписок маскируется под Nginx и поддерживает кастомный камуфляж decoy.html" {
-    run grep 'server_version = "nginx/1.24.0"' "$SCRIPT_PATH"
+@test "Сервер подписок маскируется под Caddy (TLS-стек Go) и поддерживает кастомный камуфляж decoy.html с энтропией" {
+    run grep 'server_version = "Caddy"' "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
     run grep '/etc/xray/decoy.html' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'decoy.seed' "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
 
@@ -196,5 +203,53 @@ assert outbounds_block, 'outbounds_list not found'
 assert 'tcpFastOpen' not in outbounds_block.group(0), 'tcpFastOpen found in outbounds_list'
 print('OK')
 "
+    [ "$status" -eq 0 ]
+}
+
+@test "Справка --help содержит опции резервного копирования --backup и --restore" {
+    run bash "$SCRIPT_PATH" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "--backup" ]]
+    [[ "$output" =~ "--restore" ]]
+}
+
+@test "Скрипт содержит функции резервного копирования create_backup и restore_backup" {
+    run grep "create_backup()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "restore_backup()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Скрипт поддерживает Tor SOCKS5 outbound и маршрутизацию .onion" {
+    run grep "install_tor()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep '"domain:onion"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep '"tag": "TOR"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Скрипт настраивает персистентный port hopping Hysteria 2 в UFW before.rules" {
+    run grep "setup_hy2_port_hopping_ufw" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep -- "-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Конфигурация Xray блокирует вредоносное ПО, фишинг и майнеры" {
+    run grep "ext:geosite_IR.dat:malware" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "ext:geosite_IR.dat:phishing" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "ext:geosite_IR.dat:cryptominers" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Anti-DPI и маскировка: rejectUnknownSni, WARP Anycast IP и sing-box fragment" {
+    run grep '"rejectUnknownSni": true' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep '162.159.192.1' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'record_fragment' "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
