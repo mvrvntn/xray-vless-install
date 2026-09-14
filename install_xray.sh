@@ -3655,8 +3655,10 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     handler = SubHandler
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", PORT), handler) as httpd:
+    server_class = getattr(http.server, "ThreadingHTTPServer", http.server.HTTPServer)
+    server_class.allow_reuse_address = True
+    server_class.daemon_threads = True
+    with server_class(("127.0.0.1", PORT), handler) as httpd:
         httpd.serve_forever()
 EOF
 
