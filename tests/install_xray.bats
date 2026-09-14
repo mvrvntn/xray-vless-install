@@ -155,3 +155,24 @@ setup() {
     run grep "mvrvntn/routing@main/INCY/DEFAULT.JSON" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Сервер подписок маскируется под Nginx и поддерживает кастомный камуфляж decoy.html" {
+    run grep 'server_version = "nginx/1.24.0"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep '/etc/xray/decoy.html' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Скрипт содержит функцию отказоустойчивого обновления с пулом зеркал" {
+    run grep 'update_script_from_mirrors()' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'cdn.jsdelivr.net/gh/mvrvntn/xray-vless-install' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Скрипт содержит функцию управления IPv6" {
+    run grep 'toggle_ipv6()' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'net.ipv6.conf.all.disable_ipv6' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}

@@ -74,6 +74,7 @@ usage() {
   -v, --version                                           Показать версию скрипта
   --optimize                                              Запустить полную системную оптимизацию VPS (Xanmod, BBR, RPS, Sysctl, ZRAM)
   --headless <домен> <email> <кол-во> [имена...]          Установка в автоматическом (headless) режиме
+  --update-script                                         Обновить скрипт с пула зеркал (GitHub Raw / jsDelivr / GitHack)
   --update-core                                           Обновить ядро Xray, Hysteria 2 и подписки
   --update-geoblocks                                      Обновить списки блокировок Роскомнадзора и Google AI
   --renew-cert                                            Принудительно обновить SSL-сертификат и перезапустить службы
@@ -2818,6 +2819,9 @@ def hysteria2_url_to_mihomo_proxy(url: str):
         return None
 
 class SubHandler(http.server.BaseHTTPRequestHandler):
+    server_version = "nginx/1.24.0"
+    sys_version = ""
+
     def log_message(self, format, *args):
         return
 
@@ -2846,8 +2850,20 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
             self.end_headers()
-            self.wfile.write(DECOY_HTML.encode("utf-8"))
+            custom_decoy = "/etc/xray/decoy.html"
+            decoy_content = None
+            if os.path.exists(custom_decoy):
+                try:
+                    with open(custom_decoy, "rb") as df:
+                        decoy_content = df.read()
+                except Exception:
+                    pass
+            if not decoy_content:
+                decoy_content = DECOY_HTML.encode("utf-8")
+            self.wfile.write(decoy_content)
             return
         
         ivars = get_installed_vars()
@@ -3831,6 +3847,43 @@ EOF
     chmod +x "$GENERATE_SCRIPT"
 }
 
+# === Отказоустойчивое обновление скрипта через пул зеркал ===
+update_script_from_mirrors() {
+    echo -e "\n${BOLD}${GREEN}🔄 Загрузка последней версии скрипта через пул зеркал...${NC}"
+    cd /root || exit
+    local tmp_script="/tmp/install_xray_update.sh"
+    local dl_success=false
+    local mirrors=(
+        "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM"
+        "https://cdn.jsdelivr.net/gh/mvrvntn/xray-vless-install@main/install_xray.sh"
+        "https://raw.githack.com/mvrvntn/xray-vless-install/main/install_xray.sh"
+        "https://gh-proxy.com/https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh"
+    )
+    for m_url in "${mirrors[@]}"; do
+        echo -e " ${YELLOW}Попытка загрузки:${NC} $m_url"
+        if curl -fsSL --connect-timeout 8 --max-time 30 "$m_url" -o "$tmp_script" 2>/dev/null; then
+            if [[ -s "$tmp_script" ]] && bash -n "$tmp_script" 2>/dev/null; then
+                mv -f "$tmp_script" install_xray.sh
+                chmod +x install_xray.sh
+                dl_success=true
+                echo -e " ${GREEN}[✓] Скрипт успешно скачан и проверен!${NC}"
+                break
+            fi
+        fi
+    done
+    rm -f "$tmp_script" 2>/dev/null || true
+
+    if [[ "$dl_success" != "true" ]]; then
+        echo -e "${RED}❌ Не удалось скачать обновление ни с одного источника (GitHub, jsDelivr, GitHack).${NC}"
+        sleep 2
+        return 1
+    fi
+
+    echo -e "${GREEN}✅ Скрипт обновлен! Применяем обновления ядра и конфигурации...${NC}"
+    /root/install_xray.sh --update-core
+    exit 0
+}
+
 # === Проверка предыдущей установки (до запроса данных) ===
 main() {
     case "${1:-}" in
@@ -3839,6 +3892,10 @@ main() {
             ;;
         -v|--version)
             echo "$SCRIPT_NAME version 1.0.0"
+            exit 0
+            ;;
+        --update-script)
+            update_script_from_mirrors
             exit 0
             ;;
         --optimize)
@@ -4395,6 +4452,103 @@ EOF
             sleep 2
         }
 
+        manage_decoy_menu() {
+            local decoy_file="/etc/xray/decoy.html"
+            local decoy_status="${CYAN}Стандартная страница Confluence (Java-заглушка)${NC}"
+            if [[ -s "$decoy_file" ]]; then
+                local decoy_size; decoy_size=$(du -h "$decoy_file" 2>/dev/null | cut -f1)
+                decoy_status="${GREEN}Пользовательский HTML ($decoy_size)${NC}"
+            fi
+
+            ui_header "🎭  УПРАВЛЕНИЕ КАМУФЛЯЖЕМ (DECOY / SELFSTEAL)"
+            ui_item "" "🌐 Текущий камуфляж: $decoy_status"
+            ui_item "" "ℹ️ Страница отдается активным DPI-сканерам и браузерам на https://$DOMAIN/"
+            ui_divider
+            ui_item "1" "📥 Клонировать реальный сайт по URL в камуфляж"
+            ui_item "2" "✍️ Сгенерировать стильную визитку/лендинг (ввод названия и описания)"
+            ui_item "3" "🧹 Сбросить на стандартную страницу Confluence"
+            ui_item "0" "↩️ Назад в меню SSL и домена" "${CYAN}"
+            ui_footer
+
+            read -r -p " Выберите действие (0-3): " cchoice
+            case $cchoice in
+                0) ssl_and_domain_menu ;;
+                1)
+                    echo -e "\n${BOLD}--- Клонирование реального сайта ---${NC}"
+                    echo -e "Введите URL сайта (например, https://example.com или https://techcorp.org):"
+                    read -r -p " URL: " clone_url
+                    clone_url=$(echo "$clone_url" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+                    [[ "$clone_url" =~ ^https?:// ]] || clone_url="https://$clone_url"
+                    echo "⏳ Загрузка страницы $clone_url с имитацией браузера Chrome..."
+                    local tmp_clone; tmp_clone=$(mktemp)
+                    if curl -fsSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+                        --connect-timeout 10 --max-time 30 "$clone_url" -o "$tmp_clone" 2>/dev/null && [[ -s "$tmp_clone" ]]; then
+                        mkdir -p /etc/xray
+                        mv -f "$tmp_clone" "$decoy_file"
+                        chmod 644 "$decoy_file"
+                        systemctl restart xray-sub 2>/dev/null || true
+                        echo -e "${GREEN}✅ Сайт успешно клонирован в $decoy_file и активирован!${NC}"
+                    else
+                        rm -f "$tmp_clone"
+                        echo -e "${RED}❌ Ошибка скачивания сайта по адресу $clone_url.${NC}"
+                    fi
+                    sleep 2
+                    manage_decoy_menu
+                    ;;
+                2)
+                    echo -e "\n${BOLD}--- Генерация визитки / лендинга ---${NC}"
+                    read -r -p " Название компании / проекта: " proj_title
+                    [[ -z "$proj_title" ]] && proj_title="TechSolutions Hub"
+                    read -r -p " Краткое описание (слоган): " proj_desc
+                    [[ -z "$proj_desc" ]] && proj_desc="High performance digital infrastructure and cloud consulting services."
+                    mkdir -p /etc/xray
+                    cat > "$decoy_file" <<EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>$proj_title</title>
+    <style>
+        :root { --bg: #090a0f; --card: #131722; --text: #e2e8f0; --accent: #3b82f6; }
+        body { margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .container { max-width: 600px; padding: 40px; background: var(--card); border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.05); text-align: center; }
+        h1 { font-size: 2rem; margin-bottom: 1rem; color: #fff; }
+        p { color: #94a3b8; font-size: 1.1rem; line-height: 1.6; margin-bottom: 2rem; }
+        .status { display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px; background: rgba(34,197,94,0.1); color: #4ade80; border-radius: 9999px; font-size: 0.9rem; font-weight: 500; }
+        .status-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 8px #22c55e; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status"><div class="status-dot"></div> Systems Operational</div>
+        <h1>$proj_title</h1>
+        <p>$proj_desc</p>
+    </div>
+</body>
+</html>
+EOF
+                    chmod 644 "$decoy_file"
+                    systemctl restart xray-sub 2>/dev/null || true
+                    echo -e "${GREEN}✅ Страница-визитка успешно создана и активирована!${NC}"
+                    sleep 2
+                    manage_decoy_menu
+                    ;;
+                3)
+                    rm -f "$decoy_file"
+                    systemctl restart xray-sub 2>/dev/null || true
+                    echo -e "${GREEN}✅ Камуфляж сброшен на стандартную страницу Confluence.${NC}"
+                    sleep 1.5
+                    manage_decoy_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    manage_decoy_menu
+                    ;;
+            esac
+        }
+
         ssl_and_domain_menu() {
             local current_domain; current_domain=$(get_installed_var "DOMAIN")
             local ssl_status="${RED}ОТСУТСТВУЕТ${NC}"
@@ -4422,12 +4576,14 @@ EOF
             ui_item "1" "🔄 Принудительно обновить SSL-сертификат прямо сейчас"
             ui_item "2" "🧪 Проверить автопродление (Dry-run тест)"
             ui_item "3" "🌐 Сменить основной домен (с перевыпуском SSL)"
+            ui_item "4" "🎭 Управление камуфляжем (Decoy / SelfSteal сайт-заглушка)"
             ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
             ui_footer
             
-            read -r -p " Выберите действие (0-3): " dchoice
+            read -r -p " Выберите действие (0-4): " dchoice
             case $dchoice in
                 0) main_menu ;;
+                4) manage_decoy_menu ;;
                 1)
                     renew_ssl_certificate --force
                     echo -e "\nНажмите Enter для возврата в меню..."
@@ -4666,7 +4822,7 @@ EOF
             ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
             ui_divider
             ui_item "8" "🔧 Оптимизация VPS (Xanmod ядро, BBR, RPS, Sysctl, ZRAM)"
-            ui_item "9" "🔄 Обновить скрипт с GitHub и применить новые фиксы"
+            ui_item "9" "🔄 Обновить скрипт с GitHub / зеркал и применить новые фиксы"
             ui_item "10" "🌐 Изменить отпечаток TLS (Fingerprint)"
             ui_item "11" "🔐 Управление SSL-сертификатом и доменом"
             ui_item "12" "🔑 Управление Provider ID (happ-proxy.com)"
@@ -4684,14 +4840,7 @@ EOF
                 6) show_connections ; main_menu ;;
                 7) run_diagnostics ; main_menu ;;
                 8) optimize_vps ;;
-                9) 
-                    echo -e "\n${BOLD}${GREEN}🔄 Загрузка последней версии скрипта...${NC}"
-                    cd /root || exit
-                    curl -fsSL --connect-timeout 10 -o install_xray.sh -L "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM" && chmod +x install_xray.sh
-                    echo -e "${GREEN}✅ Скрипт обновлен! Применяем обновления ядра и конфигурации...${NC}"
-                    /root/install_xray.sh --update-core
-                    exit 0
-                    ;;
+                9) update_script_from_mirrors ;;
                 10) change_fingerprint ; main_menu ;;
                 11) ssl_and_domain_menu ;;
                 12) manage_provider_id ;;
@@ -4749,6 +4898,36 @@ EOF
                 echo "🔄 Включение автообновления геоблокировок..."
                 (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; echo "30 3 * * * bash \"$script_path\" --update-geoblocks >/dev/null 2>&1") | crontab -
                 echo -e "${GREEN}✅ Автообновление включено (ежедневно в 03:30)${NC}"
+            fi
+            sleep 1.5
+        }
+
+        toggle_ipv6() {
+            local cur; cur=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)
+            mkdir -p /etc/sysctl.d
+            local conf_file="/etc/sysctl.d/99-ipv6-toggle.conf"
+            if [[ "$cur" -eq 0 ]]; then
+                echo -e "\n${YELLOW}📴 Отключение IPv6 для защиты от утечек и таймаутов...${NC}"
+                cat > "$conf_file" <<EOF
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1 || true
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+                sysctl -w net.ipv6.conf.lo.disable_ipv6=1 >/dev/null 2>&1 || true
+                echo -e "${GREEN}✅ IPv6 успешно отключен на всех интерфейсах.${NC}"
+            else
+                echo -e "\n${YELLOW}🌐 Включение IPv6 на сервере...${NC}"
+                cat > "$conf_file" <<EOF
+net.ipv6.conf.all.disable_ipv6 = 0
+net.ipv6.conf.default.disable_ipv6 = 0
+net.ipv6.conf.lo.disable_ipv6 = 0
+EOF
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1 || true
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1 || true
+                sysctl -w net.ipv6.conf.lo.disable_ipv6=0 >/dev/null 2>&1 || true
+                echo -e "${GREEN}✅ IPv6 успешно включен (Dual-Stack активен).${NC}"
             fi
             sleep 1.5
         }
@@ -4823,15 +5002,30 @@ EOF
             else
                 ui_item_color "10" "🌀 Включить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
             fi
+
+            ui_divider "${PURPLE}"
+            ui_item_color "" "${BOLD}[ Сетевой стек (IPv6) ]${NC}" "" "${PURPLE}"
+            local ipv6_val; ipv6_val=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)
+            if [[ "$ipv6_val" == "1" ]]; then
+                ui_item_color "" "Статус IPv6: ${RED}Отключен (защита от утечек и таймаутов)${NC}" "" "${PURPLE}"
+                ui_item_color "11" "🌐 Включить IPv6 на сервере (Dual-Stack)" "${YELLOW}" "${PURPLE}"
+            else
+                ui_item_color "" "Статус IPv6: ${GREEN}Включен (Dual-Stack)${NC}" "" "${PURPLE}"
+                ui_item_color "11" "📴 Отключить IPv6 (предотвратить утечки и сбои)" "${YELLOW}" "${PURPLE}"
+            fi
             
             ui_divider "${PURPLE}"
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
             ui_footer "${PURPLE}"
             
-            read -r -p " Выберите действие (0-10): " bchoice
+            read -r -p " Выберите действие (0-11): " bchoice
             case $bchoice in
                 0)
                     main_menu
+                    ;;
+                11)
+                    toggle_ipv6
+                    bypass_menu
                     ;;
                 1)
                     if [[ "$warp_installed" != "true" ]]; then
