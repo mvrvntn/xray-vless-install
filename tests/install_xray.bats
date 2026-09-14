@@ -236,12 +236,10 @@ print('OK')
     [ "$status" -eq 0 ]
 }
 
-@test "Конфигурация Xray блокирует вредоносное ПО, фишинг и майнеры" {
-    run grep "ext:geosite_IR.dat:malware" "$SCRIPT_PATH"
+@test "Конфигурация Xray блокирует рекламу и опасные порты" {
+    run grep "geosite:category-ads-all" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
-    run grep "ext:geosite_IR.dat:phishing" "$SCRIPT_PATH"
-    [ "$status" -eq 0 ]
-    run grep "ext:geosite_IR.dat:cryptominers" "$SCRIPT_PATH"
+    run grep "25,135,137,138,139,445,465,587" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
 

@@ -1712,10 +1712,7 @@ generate_server_config() {
     routing_rules_list+=('{
         "type": "field",
         "domain": [
-          "geosite:category-ads-all",
-          "ext:geosite_IR.dat:malware",
-          "ext:geosite_IR.dat:phishing",
-          "ext:geosite_IR.dat:cryptominers"
+          "geosite:category-ads-all"
         ],
         "outboundTag": "BLOCK"
       }')
