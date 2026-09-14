@@ -1034,17 +1034,24 @@ check_port_conflicts() {
     fi
 }
 
-# === Получение эмодзи флага страны ===
-get_flag_emoji() {
+# === Определение кода страны ===
+get_country_code() {
     local country_code
-    # Сначала пробуем наиболее точный ipinfo.io
     country_code=$(curl -s --connect-timeout 3 https://ipinfo.io/country 2>/dev/null | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
     if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-        # В качестве резерва используем ipapi.co
         country_code=$(curl -s --connect-timeout 3 https://ipapi.co/country/ 2>/dev/null | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
     fi
     if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
         country_code="UN"
+    fi
+    echo "$country_code"
+}
+
+# === Получение эмодзи флага страны ===
+get_flag_emoji() {
+    local country_code="${1:-}"
+    if [[ -z "$country_code" ]]; then
+        country_code=$(get_country_code)
     fi
 
     if command -v python3 &>/dev/null; then
@@ -1105,26 +1112,39 @@ install_dependencies() {
 
 # === Установка Xray ===
 install_xray() {
-    echo "🚀 Установка Xray..."
+    echo "🚀 Установка / обновление Xray..."
     bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-    systemctl enable xray > /dev/null
+    bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install-geodata >/dev/null 2>&1 || true
+    systemctl enable xray >/dev/null 2>&1 || true
+    local xray_v; xray_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
+    echo "✅ Xray ядро обновлено: $xray_v"
 }
 
 # === Установка Hysteria 2 ===
 install_hysteria() {
-    echo "🚀 Установка Hysteria 2..."
+    echo "🚀 Установка / обновление Hysteria 2..."
     systemctl stop hysteria-server >/dev/null 2>&1 || true
-    local latest_ver; latest_ver=$(curl -sSL --connect-timeout 10 "https://api.github.com/repos/apernet/hysteria/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    if [[ -z "$latest_ver" ]]; then
-        latest_ver="v2.6.0"
+    local arch; arch=$(uname -m)
+    local arch_suffix="amd64"
+    if [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
+        arch_suffix="arm64"
     fi
-    echo "Загрузка Hysteria 2 ($latest_ver)..."
-    local download_url="https://github.com/apernet/hysteria/releases/download/${latest_ver}/hysteria-linux-amd64"
-    rm -f /usr/local/bin/hysteria
-    if curl -sSL --connect-timeout 20 -o /usr/local/bin/hysteria "$download_url"; then
-        chmod +x /usr/local/bin/hysteria
-        echo "✅ Hysteria 2 успешно установлена."
+
+    echo "Загрузка актуальной Hysteria 2 ($arch_suffix)..."
+    local download_url="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${arch_suffix}"
+    local tmp_bin; tmp_bin=$(mktemp)
+    if curl -sSL --connect-timeout 20 -L -o "$tmp_bin" "$download_url" && [[ -s "$tmp_bin" ]]; then
+        chmod +x "$tmp_bin"
+        if "$tmp_bin" version >/dev/null 2>&1; then
+            mv -f "$tmp_bin" /usr/local/bin/hysteria
+            local hy2_v; hy2_v=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1)
+            echo "✅ Hysteria 2 успешно обновлена: $hy2_v"
+        else
+            rm -f "$tmp_bin"
+            echo "❌ Скачанный бинарный файл Hysteria 2 поврежден."
+        fi
     else
+        rm -f "$tmp_bin"
         echo "❌ Ошибка при скачивании Hysteria 2."
     fi
 }
@@ -1638,7 +1658,7 @@ EOF
         \"domain\": [
           $check_domains_joined
         ],
-        \"outboundTag\": \"WARP\"
+        \"outboundTag\": \"DIRECT\"
       }")
     fi
 
@@ -2340,6 +2360,7 @@ def get_installed_vars():
     vars = {
         "domain": "",
         "emoji": "",
+        "country_code": "",
         "fp": "random",
         "reality_enabled": "false",
         "reality_sni": "max.ru",
@@ -2358,6 +2379,7 @@ def get_installed_vars():
                         val = parts[1].strip()
                         if key == "domain": vars["domain"] = val
                         elif key == "emoji": vars["emoji"] = val
+                        elif key == "country_code": vars["country_code"] = val
                         elif key == "fingerprint": vars["fp"] = val
                         elif key == "reality_enabled": vars["reality_enabled"] = val
                         elif key == "reality_sni": vars["reality_sni"] = val
@@ -2828,21 +2850,17 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         ivars = get_installed_vars()
         domain = ivars["domain"]
         emoji = ivars["emoji"]
+        country_code = ivars.get("country_code", "")
         fp = ivars["fp"]
         providerid = ivars.get("providerid", "")
         if not domain:
             domain = self.headers.get('Host', '').split(':')[0]
 
-        if emoji:
-            remark_vision = f"{emoji}🌐 VLESS-TCP"
-            remark_hy2 = f"{emoji}⚡ Hysteria2"
-            remark_grpc = f"{emoji}↔️ VLESS-gRPC"
-            remark_reality = f"{emoji}🪞 VLESS-Reality ({ivars['reality_sni']})"
-        else:
-            remark_vision = "🌐 VLESS-TCP"
-            remark_hy2 = "⚡ Hysteria2"
-            remark_grpc = "↔️ VLESS-gRPC"
-            remark_reality = f"🪞 VLESS-Reality ({ivars['reality_sni']})"
+        loc_label = f"{emoji} [{country_code}] " if (emoji and country_code) else (f"{emoji} " if emoji else (f"[{country_code}] " if country_code else ""))
+        remark_vision = f"{loc_label}🌐 VLESS-TCP".strip()
+        remark_hy2 = f"{loc_label}⚡ Hysteria2".strip()
+        remark_grpc = f"{loc_label}↔️ VLESS-gRPC".strip()
+        remark_reality = f"{loc_label}🪞 VLESS-Reality ({ivars['reality_sni']})".strip()
 
         encoded_remark_vision = urllib.parse.quote(remark_vision)
         encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
@@ -3676,6 +3694,7 @@ RED='\033[0;31m'
   CONFIG_DIR="/etc/xray/client_configs"
   DOMAIN=$(awk -F= '/^DOMAIN=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
   EMOJI=$(awk -F= '/^EMOJI=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  COUNTRY_CODE=$(awk -F= '/^COUNTRY_CODE=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
   FLOW="xtls-rprx-vision"
   FINGERPRINT=$(awk -F= '/^FINGERPRINT=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
   if [[ -z "$FINGERPRINT" ]]; then FINGERPRINT="random"; fi
@@ -3719,18 +3738,20 @@ if [[ -z "$remarks" ]] || [[ "$remarks" = "null" ]]; then
   remarks="${remarks%.json}"
 fi
 
-# Генерация названий с новыми эмодзи-символами и скобками
-if [[ -n "$EMOJI" ]]; then
-  remark_vision="${EMOJI}🌐 VLESS-TCP"
-  remark_hy2="${EMOJI}⚡ Hysteria2"
-  remark_grpc="${EMOJI}↔️ VLESS-gRPC"
-  remark_reality="${EMOJI}🪞 VLESS-Reality (${REALITY_SNI})"
-else
-  remark_vision="🌐 VLESS-TCP"
-  remark_hy2="⚡ Hysteria2"
-  remark_grpc="↔️ VLESS-gRPC"
-  remark_reality="🪞 VLESS-Reality (${REALITY_SNI})"
+# Генерация названий с эмодзи и кодом локации
+loc_label=""
+if [[ -n "$EMOJI" && -n "$COUNTRY_CODE" ]]; then
+  loc_label="${EMOJI} [${COUNTRY_CODE}] "
+elif [[ -n "$EMOJI" ]]; then
+  loc_label="${EMOJI} "
+elif [[ -n "$COUNTRY_CODE" ]]; then
+  loc_label="[${COUNTRY_CODE}] "
 fi
+
+remark_vision="${loc_label}🌐 VLESS-TCP"
+remark_hy2="${loc_label}⚡ Hysteria2"
+remark_grpc="${loc_label}↔️ VLESS-gRPC"
+remark_reality="${loc_label}🪞 VLESS-Reality (${REALITY_SNI})"
 
 urlencode() {
   python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]), end='')" "$1" 2>/dev/null || echo -n "$1"
@@ -5128,7 +5149,12 @@ EOF
             echo "❌ Ошибка: Не найдены данные предыдущей установки в /etc/xray/.installed"
             exit 1
         fi
-        FLAG_EMOJI=$(get_flag_emoji)
+        COUNTRY_CODE=$(get_installed_var "COUNTRY_CODE")
+        if [[ -z "$COUNTRY_CODE" ]]; then
+            COUNTRY_CODE=$(get_country_code)
+            echo "COUNTRY_CODE=$COUNTRY_CODE" >> "$MARKER_FILE"
+        fi
+        FLAG_EMOJI=$(get_flag_emoji "$COUNTRY_CODE")
         install_dependencies
         install_xray
         install_hysteria
@@ -5254,8 +5280,9 @@ EOF
     setup_firewall
     setup_certificates
 
-    # Определяем эмодзи страны
-    FLAG_EMOJI=$(get_flag_emoji)
+    # Определяем код и эмодзи страны
+    COUNTRY_CODE=$(get_country_code)
+    FLAG_EMOJI=$(get_flag_emoji "$COUNTRY_CODE")
 
     generate_server_config
     generate_hysteria_config
@@ -5263,7 +5290,7 @@ EOF
     generate_client_configs
     install_generate_script
 
-    echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCDN_DOMAIN=none" > "$MARKER_FILE"
+    echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCOUNTRY_CODE=$COUNTRY_CODE\nCDN_DOMAIN=none" > "$MARKER_FILE"
     chmod 644 "$MARKER_FILE"
 
     # Регистрация быстрой команды xry

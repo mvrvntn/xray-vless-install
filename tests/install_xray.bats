@@ -129,4 +129,24 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
+@test "Сайты проверки IP направляются напрямую (DIRECT), а не в WARP" {
+    run grep -A 5 'check_domains_joined' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ '"outboundTag": "DIRECT"' ]]
+}
+
+@test "Hysteria 2 устанавливается через прямую ссылку latest/download с автоопределением архитектуры" {
+    run grep "releases/latest/download/hysteria-linux" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "arch_suffix" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Скрипт содержит функцию get_country_code и сохраняет COUNTRY_CODE" {
+    run grep "get_country_code()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "COUNTRY_CODE=" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
 
