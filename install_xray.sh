@@ -4184,14 +4184,14 @@ update_script_from_mirrors() {
     local tmp_script="/tmp/install_xray_update.sh"
     local dl_success=false
     local mirrors=(
-        "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$RANDOM"
-        "https://cdn.jsdelivr.net/gh/mvrvntn/xray-vless-install@main/install_xray.sh"
+        "https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh?v=$(date +%s)"
+        "https://cdn.jsdelivr.net/gh/mvrvntn/xray-vless-install@main/install_xray.sh?v=$(date +%s)"
         "https://raw.githack.com/mvrvntn/xray-vless-install/main/install_xray.sh"
         "https://gh-proxy.com/https://raw.githubusercontent.com/mvrvntn/xray-vless-install/main/install_xray.sh"
     )
     for m_url in "${mirrors[@]}"; do
         echo -e " ${YELLOW}Попытка загрузки:${NC} $m_url"
-        if curl -fsSL --connect-timeout 8 --max-time 30 "$m_url" -o "$tmp_script" 2>/dev/null; then
+        if curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" --connect-timeout 8 --max-time 30 "$m_url" -o "$tmp_script" 2>/dev/null; then
             if [[ -s "$tmp_script" ]] && bash -n "$tmp_script" 2>/dev/null; then
                 mv -f "$tmp_script" install_xray.sh
                 chmod +x install_xray.sh
