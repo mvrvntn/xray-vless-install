@@ -1137,7 +1137,10 @@ install_hysteria() {
         chmod +x "$tmp_bin"
         if "$tmp_bin" version >/dev/null 2>&1; then
             mv -f "$tmp_bin" /usr/local/bin/hysteria
-            local hy2_v; hy2_v=$(/usr/local/bin/hysteria version 2>/dev/null | head -n 1)
+            local hy2_v; hy2_v=$(/usr/local/bin/hysteria version 2>&1 | grep -v '^[[:space:]]*$' | head -n 1)
+            if [[ -z "$hy2_v" ]]; then
+                hy2_v=$(/usr/local/bin/hysteria -v 2>&1 | grep -v '^[[:space:]]*$' | head -n 1)
+            fi
             echo "✅ Hysteria 2 успешно обновлена: $hy2_v"
         else
             rm -f "$tmp_bin"
