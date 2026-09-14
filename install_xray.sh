@@ -3195,7 +3195,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         encoded_remark_reality = urllib.parse.quote(remark_reality)
         
         vless_vision = f"vless://{uuid_param}@{domain}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni={domain}&type=tcp&fp={fp}&alpn=http%2F1.1#{encoded_remark_vision}"
-        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:20443?sni={domain}&hop=20000-50000&mport=20000-50000#{encoded_remark_hy2}"
+        hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:20443?sni={domain}&hop=20000-50000&mport=20000-50000&mportHopInt=30#{encoded_remark_hy2}"
         vless_xhttp = f"vless://{uuid_param}@{domain}:8443?encryption=none&security=tls&type=xhttp&path=%2Fxhttp&mode=auto&fp={fp}&alpn=h2%2Chttp%2F1.1&sni={domain}&host={domain}#{encoded_remark_xhttp}"
         vless_grpc = f"vless://{uuid_param}@{domain}:2053?encryption=none&security=tls&type=grpc&serviceName=vless-grpc&service_name=vless-grpc&mode=multi&fp={fp}&alpn=h2&sni={domain}#{encoded_remark_grpc}"
         
@@ -3267,6 +3267,14 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 resp_headers["autorouting"] = "happ://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON"
             else:
                 resp_headers["autorouting"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
+                resp_headers["routing"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
+        else:
+            if "happ" in user_agent:
+                resp_headers["routing"] = "happ://routing/off"
+                resp_headers["autorouting"] = "happ://routing/off"
+            else:
+                resp_headers["routing"] = "off"
+                resp_headers["autorouting"] = "incy://routing/off"
 
         if format_param == "singbox" or format_param == "sing-box":
             enable_fragment = True
@@ -3970,6 +3978,16 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             )
             if providerid:
                 sub_metadata = f"#providerid {providerid}\n" + sub_metadata
+            if routing_enabled:
+                if "happ" in user_agent:
+                    sub_metadata += "happ://routing/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON\n"
+                else:
+                    sub_metadata += "://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON\n"
+            else:
+                if "happ" in user_agent:
+                    sub_metadata += "#routing: off\n"
+                else:
+                    sub_metadata += "#routing: off\n://routing/off\n"
             if "incy" in user_agent:
                 sub_metadata += (
                     "#server-address-resolve-enable: 0\n"
@@ -4109,7 +4127,7 @@ encoded_remark_reality=$(urlencode "$remark_reality")
 
 # Ссылки для подключения
 VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?encryption=none&flow=${FLOW}&security=tls&sni=${DOMAIN}&type=tcp&fp=${FINGERPRINT}&alpn=http%2F1.1#${encoded_remark_vision}"
-HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:20443?sni=${DOMAIN}&hop=20000-50000&mport=20000-50000#${encoded_remark_hy2}"
+HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:20443?sni=${DOMAIN}&hop=20000-50000&mport=20000-50000&mportHopInt=30#${encoded_remark_hy2}"
 VLESS_XHTTP="vless://${UUID}@${DOMAIN}:8443?encryption=none&security=tls&type=xhttp&path=%2Fxhttp&mode=auto&fp=${FINGERPRINT}&alpn=h2%2Chttp%2F1.1&sni=${DOMAIN}&host=${DOMAIN}#${encoded_remark_xhttp}"
 VLESS_GRPC="vless://${UUID}@${DOMAIN}:2053?encryption=none&security=tls&type=grpc&serviceName=vless-grpc&service_name=vless-grpc&mode=multi&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
