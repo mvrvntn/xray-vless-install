@@ -149,4 +149,9 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-
+@test "Сервер подписок использует роутинг из репозитория mvrvntn/routing" {
+    run grep "mvrvntn/routing@main/HAPP/DEFAULT.JSON" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "mvrvntn/routing@main/INCY/DEFAULT.JSON" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}

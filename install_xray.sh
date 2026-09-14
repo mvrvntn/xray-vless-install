@@ -2942,9 +2942,10 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         routing_enabled = ivars.get("routing_enabled", "true") != "false"
         if routing_enabled:
             if "happ" in user_agent:
-                resp_headers["autorouting"] = "happ://autorouting/onadd/https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-routing@main/HAPP/JSONSUB.JSON"
+                resp_headers["routing"] = "happ://routing/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON"
+                resp_headers["autorouting"] = "happ://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON"
             else:
-                resp_headers["autorouting"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/hydraponique/roscomvpn-routing@main/INCY/JSONSUB.JSON"
+                resp_headers["autorouting"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
 
         if format_param == "singbox" or format_param == "sing-box":
             outbounds_list = []
@@ -3065,19 +3066,19 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "rule_set": [
                         {
                             "tag": "oisd-big",
-                            "url": "https://github.com/burjuyz/RuRulesets/raw/main/ruleset-domain-oisd_big.srs",
+                            "url": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@release/sing-box/category-ads.srs",
                             "type": "remote",
                             "format": "binary"
                         },
                         {
                             "tag": "ru-bundle",
-                            "url": "https://github.com/legiz-ru/sb-rule-sets/raw/main/ru-bundle.srs",
+                            "url": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@release/sing-box/category-ru.srs",
                             "type": "remote",
                             "format": "binary"
                         },
                         {
                             "tag": "discord-voice-ip-list",
-                            "url": "https://github.com/legiz-ru/sb-rule-sets/raw/main/discord-voice-ip-list.srs",
+                            "url": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@release/sing-box/discord-ip.srs",
                             "type": "remote",
                             "format": "binary"
                         },
@@ -3459,8 +3460,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 "ipv6": False,
                 "external-controller": "127.0.0.1:9090",
                 "geox-url": {
-                    "geoip": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat",
-                    "geosite": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat",
+                    "geoip": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@release/geoip.dat",
+                    "geosite": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@release/geosite.dat",
                     "mmdb": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb"
                 },
                 "dns": {
