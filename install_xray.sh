@@ -3956,7 +3956,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             return
 
         # Default raw link list formatted base64
-        if "v2ray" in user_agent or "clash" in user_agent:
+        if format_param in ("raw", "txt") or any(r in user_agent for r in ("v2ray", "clash", "zeroblock", "openwrt", "passwall")):
             sub_content = sub_content_links
         else:
             sub_metadata = (
