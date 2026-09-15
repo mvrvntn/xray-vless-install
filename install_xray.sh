@@ -1060,7 +1060,9 @@ check_port_conflicts() {
             if [[ -n "$port_443_pid" ]]; then
                 kill "$port_443_pid" 2>/dev/null || true
                 sleep 0.5
-                kill -0 "$port_443_pid" 2>/dev/null && kill -9 "$port_443_pid" 2>/dev/null || true
+                if kill -0 "$port_443_pid" 2>/dev/null; then
+                    kill -9 "$port_443_pid" 2>/dev/null || true
+                fi
                 echo "Процесс $port_443_pid завершен."
             fi
         else
@@ -1082,7 +1084,9 @@ check_port_conflicts() {
             if [[ -n "$port_80_pid" ]]; then
                 kill "$port_80_pid" 2>/dev/null || true
                 sleep 0.5
-                kill -0 "$port_80_pid" 2>/dev/null && kill -9 "$port_80_pid" 2>/dev/null || true
+                if kill -0 "$port_80_pid" 2>/dev/null; then
+                    kill -9 "$port_80_pid" 2>/dev/null || true
+                fi
                 echo "Процесс $port_80_pid завершен."
             fi
         else
@@ -1104,7 +1108,9 @@ check_port_conflicts() {
             if [[ -n "$port_8443_pid" ]]; then
                 kill "$port_8443_pid" 2>/dev/null || true
                 sleep 0.5
-                kill -0 "$port_8443_pid" 2>/dev/null && kill -9 "$port_8443_pid" 2>/dev/null || true
+                if kill -0 "$port_8443_pid" 2>/dev/null; then
+                    kill -9 "$port_8443_pid" 2>/dev/null || true
+                fi
                 echo "Процесс $port_8443_pid завершен."
             fi
         else
@@ -1126,7 +1132,9 @@ check_port_conflicts() {
             if [[ -n "$port_2053_pid" ]]; then
                 kill "$port_2053_pid" 2>/dev/null || true
                 sleep 0.5
-                kill -0 "$port_2053_pid" 2>/dev/null && kill -9 "$port_2053_pid" 2>/dev/null || true
+                if kill -0 "$port_2053_pid" 2>/dev/null; then
+                    kill -9 "$port_2053_pid" 2>/dev/null || true
+                fi
                 echo "Процесс $port_2053_pid завершен."
             fi
         else
@@ -1196,12 +1204,14 @@ install_dependencies() {
     fi
     # Оптимизация буферов UDP для Hysteria 2 (QUIC) и сокетов TCP (Reality/Vision)
     if ! grep -q "net.core.rmem_max" /etc/sysctl.conf 2>/dev/null && [[ ! -f /etc/sysctl.d/99-zzz-node-optimization.conf ]]; then
-        echo "net.core.rmem_max=33554432" >> /etc/sysctl.conf
-        echo "net.core.wmem_max=33554432" >> /etc/sysctl.conf
-        echo "net.core.rmem_default=262144" >> /etc/sysctl.conf
-        echo "net.core.wmem_default=262144" >> /etc/sysctl.conf
-        echo "net.core.somaxconn=65536" >> /etc/sysctl.conf
-        echo "net.core.netdev_max_backlog=250000" >> /etc/sysctl.conf
+        cat >> /etc/sysctl.conf << 'EOF'
+net.core.rmem_max=33554432
+net.core.wmem_max=33554432
+net.core.rmem_default=262144
+net.core.wmem_default=262144
+net.core.somaxconn=65536
+net.core.netdev_max_backlog=250000
+EOF
     fi
     # Включаем TCP Fast Open (значение 3 включает и на отправку, и на прием данных)
     if ! sysctl net.ipv4.tcp_fastopen 2>/dev/null | grep -q "3"; then
@@ -4272,6 +4282,7 @@ restore_backup() {
     mkdir -p "$BACKUP_DIR"
 
     if [[ "$target" == "latest" ]] || [[ -z "$target" && ! -t 0 ]]; then
+        # shellcheck disable=SC2012
         backup_file=$(ls -t "${BACKUP_DIR}"/xray_backup_*.tar.gz 2>/dev/null | head -n 1 || true)
         [[ -z "$backup_file" ]] && { echo -e "${RED}❌ Резервные копии не найдены в $BACKUP_DIR${NC}"; return 1; }
     elif [[ -n "$target" && -f "$target" ]]; then

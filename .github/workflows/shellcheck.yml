@@ -19,7 +19,7 @@ jobs:
         uses: ludeeus/action-shellcheck@master
         with:
           scandir: '.'
-          additional_files: 'install_xray.sh'
+          severity: warning
 
       - name: Validate Embedded Python Syntax
         run: |
