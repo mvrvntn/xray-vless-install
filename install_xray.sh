@@ -3278,6 +3278,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             else:
                 resp_headers["autorouting"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
                 resp_headers["routing"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
+                resp_headers["routing-provider"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
         else:
             if "happ" in user_agent:
                 resp_headers["routing"] = "happ://routing/off"
@@ -3756,7 +3757,12 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     },
                     {
                         "tag": "dns-out",
-                        "protocol": "dns"
+                        "protocol": "dns",
+                        "streamSettings": {
+                            "sockopt": {
+                                "dialerProxy": "proxy"
+                            }
+                        }
                     }
                 ]
             }
@@ -3992,12 +3998,12 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 if "happ" in user_agent:
                     sub_metadata += "happ://routing/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON\n"
                 else:
-                    sub_metadata += "://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON\n"
+                    sub_metadata += "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON\n"
             else:
                 if "happ" in user_agent:
                     sub_metadata += "#routing: off\n"
                 else:
-                    sub_metadata += "#routing: off\n://routing/off\n"
+                    sub_metadata += "#routing: off\nincy://routing/off\n"
             if "incy" in user_agent:
                 sub_metadata += (
                     "#server-address-resolve-enable: 0\n"
@@ -4163,6 +4169,12 @@ fi
 
 echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
+echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
+echo -e " ${BOLD}💡 Рекомендации по настройке клиентов:${NC}"
+echo -e "   • ${YELLOW}INCY:${NC} В Настройки → Туннель → VPN DNS выберите 'Google' или 'Cloudflare'"
+echo -e "     (не 'Internal'), чтобы корректно применялись правила роутинга и анти-реклама."
+echo -e "   • ${YELLOW}Мобильные сети (LTE/5G):${NC} Если зависают тяжелые видео (TG/Insta),"
+echo -e "     выставите в настройках туннеля MTU = 1280 (фикс PMTU black hole)."
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 
 echo -e "\n${BOLD}${CYAN}🔳  ГЕНЕРАЦИЯ QR-КОДА${NC}"
