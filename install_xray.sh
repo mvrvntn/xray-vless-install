@@ -2641,6 +2641,7 @@ def get_installed_vars():
         "reality_pbk": "",
         "reality_sid": "",
         "routing_enabled": "true",
+        "routing_profile": "default",
         "providerid": ""
     }
     try:
@@ -2660,6 +2661,7 @@ def get_installed_vars():
                         elif key == "reality_public_key": vars["reality_pbk"] = val
                         elif key == "reality_short_id": vars["reality_sid"] = val
                         elif key == "routing_enabled": vars["routing_enabled"] = val
+                        elif key in ("routing_profile", "routing_mode"): vars["routing_profile"] = val.lower()
                         elif key in ("provider_id", "providerid"): vars["providerid"] = val
     except Exception:
         pass
@@ -3271,14 +3273,34 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             })
 
         routing_enabled = ivars.get("routing_enabled", "true") != "false"
-        if routing_enabled:
+        routing_profile = ivars.get("routing_profile", "default").lower()
+        if not routing_enabled:
+            routing_profile = "off"
+
+        routing_cdn_map = {
+            "relocant": {
+                "happ": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/RELOCANT/HAPP.JSON",
+                "incy": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/RELOCANT/INCY.JSON"
+            },
+            "whitelist": {
+                "happ": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/WHITELIST.JSON",
+                "incy": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/WHITELIST.JSON"
+            },
+            "default": {
+                "happ": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON",
+                "incy": "https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
+            }
+        }
+
+        if routing_profile in routing_cdn_map:
+            prof_data = routing_cdn_map[routing_profile]
             if "happ" in user_agent:
-                resp_headers["routing"] = "happ://routing/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON"
-                resp_headers["autorouting"] = "happ://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON"
+                resp_headers["routing"] = f"happ://routing/onadd/{prof_data['happ']}"
+                resp_headers["autorouting"] = f"happ://autorouting/onadd/{prof_data['happ']}"
             else:
-                resp_headers["autorouting"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
-                resp_headers["routing"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
-                resp_headers["routing-provider"] = "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON"
+                resp_headers["autorouting"] = f"incy://autorouting/onadd/{prof_data['incy']}"
+                resp_headers["routing"] = f"incy://autorouting/onadd/{prof_data['incy']}"
+                resp_headers["routing-provider"] = f"incy://autorouting/onadd/{prof_data['incy']}"
         else:
             if "happ" in user_agent:
                 resp_headers["routing"] = "happ://routing/off"
@@ -3532,6 +3554,81 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     }
                 }
             }
+
+            if routing_profile == "relocant":
+                singbox_config["dns"]["servers"] = [
+                    {
+                        "tag": "local",
+                        "detour": "direct",
+                        "address": "https://1.1.1.1/dns-query",
+                        "strategy": "ipv4_only",
+                        "address_strategy": "prefer_ipv4"
+                    },
+                    {
+                        "tag": "ru-dns",
+                        "detour": "→ Remnawave",
+                        "address": "https://77.88.8.8/dns-query",
+                        "strategy": "ipv4_only",
+                        "address_strategy": "prefer_ipv4"
+                    },
+                    {
+                        "tag": "remote",
+                        "address": "fakeip"
+                    }
+                ]
+                singbox_config["dns"]["rules"] = [
+                    {
+                        "rule_set": ["ru-bundle"],
+                        "server": "remote"
+                    },
+                    {
+                        "server": "local",
+                        "outbound": "any"
+                    }
+                ]
+                singbox_config["route"]["rules"] = [
+                    {"action": "sniff"},
+                    {
+                        "mode": "or",
+                        "type": "logical",
+                        "rules": [
+                            {"protocol": "dns"},
+                            {"port": 53}
+                        ],
+                        "action": "hijack-dns"
+                    },
+                    {"outbound": "direct", "ip_is_private": True},
+                    {
+                        "outbound": "direct",
+                        "ip_cidr": [
+                            "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                            "169.254.0.0/16", "100.64.0.0/10", "224.0.0.0/4", "255.255.255.255/32",
+                            "::1/128", "fc00::/7", "fe80::/10"
+                        ]
+                    },
+                    {"port": [25, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
+                    {"outbound": "block", "rule_set": ["oisd-big"]},
+                    {"port": [443], "network": ["udp"], "outbound": "block"},
+                    {"outbound": "→ Remnawave", "rule_set": ["ru-bundle"]},
+                    {"outbound": "direct"}
+                ]
+            elif routing_profile == "off":
+                singbox_config["route"]["rules"] = [
+                    {"action": "sniff"},
+                    {
+                        "mode": "or",
+                        "type": "logical",
+                        "rules": [
+                            {"protocol": "dns"},
+                            {"port": 53}
+                        ],
+                        "action": "hijack-dns"
+                    },
+                    {"outbound": "direct", "ip_is_private": True},
+                    {"port": [25, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
+                    {"outbound": "→ Remnawave"}
+                ]
+
             body = json.dumps(singbox_config, indent=2, ensure_ascii=False)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -3766,6 +3863,24 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     }
                 ]
             }
+
+            if routing_profile == "relocant":
+                xray_config["routing"]["rules"] = [
+                    {"port": 53, "type": "field", "outboundTag": "dns-out"},
+                    {"port": "25,135,137,138,139,445,465,587", "type": "field", "network": "tcp,udp", "outboundTag": "block"},
+                    {"port": 443, "type": "field", "network": "udp", "outboundTag": "block"},
+                    {"type": "field", "domain": ["geosite:win-spy", "geosite:torrent", "geosite:category-ads"], "outboundTag": "block"},
+                    {"type": "field", "domain": ["geosite:category-ru", "geosite:whitelist", "geosite:faceit"], "balancerTag": "Super_Balancer"},
+                    {"type": "field", "ip": ["geoip:ru"], "balancerTag": "Super_Balancer"},
+                    {"type": "field", "network": "tcp,udp", "outboundTag": "direct"}
+                ]
+            elif routing_profile == "off":
+                xray_config["routing"]["rules"] = [
+                    {"port": 53, "type": "field", "outboundTag": "dns-out"},
+                    {"port": "25,135,137,138,139,445,465,587", "type": "field", "network": "tcp,udp", "outboundTag": "block"},
+                    {"type": "field", "network": "tcp,udp", "balancerTag": "Super_Balancer"}
+                ]
+
             body = json.dumps(xray_config, indent=2, ensure_ascii=False)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -3962,6 +4077,36 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "MATCH,🛡️ VPN"
                 ]
             }
+
+            if routing_profile == "relocant":
+                clash_config["rules"] = [
+                    "DST-PORT,25,REJECT",
+                    "DST-PORT,135,REJECT",
+                    "DST-PORT,137,REJECT",
+                    "DST-PORT,138,REJECT",
+                    "DST-PORT,139,REJECT",
+                    "DST-PORT,445,REJECT",
+                    "DST-PORT,465,REJECT",
+                    "DST-PORT,587,REJECT",
+                    "AND,((NETWORK,udp),(PORT,443)),REJECT",
+                    "RULE-SET,private-domains,DIRECT",
+                    "RULE-SET,category-ru,🛡️ VPN",
+                    "GEOIP,RU,🛡️ VPN",
+                    "MATCH,DIRECT"
+                ]
+            elif routing_profile == "off":
+                clash_config["rules"] = [
+                    "DST-PORT,25,REJECT",
+                    "DST-PORT,135,REJECT",
+                    "DST-PORT,137,REJECT",
+                    "DST-PORT,138,REJECT",
+                    "DST-PORT,139,REJECT",
+                    "DST-PORT,445,REJECT",
+                    "DST-PORT,465,REJECT",
+                    "DST-PORT,587,REJECT",
+                    "MATCH,🛡️ VPN"
+                ]
+
             body = dict_to_yaml(clash_config)
             self.send_response(200)
             self.send_header("Content-Type", "application/yaml; charset=utf-8")
@@ -3994,11 +4139,12 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             )
             if providerid:
                 sub_metadata = f"#providerid {providerid}\n" + sub_metadata
-            if routing_enabled:
+            if routing_profile in routing_cdn_map:
+                prof_data = routing_cdn_map[routing_profile]
                 if "happ" in user_agent:
-                    sub_metadata += "happ://routing/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/HAPP/DEFAULT.JSON\n"
+                    sub_metadata += f"happ://routing/onadd/{prof_data['happ']}\n"
                 else:
-                    sub_metadata += "incy://autorouting/onadd/https://cdn.jsdelivr.net/gh/mvrvntn/routing@main/INCY/DEFAULT.JSON\n"
+                    sub_metadata += f"incy://autorouting/onadd/{prof_data['incy']}\n"
             else:
                 if "happ" in user_agent:
                     sub_metadata += "#routing: off\n"
@@ -4902,9 +5048,24 @@ EOF
                 fi
             fi
 
+            local routing_enabled; routing_enabled=$(get_installed_var "ROUTING_ENABLED")
+            local routing_prof; routing_prof=$(get_installed_var "ROUTING_PROFILE")
+            [[ -z "$routing_prof" ]] && routing_prof="default"
+            local routing_badge
+            if [[ "$routing_enabled" == "false" || "$routing_prof" == "off" ]]; then
+                routing_badge="${RED}ОТКЛЮЧЕН (100% в туннель)${NC}"
+            elif [[ "$routing_prof" == "relocant" ]]; then
+                routing_badge="${CYAN}RELOCANT (Мир напрямую / РФ через сервер)${NC}"
+            elif [[ "$routing_prof" == "whitelist" ]]; then
+                routing_badge="${YELLOW}WHITELIST (Белый список РФ)${NC}"
+            else
+                routing_badge="${GREEN}DEFAULT (РФ напрямую / Обход блокировок)${NC}"
+            fi
+
             ui_header "🖥️  СТАТУС СЕРВЕРА"
             ui_status "🌐" "Сервер" "${GREEN}$domain${NC} | SSL: [$ssl_badge]"
             ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
+            ui_status "🧭" "Роутинг" "$routing_badge"
             ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status] | Tor: [$tor_status]"
             ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
             ui_footer
@@ -5364,6 +5525,74 @@ EOF
             esac
         }
 
+        manage_routing_profile() {
+            ui_header "🧭  ВЫБОР ПРОФИЛЯ МАРШРУТИЗАЦИИ (ROUTING)"
+            local current_prof; current_prof=$(get_installed_var "ROUTING_PROFILE")
+            local routing_enabled; routing_enabled=$(get_installed_var "ROUTING_ENABLED")
+            [[ -z "$current_prof" ]] && current_prof="default"
+            if [[ "$routing_enabled" == "false" ]]; then
+                current_prof="off"
+            fi
+
+            local prof_upper; prof_upper=$(echo "$current_prof" | tr '[:lower:]' '[:upper:]')
+            echo -e " Текущий активный профиль: ${BOLD}${CYAN}${prof_upper}${NC}\n"
+            ui_item "1" "⭐️ DEFAULT — Обход блокировок для РФ [Для зарубежных VPS]"
+            echo -e "     ${GRAY}• РФ ресурсы напрямую без VPN, зарубежные/блокировки — через сервер.${NC}"
+            ui_item "2" "🌍 RELOCANT — Для релокантов за рубежом [Для российских VPS]"
+            echo -e "     ${GRAY}• Весь мировой интернет напрямую (1 Гбит/с), сервисы РФ (Госуслуги,${NC}"
+            echo -e "       ${GRAY}банки, Кинопоиск) — через этот российский сервер.${NC}"
+            ui_item "3" "🛡️ WHITELIST — Режим высокой автономии (Белые списки)"
+            echo -e "     ${GRAY}• Напрямую исключительно критическая инфраструктура РФ, остальное в VPN.${NC}"
+            ui_item "4" "📴 OFF — Отключить передачу маршрутов"
+            echo -e "     ${GRAY}• Клиенты отключают сплит-туннелирование и пускают весь трафик в туннель.${NC}"
+            ui_divider
+            ui_item "0" "↩️ Вернуться назад" "${CYAN}"
+            ui_footer
+            read -r -p " Выберите действие (0-4): " r_choice
+            case "$r_choice" in
+                1)
+                    update_marker_val "ROUTING_PROFILE" "default"
+                    update_marker_val "ROUTING_ENABLED" "true"
+                    echo -e "\n${GREEN}✅ Установлен профиль: DEFAULT (РФ напрямую, обход блокировок)${NC}"
+                    systemctl restart xray-sub >/dev/null 2>&1
+                    log_info "Changed routing profile to default"
+                    sleep 1.5
+                    ;;
+                2)
+                    update_marker_val "ROUTING_PROFILE" "relocant"
+                    update_marker_val "ROUTING_ENABLED" "true"
+                    echo -e "\n${GREEN}✅ Установлен профиль: RELOCANT (Для релокантов на РФ-сервере)${NC}"
+                    systemctl restart xray-sub >/dev/null 2>&1
+                    log_info "Changed routing profile to relocant"
+                    sleep 1.5
+                    ;;
+                3)
+                    update_marker_val "ROUTING_PROFILE" "whitelist"
+                    update_marker_val "ROUTING_ENABLED" "true"
+                    echo -e "\n${GREEN}✅ Установлен профиль: WHITELIST (Белый список РФ)${NC}"
+                    systemctl restart xray-sub >/dev/null 2>&1
+                    log_info "Changed routing profile to whitelist"
+                    sleep 1.5
+                    ;;
+                4)
+                    update_marker_val "ROUTING_PROFILE" "off"
+                    update_marker_val "ROUTING_ENABLED" "false"
+                    echo -e "\n${YELLOW}📴 Передача маршрутов отключена (весь трафик в туннель)${NC}"
+                    systemctl restart xray-sub >/dev/null 2>&1
+                    log_info "Routing profile disabled"
+                    sleep 1.5
+                    ;;
+                0)
+                    return 0
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    manage_routing_profile
+                    ;;
+            esac
+        }
+
         manage_provider_id() {
             ui_header "🔑 УПРАВЛЕНИЕ PROVIDER ID"
             local current_pid; current_pid=$(get_installed_var "PROVIDER_ID")
@@ -5442,7 +5671,7 @@ EOF
             ui_item "1" "📱 Показать QR-коды и ссылки подключения"
             ui_item "2" "👤 Добавить нового пользователя / устройство"
             ui_item "3" "🗑️ Удалить существующего пользователя"
-            ui_item "4" "🌀 Управление обходами блокировок (WARP, Opera, Tor)"
+            ui_item "4" "🌀 Управление обходами и маршрутизацией (Routing, WARP, Tor)"
             ui_divider
             ui_item "5" "📰 Просмотреть системные логи служб"
             ui_item "6" "📊 Мониторинг active-соединений (порты 443 / 2053 / 8443)"
@@ -5620,17 +5849,22 @@ EOF
             fi
             
             ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ Настройки подписки ]${NC}" "" "${PURPLE}"
+            ui_item_color "" "${BOLD}[ Профиль маршрутизации клиентов (Routing) ]${NC}" "" "${PURPLE}"
             local routing_enabled; routing_enabled=$(get_installed_var "ROUTING_ENABLED")
-            [[ -z "$routing_enabled" ]] && routing_enabled="true"
-            local routing_status="${RED}Отключена${NC}"
-            [[ "$routing_enabled" == "true" ]] && routing_status="${GREEN}Включена${NC}"
-            ui_item_color "" "Передача маршрутов (Routing): $routing_status" "" "${PURPLE}"
-            if [[ "$routing_enabled" == "true" ]]; then
-                ui_item_color "10" "📴 Отключить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
+            local routing_prof; routing_prof=$(get_installed_var "ROUTING_PROFILE")
+            [[ -z "$routing_prof" ]] && routing_prof="default"
+            local r_desc
+            if [[ "$routing_enabled" == "false" || "$routing_prof" == "off" ]]; then
+                r_desc="${RED}ОТКЛЮЧЕН (100% в туннель)${NC}"
+            elif [[ "$routing_prof" == "relocant" ]]; then
+                r_desc="${CYAN}RELOCANT (Мир напрямую / РФ через сервер)${NC}"
+            elif [[ "$routing_prof" == "whitelist" ]]; then
+                r_desc="${YELLOW}WHITELIST (Белые списки РФ)${NC}"
             else
-                ui_item_color "10" "🌀 Включить передачу маршрутов в клиенты" "${YELLOW}" "${PURPLE}"
+                r_desc="${GREEN}DEFAULT (РФ напрямую / Обход блокировок)${NC}"
             fi
+            ui_item_color "" "Текущий профиль: $r_desc" "" "${PURPLE}"
+            ui_item_color "10" "🧭 Сменить профиль маршрутизации (Default / Relocant / Whitelist / Off)" "${YELLOW}" "${PURPLE}"
 
             ui_divider "${PURPLE}"
             ui_item_color "" "${BOLD}[ Сетевой стек (IPv6) ]${NC}" "" "${PURPLE}"
@@ -5805,16 +6039,7 @@ EOF
                     bypass_menu
                     ;;
                 10)
-                    local current_status; current_status=$(get_installed_var "ROUTING_ENABLED")
-                    if [[ "$current_status" == "false" ]]; then
-                        update_marker_val "ROUTING_ENABLED" "true"
-                        echo -e "${GREEN}✅ Передача маршрутов включена по умолчанию.${NC}"
-                    else
-                        update_marker_val "ROUTING_ENABLED" "false"
-                        echo -e "${GREEN}✅ Передача маршрутов отключена.${NC}"
-                    fi
-                    setup_subscription_server
-                    sleep 1.5
+                    manage_routing_profile
                     bypass_menu
                     ;;
                 *)
@@ -6092,7 +6317,7 @@ EOF
         
         # 1. Ввод домена с валидацией
         while true; do
-            echo -e " ${BOLD}${YELLOW}Шаг 1 из 4:${NC} Укажите ваш домен"
+            echo -e " ${BOLD}${YELLOW}Шаг 1 из 5:${NC} Укажите ваш домен"
             read -r -p " 🌐 Введите домен (например, sub.domain.com): " DOMAIN
             DOMAIN=$(echo "$DOMAIN" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
             if [[ -n "$DOMAIN" ]]; then
@@ -6103,7 +6328,7 @@ EOF
         
         # 2. Ввод Email с валидацией
         while true; do
-            echo -e "\n ${BOLD}${YELLOW}Шаг 2 из 4:${NC} Укажите Email для SSL-сертификата Let's Encrypt"
+            echo -e "\n ${BOLD}${YELLOW}Шаг 2 из 5:${NC} Укажите Email для SSL-сертификата Let's Encrypt"
             read -r -p " 📧 Email: " EMAIL
             EMAIL=$(echo "$EMAIL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
             if [[ "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
@@ -6114,7 +6339,7 @@ EOF
         
         # 3. Ввод количества устройств с валидацией
         while true; do
-            echo -e "\n ${BOLD}${YELLOW}Шаг 3 из 4:${NC} Сколько клиентских устройств добавить?"
+            echo -e "\n ${BOLD}${YELLOW}Шаг 3 из 5:${NC} Сколько клиентских устройств добавить?"
             read -r -p " 📱 Количество устройств: " NUM_DEVICES
             if [[ "$NUM_DEVICES" =~ ^[1-9][0-9]*$ ]]; then
                 break
@@ -6122,7 +6347,7 @@ EOF
             echo -e " ${RED}❌ Пожалуйста, введите положительное целое число.${NC}"
         done
         
-        echo -e "\n ${BOLD}${YELLOW}Шаг 4 из 4:${NC} Задайте имена для ваших устройств"
+        echo -e "\n ${BOLD}${YELLOW}Шаг 4 из 5:${NC} Задайте имена для ваших устройств"
         DEVICE_NAMES=()
         for ((i=1; i<=NUM_DEVICES; i++)); do
             read -r -p " 👤 Имя для устройства $i (по умолчанию client_$i): " dev_name
@@ -6134,9 +6359,25 @@ EOF
             fi
         done
 
+        echo -e "\n ${BOLD}${YELLOW}Шаг 5 из 5:${NC} Выберите профиль маршрутизации (Split-Tunneling)"
+        echo -e "   ${BOLD}1.${NC} ⭐️ DEFAULT — Для серверов вне РФ (РФ напрямую, обход блокировок) [По умолчанию]"
+        echo -e "   ${BOLD}2.${NC} 🌍 RELOCANT — Для серверов в РФ (Мир напрямую, сервисы РФ через сервер)"
+        echo -e "   ${BOLD}3.${NC} 🛡️ WHITELIST — Режим белых списков РФ"
+        echo -e "   ${BOLD}4.${NC} 📴 OFF — Без разделения (весь трафик в туннель)"
+        read -r -p " Выберите профиль [1]: " init_routing_choice
+        case "$init_routing_choice" in
+            2) ROUTING_PROFILE="relocant"; ROUTING_ENABLED="true" ;;
+            3) ROUTING_PROFILE="whitelist"; ROUTING_ENABLED="true" ;;
+            4) ROUTING_PROFILE="off"; ROUTING_ENABLED="false" ;;
+            *) ROUTING_PROFILE="default"; ROUTING_ENABLED="true" ;;
+        esac
+
         echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
         echo -e "${BOLD}${GREEN}⚙️ Запуск процесса автоматической сборки и установки...${NC}\n"
     fi
+
+    : "${ROUTING_PROFILE:=default}"
+    : "${ROUTING_ENABLED:=true}"
 
     # === Запуск установки ===
     check_domain
@@ -6158,7 +6399,7 @@ EOF
     generate_client_configs
     install_generate_script
 
-    echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCOUNTRY_CODE=$COUNTRY_CODE\nCDN_DOMAIN=none" > "$MARKER_FILE"
+    echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCOUNTRY_CODE=$COUNTRY_CODE\nCDN_DOMAIN=none\nROUTING_PROFILE=$ROUTING_PROFILE\nROUTING_ENABLED=$ROUTING_ENABLED" > "$MARKER_FILE"
     chmod 644 "$MARKER_FILE"
 
     # Регистрация быстрой команды xry
