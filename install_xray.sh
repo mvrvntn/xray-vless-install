@@ -2087,6 +2087,10 @@ EOF
                     if [[ -z "$line" || "$line" =~ ^# ]]; then
                         continue
                     fi
+                    # Исключаем Google/YouTube из WARP во избежание рассинхронизации сессий (IP A != B) и перегрузки видеопотоком
+                    if [[ "$line" =~ (google|youtube|googlevideo|gstatic|ggpht) ]]; then
+                        continue
+                    fi
                     geoblocks+=("\"domain:$line\"")
                 done < "/etc/xray/geoblock.lst"
             fi
