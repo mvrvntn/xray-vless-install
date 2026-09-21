@@ -2017,13 +2017,16 @@ EOF
             done
             
             # Базовые geosite категории
-            geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"" "\"geosite:tiktok\"")
+            geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"" "\"geosite:tiktok\"" "\"geosite:reddit\"" "\"geosite:anthropic\"")
             
             # AI-сервисы (из руководства)
             geoblocks+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sora.com\"")
             geoblocks+=("\"domain:claude.ai\"" "\"domain:anthropic.com\"" "\"domain:perplexity.ai\"" "\"domain:pplx.ai\"" "\"domain:grok.com\"" "\"domain:x.ai\"")
-            geoblocks+=("\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"")
+            geoblocks+=("\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"" "\"domain:midjourney.com\"" "\"domain:deepl.com\"")
             
+            # Reddit и стриминги
+            geoblocks+=("\"domain:reddit.com\"" "\"domain:redd.it\"" "\"domain:redditmedia.com\"" "\"domain:redditstatic.com\"" "\"domain:reddituploads.com\"" "\"domain:disneyplus.com\"")
+
             # TikTok (полный стек CDN и медиа-шардов из руководства)
             geoblocks+=("\"domain:tiktok.com\"" "\"domain:tiktokv.com\"" "\"domain:tiktokv.us\"" "\"domain:tiktokcdn.com\"" "\"domain:tiktokcdn-us.com\"" "\"domain:tiktokrow-cdn.com\"")
             geoblocks+=("\"domain:byteoversea.com\"" "\"domain:ibytedtos.com\"" "\"domain:ibyteimg.com\"" "\"domain:ipstatp.com\"" "\"domain:sgpstatp.com\"")
