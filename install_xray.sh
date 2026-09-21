@@ -78,6 +78,7 @@ usage() {
   --update-script                                         Обновить скрипт с пула зеркал (GitHub Raw / jsDelivr / GitHack)
   --update-core                                           Обновить ядро Xray, Hysteria 2 и подписки
   --update-geoblocks                                      Обновить списки блокировок Роскомнадзора и Google AI
+  --auto-tune                                             Автокалибровка маршрутов (проверить хост и включить только нужные шлюзы)
   --renew-cert                                            Принудительно обновить SSL-сертификат и перезапустить службы
   --backup                                                Создать резервную копию конфигураций и сертификатов
   --restore [файл|latest]                                 Восстановить конфигурации из резервной копии
@@ -604,7 +605,7 @@ case "${1:-}" in
         echo "$SCRIPT_NAME version 1.0.0"
         exit 0
         ;;
-    --optimize|--renew-cert|--update-core|--update-geoblocks|--headless|--backup|--restore|"")
+    --optimize|--renew-cert|--update-core|--update-geoblocks|--auto-tune|--headless|--backup|--restore|"")
         # Допустимые режимы работы (требуют root)
         ;;
     -*)
@@ -1889,7 +1890,18 @@ generate_server_config() {
     # Правила для Psiphon (разблокировка Google / Gemini / AI Studio)
     # 1. Блокировка UDP для принудительного переключения браузеров на TCP (Psiphon не поддерживает QUIC)
     # 2. Направление всей TCP сессии Google (Gemini, aistudio, gstatic, googleapis) в Psiphon
+    local auto_tune; auto_tune=$(get_installed_var "ROUTING_AUTO_TUNE")
+    local auto_psiphon_google; auto_psiphon_google=$(get_installed_var "AUTO_PSIPHON_GOOGLE")
+    local route_google_to_psiphon=false
     if [[ "$psiphon_enabled" == "true" ]]; then
+        if [[ "$auto_tune" == "true" ]]; then
+            [[ "$auto_psiphon_google" == "true" ]] && route_google_to_psiphon=true
+        else
+            route_google_to_psiphon=true
+        fi
+    fi
+
+    if [[ "$route_google_to_psiphon" == "true" ]]; then
         routing_rules_list+=('{
         "type": "field",
         "domain": [
@@ -2016,37 +2028,76 @@ EOF
                 fi
             done
             
-            # Базовые geosite категории
-            geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"" "\"geosite:tiktok\"" "\"geosite:reddit\"" "\"geosite:anthropic\"")
-            
-            # AI-сервисы (из руководства)
-            geoblocks+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sora.com\"")
-            geoblocks+=("\"domain:claude.ai\"" "\"domain:anthropic.com\"" "\"domain:perplexity.ai\"" "\"domain:pplx.ai\"" "\"domain:grok.com\"" "\"domain:x.ai\"")
-            geoblocks+=("\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"" "\"domain:midjourney.com\"" "\"domain:deepl.com\"")
-            
-            # Reddit и стриминги
-            geoblocks+=("\"domain:reddit.com\"" "\"domain:redd.it\"" "\"domain:redditmedia.com\"" "\"domain:redditstatic.com\"" "\"domain:reddituploads.com\"" "\"domain:disneyplus.com\"")
+            if [[ "$auto_tune" == "true" ]]; then
+                local auto_warp_openai; auto_warp_openai=$(get_installed_var "AUTO_WARP_OPENAI")
+                local auto_warp_claude; auto_warp_claude=$(get_installed_var "AUTO_WARP_CLAUDE")
+                local auto_warp_reddit; auto_warp_reddit=$(get_installed_var "AUTO_WARP_REDDIT")
+                local auto_warp_tiktok; auto_warp_tiktok=$(get_installed_var "AUTO_WARP_TIKTOK")
+                local auto_warp_spotify; auto_warp_spotify=$(get_installed_var "AUTO_WARP_SPOTIFY")
+                local auto_warp_media; auto_warp_media=$(get_installed_var "AUTO_WARP_MEDIA")
 
-            # TikTok (полный стек CDN и медиа-шардов из руководства)
-            geoblocks+=("\"domain:tiktok.com\"" "\"domain:tiktokv.com\"" "\"domain:tiktokv.us\"" "\"domain:tiktokcdn.com\"" "\"domain:tiktokcdn-us.com\"" "\"domain:tiktokrow-cdn.com\"")
-            geoblocks+=("\"domain:byteoversea.com\"" "\"domain:ibytedtos.com\"" "\"domain:ibyteimg.com\"" "\"domain:ipstatp.com\"" "\"domain:sgpstatp.com\"")
-            geoblocks+=("\"domain:muscdn.com\"" "\"domain:musical.ly\"" "\"domain:ttwstatic.com\"" "\"domain:byteicdn.com\"")
-            
-            # Spotify (полный стек аудио-CDN и внутренних сервисов из руководства)
-            geoblocks+=("\"domain:spotify.com\"" "\"domain:scdn.co\"" "\"domain:spotifycdn.com\"" "\"domain:spot-internal.com\"" "\"domain:pscdn.co\"" "\"domain:audio-ak-spotify-com.akamaized.net\"")
-            
-            if [[ "$opera_enabled" != "true" ]]; then
-                geoblocks+=("\"geosite:openai\"")
+                if [[ "$auto_warp_openai" == "true" ]] && [[ "$opera_enabled" != "true" ]]; then
+                    geoblocks+=("\"geosite:openai\"" "\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sora.com\"")
+                fi
+
+                if [[ "$auto_warp_claude" == "true" ]]; then
+                    geoblocks+=("\"geosite:anthropic\"" "\"domain:claude.ai\"" "\"domain:anthropic.com\"")
+                fi
+
+                if [[ "$auto_warp_openai" == "true" || "$auto_warp_claude" == "true" ]]; then
+                    geoblocks+=("\"domain:perplexity.ai\"" "\"domain:pplx.ai\"" "\"domain:grok.com\"" "\"domain:x.ai\"" "\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"" "\"domain:midjourney.com\"" "\"domain:deepl.com\"")
+                fi
+
+                if [[ "$auto_warp_reddit" == "true" ]]; then
+                    geoblocks+=("\"geosite:reddit\"" "\"domain:reddit.com\"" "\"domain:redd.it\"" "\"domain:redditmedia.com\"" "\"domain:redditstatic.com\"" "\"domain:reddituploads.com\"")
+                fi
+
+                if [[ "$auto_warp_tiktok" == "true" ]]; then
+                    geoblocks+=("\"geosite:tiktok\"" "\"domain:tiktok.com\"" "\"domain:tiktokv.com\"" "\"domain:tiktokv.us\"" "\"domain:tiktokcdn.com\"" "\"domain:tiktokcdn-us.com\"" "\"domain:tiktokrow-cdn.com\"" "\"domain:byteoversea.com\"" "\"domain:ibytedtos.com\"" "\"domain:ibyteimg.com\"" "\"domain:ipstatp.com\"" "\"domain:sgpstatp.com\"" "\"domain:muscdn.com\"" "\"domain:musical.ly\"" "\"domain:ttwstatic.com\"" "\"domain:byteicdn.com\"")
+                fi
+
+                if [[ "$auto_warp_spotify" == "true" ]]; then
+                    geoblocks+=("\"geosite:spotify\"" "\"domain:spotify.com\"" "\"domain:scdn.co\"" "\"domain:spotifycdn.com\"" "\"domain:spot-internal.com\"" "\"domain:pscdn.co\"" "\"domain:audio-ak-spotify-com.akamaized.net\"")
+                fi
+
+                if [[ "$auto_warp_media" == "true" ]]; then
+                    geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"domain:disneyplus.com\"")
+                fi
+            else
+                # Базовые geosite категории (статический полный список по гайду)
+                geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"" "\"geosite:tiktok\"" "\"geosite:reddit\"" "\"geosite:anthropic\"")
+                
+                # AI-сервисы (из руководства)
+                geoblocks+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sora.com\"")
+                geoblocks+=("\"domain:claude.ai\"" "\"domain:anthropic.com\"" "\"domain:perplexity.ai\"" "\"domain:pplx.ai\"" "\"domain:grok.com\"" "\"domain:x.ai\"")
+                geoblocks+=("\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"" "\"domain:midjourney.com\"" "\"domain:deepl.com\"")
+                
+                # Reddit и стриминги
+                geoblocks+=("\"domain:reddit.com\"" "\"domain:redd.it\"" "\"domain:redditmedia.com\"" "\"domain:redditstatic.com\"" "\"domain:reddituploads.com\"" "\"domain:disneyplus.com\"")
+
+                # TikTok (полный стек CDN и медиа-шардов из руководства)
+                geoblocks+=("\"domain:tiktok.com\"" "\"domain:tiktokv.com\"" "\"domain:tiktokv.us\"" "\"domain:tiktokcdn.com\"" "\"domain:tiktokcdn-us.com\"" "\"domain:tiktokrow-cdn.com\"")
+                geoblocks+=("\"domain:byteoversea.com\"" "\"domain:ibytedtos.com\"" "\"domain:ibyteimg.com\"" "\"domain:ipstatp.com\"" "\"domain:sgpstatp.com\"")
+                geoblocks+=("\"domain:muscdn.com\"" "\"domain:musical.ly\"" "\"domain:ttwstatic.com\"" "\"domain:byteicdn.com\"")
+                
+                # Spotify (полный стек аудио-CDN и внутренних сервисов из руководства)
+                geoblocks+=("\"domain:spotify.com\"" "\"domain:scdn.co\"" "\"domain:spotifycdn.com\"" "\"domain:spot-internal.com\"" "\"domain:pscdn.co\"" "\"domain:audio-ak-spotify-com.akamaized.net\"")
+                
+                if [[ "$opera_enabled" != "true" ]]; then
+                    geoblocks+=("\"geosite:openai\"")
+                fi
             fi
             
-            local geoblocks_joined; geoblocks_joined=$(IFS=,; echo "${geoblocks[*]}")
-            routing_rules_list+=("{
+            if [[ ${#geoblocks[@]} -gt 0 ]]; then
+                local geoblocks_joined; geoblocks_joined=$(IFS=,; echo "${geoblocks[*]}")
+                routing_rules_list+=("{
         \"type\": \"field\",
         \"domain\": [
           $geoblocks_joined
         ],
         \"outboundTag\": \"WARP\"
       }")
+            fi
         fi
 
         local check_domains=()
@@ -6156,6 +6207,128 @@ EOF
             sleep 1.5
         }
 
+        run_auto_tune() {
+            echo -e "\n${BOLD}${CYAN}🎯  АВТОКАЛИБРОВКА МАРШРУТИЗАЦИИ ПОД ЭТОТ VPS (Auto-Tune)${NC}"
+            echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+            echo -e " Тестируем доступность сервисов напрямую с публичного IP сервера..."
+            echo -e " Правило по гайду: Google идет только в Psiphon, AI/медиа — в WARP,\n а то, что открывается с хоста, остается напрямую (DIRECT).\n"
+
+            local ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
+            # 1. Google / Gemini
+            echo -n " 🔎 Проверка Google / Gemini... "
+            local g_code
+            g_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://gemini.google.com 2>/dev/null || echo "000")
+            local need_psiphon_google="false"
+            if [[ "$g_code" =~ ^(200|301|302)$ ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT] (без расхода ресурсов)"
+            else
+                echo -e "${RED}🔴 Ограничен на хосте (HTTP $g_code)${NC} ➔ [PSIPHON]"
+                need_psiphon_google="true"
+            fi
+
+            # 2. OpenAI / ChatGPT
+            echo -n " 🔎 Проверка OpenAI / ChatGPT... "
+            local oai_api_code
+            oai_api_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://api.openai.com/v1/models 2>/dev/null || echo "000")
+            local oai_web_code
+            oai_web_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com 2>/dev/null || echo "000")
+            local need_warp_openai="false"
+            if [[ "$oai_api_code" == "401" ]] || [[ "$oai_web_code" =~ ^(200|301|302)$ ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $oai_api_code)${NC} ➔ [WARP]"
+                need_warp_openai="true"
+            fi
+
+            # 3. Claude / Anthropic
+            echo -n " 🔎 Проверка Claude / Anthropic... "
+            local claude_code
+            claude_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://claude.ai 2>/dev/null || echo "000")
+            local need_warp_claude="false"
+            if [[ "$claude_code" =~ ^(200|301|302)$ ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $claude_code)${NC} ➔ [WARP]"
+                need_warp_claude="true"
+            fi
+
+            # 4. Reddit
+            echo -n " 🔎 Проверка Reddit... "
+            local reddit_code
+            reddit_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.reddit.com 2>/dev/null || echo "000")
+            local need_warp_reddit="false"
+            if [[ "$reddit_code" == "200" ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Блокировка датацентра (HTTP $reddit_code)${NC} ➔ [WARP]"
+                need_warp_reddit="true"
+            fi
+
+            # 5. TikTok
+            echo -n " 🔎 Проверка TikTok... "
+            local tiktok_code
+            tiktok_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.tiktok.com 2>/dev/null || echo "000")
+            local need_warp_tiktok="false"
+            if [[ "$tiktok_code" == "200" ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $tiktok_code)${NC} ➔ [WARP]"
+                need_warp_tiktok="true"
+            fi
+
+            # 6. Spotify
+            echo -n " 🔎 Проверка Spotify... "
+            local spotify_code
+            spotify_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://open.spotify.com 2>/dev/null || echo "000")
+            local need_warp_spotify="false"
+            if [[ "$spotify_code" =~ ^(200|301|302)$ ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $spotify_code)${NC} ➔ [WARP]"
+                need_warp_spotify="true"
+            fi
+
+            # 7. Соцсети (Instagram / Twitter)
+            echo -n " 🔎 Проверка Instagram / Twitter... "
+            local insta_code
+            insta_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.instagram.com 2>/dev/null || echo "000")
+            local need_warp_media="false"
+            if [[ "$insta_code" =~ ^(200|301|302)$ ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $insta_code)${NC} ➔ [WARP]"
+                need_warp_media="true"
+            fi
+
+            update_marker_val "ROUTING_AUTO_TUNE" "true"
+            update_marker_val "AUTO_PSIPHON_GOOGLE" "$need_psiphon_google"
+            update_marker_val "AUTO_WARP_OPENAI" "$need_warp_openai"
+            update_marker_val "AUTO_WARP_CLAUDE" "$need_warp_claude"
+            update_marker_val "AUTO_WARP_REDDIT" "$need_warp_reddit"
+            update_marker_val "AUTO_WARP_TIKTOK" "$need_warp_tiktok"
+            update_marker_val "AUTO_WARP_SPOTIFY" "$need_warp_spotify"
+            update_marker_val "AUTO_WARP_MEDIA" "$need_warp_media"
+
+            echo -e "\n${GREEN}✅ Результаты автокалибровки сохранены!${NC}"
+            echo -e "Перегенерируем конфигурацию Xray под возможности вашего VPS..."
+            DOMAIN=$(get_installed_var "DOMAIN")
+            NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+            generate_server_config
+            echo -e "${GREEN}✅ Маршрутизация успешно откалибрована под данный сервер!${NC}"
+            sleep 2
+        }
+
+        reset_auto_tune() {
+            echo -e "\n${YELLOW}🔄 Сброс к стандартному статическому роутингу (все списки из гайда)...${NC}"
+            update_marker_val "ROUTING_AUTO_TUNE" "false"
+            DOMAIN=$(get_installed_var "DOMAIN")
+            NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+            generate_server_config
+            echo -e "${GREEN}✅ Стандартная статическая маршрутизация восстановлена!${NC}"
+            sleep 1.5
+        }
+
         toggle_ipv6() {
             local cur; cur=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)
             mkdir -p /etc/sysctl.d
@@ -6311,13 +6484,34 @@ EOF
             fi
 
             ui_divider "${PURPLE}"
+            ui_item_color "" "${BOLD}[ Адаптивная калибровка маршрутов (Auto-Tune) ]${NC}" "" "${PURPLE}"
+            local auto_tune_val; auto_tune_val=$(get_installed_var "ROUTING_AUTO_TUNE")
+            local tune_status="${YELLOW}СТАТИЧЕСКИЙ (Все списки из гайда)${NC}"
+            if [[ "$auto_tune_val" == "true" ]]; then
+                tune_status="${GREEN}АДАПТИВНЫЙ (Только реально заблокированное на VPS)${NC}"
+            fi
+            ui_item_color "" "Режим: $tune_status" "" "${PURPLE}"
+            ui_item_color "19" "🎯 Запустить автокалибровку маршрутов (Auto-Tune)" "${YELLOW}" "${PURPLE}"
+            if [[ "$auto_tune_val" == "true" ]]; then
+                ui_item_color "20" "🔄 Сбросить на статический роутинг (полный список)" "${YELLOW}" "${PURPLE}"
+            fi
+
+            ui_divider "${PURPLE}"
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
             ui_footer "${PURPLE}"
             
-            read -r -p " Выберите действие (0-18): " bchoice
+            read -r -p " Выберите действие (0-20): " bchoice
             case $bchoice in
                 0)
                     main_menu
+                    ;;
+                19)
+                    run_auto_tune
+                    bypass_menu
+                    ;;
+                20)
+                    reset_auto_tune
+                    bypass_menu
                     ;;
                 11)
                     toggle_ipv6
@@ -6701,6 +6895,12 @@ EOF
             generate_server_config
             echo "✅ Конфигурация Xray перегенерирована."
         fi
+        exit 0
+    fi
+
+    # === Обработка флага автокалибровки маршрутов ===
+    if [[ "$1" == "--auto-tune" ]]; then
+        run_auto_tune
         exit 0
     fi
 
