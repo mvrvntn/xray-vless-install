@@ -251,3 +251,22 @@ print('OK')
     run grep 'record_fragment' "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
+
+@test "Скрипт поддерживает Psiphon outbound и маршрутизацию Google/Gemini" {
+    run grep "install_psiphon()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep '"tag": "PSIPHON"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep '"domain:gemini.google.com"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "rotate_psiphon()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "WARP конфигурация защищена от сброса сессий NAT (Keepalive) и IPv6 сбоев" {
+    run grep "PersistentKeepalive = 25" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "162.159.192.1:2408" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+

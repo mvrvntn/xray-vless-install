@@ -793,8 +793,12 @@ install_warp() {
         fi
         # Удаляем DNS из конфигурации WireGuard, чтобы wg-quick не ломал DNS в /etc/resolv.conf
         sed -i '/^DNS\s*=/d' /etc/wireguard/warp.conf
-        # Заменяем домен Cloudflare на прямой Anycast IP (защита от DNS-блокировок в РФ)
-        sed -i 's/engage\.cloudflareclient\.com/162.159.192.1/g' /etc/wireguard/warp.conf
+        # Прибиваем эндпоинт к IPv4 Anycast IP 162.159.192.1:2408 и AllowedIPs = 0.0.0.0/0 (защита от падения при отсутствии IPv6)
+        sed -i 's|^Endpoint = .*|Endpoint = 162.159.192.1:2408|' /etc/wireguard/warp.conf
+        sed -i 's|^AllowedIPs = .*|AllowedIPs = 0.0.0.0/0|' /etc/wireguard/warp.conf
+        # Защита от сброса NAT сессии в простое (PersistentKeepalive = 25)
+        grep -q "PersistentKeepalive" /etc/wireguard/warp.conf || sed -i '/^Endpoint/a PersistentKeepalive = 25' /etc/wireguard/warp.conf
+        chmod 600 /etc/wireguard/warp.conf
 
         systemctl enable wg-quick@warp >/dev/null 2>&1
         systemctl start wg-quick@warp >/dev/null 2>&1
@@ -1015,6 +1019,170 @@ uninstall_tor() {
     NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
     generate_server_config
     echo -e "${GREEN}✅ Tor успешно отключен и удален из маршрутизации!${NC}"
+}
+
+# === Управление Psiphon (Разблокировка Google / Gemini / AI Studio) ===
+ensure_docker_installed() {
+    if command -v docker &>/dev/null && docker info >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -e "\n${BOLD}${CYAN}🐳 Проверка и установка Docker (требуется для контейнера Psiphon)...${NC}"
+    if ! command -v docker &>/dev/null; then
+        wait_for_apt
+        DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
+        if ! curl -fsSL https://get.docker.com | sh >/dev/null 2>&1; then
+            echo -e "${YELLOW}⚠️ Официальный скрипт docker не сработал, пробуем пакет docker.io...${NC}"
+            DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends docker.io >/dev/null 2>&1 || {
+                echo -e "${RED}❌ Не удалось установить Docker.${NC}"
+                return 1
+            }
+        fi
+    fi
+    systemctl enable --now docker >/dev/null 2>&1 || true
+    if ! docker info >/dev/null 2>&1; then
+        echo -e "${RED}❌ Служба Docker не запущена.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}✅ Docker успешно подготовлен и запущен.${NC}"
+    return 0
+}
+
+# shellcheck disable=SC2120
+install_psiphon() {
+    local target_region="${1:-}"
+    echo -e "\n${BOLD}${GREEN}🌐 Установка Psiphon для разблокировки Google и Gemini...${NC}"
+    
+    ensure_docker_installed || return 1
+
+    if [[ -z "$target_region" ]]; then
+        echo -e "\n${BOLD}Выберите регион выхода Psiphon (страна, через которую пойдет Google):${NC}"
+        echo -e " ${BOLD}${YELLOW}1.${NC} DE (Германия - рекомендуется)"
+        echo -e " ${BOLD}${YELLOW}2.${NC} FI (Финляндия)"
+        echo -e " ${BOLD}${YELLOW}3.${NC} SE (Швеция)"
+        echo -e " ${BOLD}${YELLOW}4.${NC} NL (Нидерланды)"
+        echo -e " ${BOLD}${YELLOW}5.${NC} PL (Польша)"
+        echo -e " ${BOLD}${YELLOW}6.${NC} US (США)"
+        echo -e " ${BOLD}${YELLOW}7.${NC} Автоматический пул EU (DE,FI,SE,NL,PL,FR,AT)"
+        echo -e " ${BOLD}${YELLOW}8.${NC} Ввести двухбуквенный код вручную"
+        read -r -p " Регион [1]: " rchoice
+        case "${rchoice:-1}" in
+            1) target_region="DE" ;;
+            2) target_region="FI" ;;
+            3) target_region="SE" ;;
+            4) target_region="NL" ;;
+            5) target_region="PL" ;;
+            6) target_region="US" ;;
+            7) target_region="DE,FI,SE,NL,PL,FR,AT" ;;
+            8)
+                read -r -p " Введите код страны (например, DE, FI, CA): " custom_r
+                target_region=$(echo "${custom_r:-DE}" | tr '[:lower:]' '[:upper:]' | xargs)
+                ;;
+            *) target_region="DE" ;;
+        esac
+    fi
+
+    echo -e "${CYAN}📥 Запуск официального инсталлятора vps-psiphon (регион: $target_region)...${NC}"
+    if bash <(curl -fsSL https://raw.githubusercontent.com/Chara-Freedom/vps-psiphon/main/psiphon_install.sh) --region "$target_region"; then
+        echo -e "${GREEN}✅ Инсталлятор vps-psiphon отработал успешно!${NC}"
+    else
+        echo -e "${RED}❌ Ошибка при установке vps-psiphon.${NC}"
+        return 1
+    fi
+
+    local psiphon_bind="127.0.0.1"
+    local psiphon_port="1080"
+    if [[ -f "/etc/default/vps-psiphon" ]]; then
+        # shellcheck disable=SC1091
+        source "/etc/default/vps-psiphon" 2>/dev/null || true
+        [[ -n "${BIND:-}" ]] && psiphon_bind="$BIND"
+        [[ -n "${SOCKS_PORT:-}" ]] && psiphon_port="$SOCKS_PORT"
+    fi
+
+    update_marker_val "PSIPHON_INSTALLED" "true"
+    update_marker_val "PSIPHON_ENABLED" "true"
+    update_marker_val "PSIPHON_REGION" "$target_region"
+    update_marker_val "PSIPHON_BIND" "$psiphon_bind"
+    update_marker_val "PSIPHON_PORT" "$psiphon_port"
+
+    DOMAIN=$(get_installed_var "DOMAIN")
+    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+    generate_server_config
+
+    echo -e "\n${BOLD}${GREEN}🎉 Psiphon активен на ${psiphon_bind}:${psiphon_port} (регион: $target_region)${NC}"
+    if command -v vps-psiphon &>/dev/null; then
+        echo -e "${CYAN}Проверка статуса выхода через vps-psiphon:${NC}"
+        vps-psiphon 2>/dev/null || true
+    fi
+    return 0
+}
+
+toggle_psiphon() {
+    local current_status; current_status=$(get_installed_var "PSIPHON_ENABLED")
+    if [[ "$current_status" == "true" ]]; then
+        echo -e "\n${BOLD}${YELLOW}📴 Отключение Psiphon...${NC}"
+        update_marker_val "PSIPHON_ENABLED" "false"
+        systemctl stop vps-psiphon >/dev/null 2>&1 || true
+    else
+        echo -e "\n${BOLD}${GREEN}🌐 Включение Psiphon...${NC}"
+        if [[ "$(get_installed_var "PSIPHON_INSTALLED")" != "true" ]]; then
+            install_psiphon || return 1
+        fi
+        systemctl start vps-psiphon >/dev/null 2>&1 || true
+        update_marker_val "PSIPHON_ENABLED" "true"
+    fi
+
+    DOMAIN=$(get_installed_var "DOMAIN")
+    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+    generate_server_config
+    echo -e "${GREEN}✅ Статус Psiphon обновлен и Xray перезапущен!${NC}"
+}
+
+rotate_psiphon() {
+    if ! command -v vps-psiphon &>/dev/null; then
+        echo -e "${RED}❌ Утилита vps-psiphon не найдена! Установите Psiphon сначала.${NC}"
+        return 1
+    fi
+    echo -e "\n${BOLD}${CYAN}🔄 Ротация выходного IP Psiphon (получение нового чистого выхода)...${NC}"
+    vps-psiphon rotate
+    echo -e "${YELLOW}Ожидание стабилизации туннеля (5 сек)...${NC}"
+    sleep 5
+    vps-psiphon | grep -E 'exit IP|country|captcha' 2>/dev/null || vps-psiphon
+}
+
+change_psiphon_region() {
+    if ! command -v vps-psiphon &>/dev/null; then
+        echo -e "${RED}❌ Утилита vps-psiphon не найдена! Установите Psiphon сначала.${NC}"
+        return 1
+    fi
+    echo -e "\n${BOLD}Доступные популярные регионы:${NC} DE, FI, SE, NL, PL, AT, FR, GB, US, JP, CA"
+    read -r -p "Введите новый код региона (2 буквы, например SE): " new_reg
+    new_reg=$(echo "${new_reg:-DE}" | tr '[:lower:]' '[:upper:]' | xargs)
+    echo -e "${CYAN}Смена региона на $new_reg...${NC}"
+    vps-psiphon region "$new_reg"
+    update_marker_val "PSIPHON_REGION" "$new_reg"
+    echo -e "${YELLOW}Ожидание подключения (5 сек)...${NC}"
+    sleep 5
+    vps-psiphon | grep -E 'exit IP|country|captcha' 2>/dev/null || vps-psiphon
+}
+
+uninstall_psiphon() {
+    echo -e "\n${BOLD}${RED}🧹 Полное удаление Psiphon с сервера...${NC}"
+    if command -v vps-psiphon &>/dev/null; then
+        vps-psiphon uninstall >/dev/null 2>&1 || true
+    fi
+    systemctl stop vps-psiphon >/dev/null 2>&1 || true
+    systemctl disable vps-psiphon >/dev/null 2>&1 || true
+    systemctl stop vps-psiphon-watchdog.timer >/dev/null 2>&1 || true
+    systemctl disable vps-psiphon-watchdog.timer >/dev/null 2>&1 || true
+    rm -rf /opt/vps-psiphon /etc/default/vps-psiphon /usr/local/sbin/vps-psiphon* 2>/dev/null || true
+
+    update_marker_val "PSIPHON_INSTALLED" "false"
+    update_marker_val "PSIPHON_ENABLED" "false"
+
+    DOMAIN=$(get_installed_var "DOMAIN")
+    NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
+    generate_server_config
+    echo -e "${GREEN}✅ Psiphon успешно удален из системы и маршрутизации!${NC}"
 }
 
 # === Проверка домена ===
@@ -1687,6 +1855,34 @@ generate_server_config() {
     }')
     fi
 
+    # Добавляем PSIPHON прокси, если включен (для разблокировки Google/Gemini)
+    local psiphon_enabled; psiphon_enabled=$(get_installed_var "PSIPHON_ENABLED")
+    if [[ "$psiphon_enabled" == "true" ]]; then
+        local psiphon_bind="127.0.0.1"
+        local psiphon_port="1080"
+        if [[ -f "/etc/default/vps-psiphon" ]]; then
+            # shellcheck disable=SC1091
+            source "/etc/default/vps-psiphon" 2>/dev/null || true
+            [[ -n "${BIND:-}" ]] && psiphon_bind="$BIND"
+            [[ -n "${SOCKS_PORT:-}" ]] && psiphon_port="$SOCKS_PORT"
+        else
+            local dgw; dgw=$(ip -4 -o addr show docker0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)
+            [[ -n "$dgw" ]] && psiphon_bind="$dgw"
+        fi
+        outbounds_list+=('{
+      "tag": "PSIPHON",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "'"$psiphon_bind"'",
+            "port": '"$psiphon_port"'
+          }
+        ]
+      }
+    }')
+    fi
+
     # Всегда добавляем BLOCK в конец
     outbounds_list+=('{
       "tag": "BLOCK",
@@ -1738,6 +1934,60 @@ generate_server_config() {
         "network": "tcp,udp",
         "outboundTag": "DIRECT"
       }')
+
+    # Правила для Psiphon (разблокировка Google / Gemini / AI Studio)
+    # 1. Блокировка UDP для принудительного переключения браузеров на TCP (Psiphon не поддерживает QUIC)
+    # 2. Направление всей TCP сессии Google (Gemini, aistudio, gstatic, googleapis) в Psiphon
+    if [[ "$psiphon_enabled" == "true" ]]; then
+        routing_rules_list+=('{
+        "type": "field",
+        "domain": [
+          "domain:gemini.google.com",
+          "domain:gemini.google",
+          "domain:aistudio.google.com",
+          "domain:generativelanguage.googleapis.com",
+          "domain:alkalimakersuite-pa.clients6.google.com",
+          "domain:geminipersonalization-pa.googleapis.com",
+          "domain:proactivebackend-pa.googleapis.com",
+          "domain:geller-pa.googleapis.com",
+          "domain:makersuite.google.com",
+          "domain:ai.google.dev",
+          "domain:deepmind.google",
+          "domain:labs.google",
+          "domain:google.com",
+          "domain:gstatic.com",
+          "domain:googleapis.com",
+          "domain:googleusercontent.com",
+          "domain:ggpht.com"
+        ],
+        "network": "udp",
+        "outboundTag": "BLOCK"
+      }')
+        routing_rules_list+=('{
+        "type": "field",
+        "domain": [
+          "domain:gemini.google.com",
+          "domain:gemini.google",
+          "domain:aistudio.google.com",
+          "domain:generativelanguage.googleapis.com",
+          "domain:alkalimakersuite-pa.clients6.google.com",
+          "domain:geminipersonalization-pa.googleapis.com",
+          "domain:proactivebackend-pa.googleapis.com",
+          "domain:geller-pa.googleapis.com",
+          "domain:makersuite.google.com",
+          "domain:ai.google.dev",
+          "domain:deepmind.google",
+          "domain:labs.google",
+          "domain:google.com",
+          "domain:gstatic.com",
+          "domain:googleapis.com",
+          "domain:googleusercontent.com",
+          "domain:ggpht.com"
+        ],
+        "network": "tcp",
+        "outboundTag": "PSIPHON"
+      }')
+    fi
 
     # Правило для Opera Proxy (приоритет выше, чем у WARP)
     if [[ "$opera_enabled" == "true" ]]; then
@@ -1809,7 +2059,12 @@ EOF
                 done < "/etc/xray/geoblock.lst"
             fi
             
-            geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"")
+            geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"" "\"geosite:tiktok\"")
+            geoblocks+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sora.com\"")
+            geoblocks+=("\"domain:claude.ai\"" "\"domain:anthropic.com\"" "\"domain:perplexity.ai\"" "\"domain:pplx.ai\"" "\"domain:grok.com\"" "\"domain:x.ai\"")
+            geoblocks+=("\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"")
+            geoblocks+=("\"domain:tiktok.com\"" "\"domain:tiktokv.com\"" "\"domain:tiktokcdn.com\"" "\"domain:byteoversea.com\"" "\"domain:ibytedtos.com\"")
+            geoblocks+=("\"domain:spotify.com\"" "\"domain:scdn.co\"" "\"domain:spotifycdn.com\"")
             if [[ "$opera_enabled" != "true" ]]; then
                 geoblocks+=("\"geosite:openai\"")
             fi
@@ -1894,8 +2149,7 @@ EOF
           "http",
           "tls",
           "quic"
-        ],
-        "routeOnly": true
+        ]
       },
       "streamSettings": {
         "network": "tcp",
@@ -1932,8 +2186,7 @@ EOF
           "http",
           "tls",
           "quic"
-        ],
-        "routeOnly": true
+        ]
       },
       "streamSettings": {
         "network": "tcp",
@@ -1971,8 +2224,7 @@ EOF
           "http",
           "tls",
           "quic"
-        ],
-        "routeOnly": true
+        ]
       },
       "streamSettings": {
         "network": "xhttp",
@@ -2018,8 +2270,7 @@ EOF
           "http",
           "tls",
           "quic"
-        ],
-        "routeOnly": true
+        ]
       },
       "streamSettings": {
         "network": "grpc",
@@ -2063,8 +2314,7 @@ EOF
           "http",
           "tls",
           "quic"
-        ],
-        "routeOnly": true
+        ]
       },
       "streamSettings": {
         "network": "tcp",
@@ -2101,8 +2351,7 @@ EOF
           "http",
           "tls",
           "quic"
-        ],
-        "routeOnly": true
+        ]
       },
       "streamSettings": {
         "network": "xhttp",
@@ -2148,8 +2397,7 @@ EOF
           "http",
           "tls",
           "quic"
-        ],
-        "routeOnly": true
+        ]
       },
       "streamSettings": {
         "network": "grpc",
@@ -4677,8 +4925,38 @@ main() {
                 echo -e " Cloudflare WARP: 🔘 Не установлен."
             fi
 
+            # 4.1. Проверка интеграции Psiphon (Google / Gemini)
+            echo -e "\n${BOLD}[4.1] Статус Psiphon (разблокировка Google / Gemini):${NC}"
+            if [[ "$(get_installed_var "PSIPHON_INSTALLED")" == "true" ]]; then
+                if systemctl is-active --quiet vps-psiphon; then
+                    echo -e " Служба vps-psiphon: 🟢 ${GREEN}ACTIVE (Запущена)${NC}"
+                    local psiphon_bind="127.0.0.1"
+                    local psiphon_port="1080"
+                    if [[ -f "/etc/default/vps-psiphon" ]]; then
+                        # shellcheck disable=SC1091
+                        source "/etc/default/vps-psiphon" 2>/dev/null || true
+                        [[ -n "${BIND:-}" ]] && psiphon_bind="$BIND"
+                        [[ -n "${SOCKS_PORT:-}" ]] && psiphon_port="$SOCKS_PORT"
+                    fi
+                    local psiphon_test; psiphon_test=$(curl --socks5-hostname "${psiphon_bind}:${psiphon_port}" -s --connect-timeout 5 -o /dev/null -w "%{http_code}" https://gemini.google.com 2>/dev/null || echo "000")
+                    if [[ "$psiphon_test" =~ ^(200|301|302)$ ]]; then
+                        echo -e " 🟢 ${GREEN}Google Gemini успешно отвечает через Psiphon SOCKS5 ($psiphon_bind:$psiphon_port, HTTP $psiphon_test)${NC}"
+                    else
+                        echo -e " 🔴 ${RED}Psiphon SOCKS5 ($psiphon_bind:$psiphon_port) не вернул ответ от Gemini (код: $psiphon_test). Попробуйте 'vps-psiphon rotate'.${NC}"
+                    fi
+                    if command -v vps-psiphon &>/dev/null; then
+                        echo -e " Статус выхода (vps-psiphon):"
+                        vps-psiphon | grep -E 'exit IP|country|captcha' | sed 's/^/   /' 2>/dev/null || true
+                    fi
+                else
+                    echo -e " Служба vps-psiphon: 🔴 ${RED}INACTIVE (Остановлена)${NC}"
+                fi
+            else
+                echo -e " Psiphon: 🔘 Не установлен."
+            fi
+
             # 5. Проверка разблокировки медиа-ресурсов
-            echo -e "\n${BOLD}[5] Разблокировка медиа-ресурсов (Netflix, YouTube, ChatGPT):${NC}"
+            echo -e "\n${BOLD}[5] Разблокировка медиа-ресурсов (Netflix, YouTube, ChatGPT, Gemini):${NC}"
             check_media_unlock() {
                 local label="$1"
                 local iface="$2"
@@ -4703,6 +4981,18 @@ main() {
                     gpt_res="${GREEN}🟢 Доступен${NC}"
                 fi
 
+                # Google Gemini
+                local gemini_code
+                if [[ -n "$iface" ]]; then
+                    gemini_code=$(curl "${curl_opts[@]}" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://gemini.google.com 2>/dev/null || echo "000")
+                else
+                    gemini_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://gemini.google.com 2>/dev/null || echo "000")
+                fi
+                local gemini_res="${RED}🔴 Заблокирован / Не поддерживается${NC}"
+                if [[ "$gemini_code" =~ ^(200|301|302)$ ]]; then
+                    gemini_res="${GREEN}🟢 Доступен${NC}"
+                fi
+
                 # YouTube Region
                 local yt_region; yt_region=$(curl "${curl_opts[@]}" -s --connect-timeout 4 https://www.youtube.com/premium 2>/dev/null | awk -F'"' '/countryCode":/ { for(i=1;i<=NF;i++) if($i=="countryCode") print $(i+2) }')
                 local yt_res="${RED}🔴 Не удалось определить регион${NC}"
@@ -4713,11 +5003,28 @@ main() {
                 echo -e "   👉 ${CYAN}$label:${NC}"
                 echo -e "      - Netflix: $nf_res"
                 echo -e "      - ChatGPT: $gpt_res"
+                echo -e "      - Gemini:  $gemini_res"
                 echo -e "      - YouTube: $yt_res"
             }
             check_media_unlock "Основной IP сервера" ""
             if [[ "$(get_installed_var "WARP_INSTALLED")" == "true" ]] && ip link show warp >/dev/null 2>&1; then
                 check_media_unlock "Через интерфейс WARP" "warp"
+            fi
+            if [[ "$(get_installed_var "PSIPHON_INSTALLED")" == "true" ]] && systemctl is-active --quiet vps-psiphon; then
+                local ps_bind="127.0.0.1"; local ps_port="1080"
+                if [[ -f "/etc/default/vps-psiphon" ]]; then
+                    # shellcheck disable=SC1091
+                    source "/etc/default/vps-psiphon" 2>/dev/null || true
+                    [[ -n "${BIND:-}" ]] && ps_bind="$BIND"
+                    [[ -n "${SOCKS_PORT:-}" ]] && ps_port="$SOCKS_PORT"
+                fi
+                local ps_gemini_code; ps_gemini_code=$(curl --socks5-hostname "${ps_bind}:${ps_port}" -s -o /dev/null -w "%{http_code}" --connect-timeout 5 https://gemini.google.com 2>/dev/null || echo "000")
+                local ps_gemini_res="${RED}🔴 Ошибка соединения${NC}"
+                if [[ "$ps_gemini_code" =~ ^(200|301|302)$ ]]; then
+                    ps_gemini_res="${GREEN}🟢 Доступен (HTTP $ps_gemini_code)${NC}"
+                fi
+                echo -e "   👉 ${CYAN}Через прокси Psiphon ($ps_bind:$ps_port):${NC}"
+                echo -e "      - Gemini:  $ps_gemini_res"
             fi
 
             # 6. Проверка сертификатов SSL
@@ -5029,6 +5336,19 @@ EOF
                 fi
             fi
 
+            local psiphon_installed; psiphon_installed=$(get_installed_var "PSIPHON_INSTALLED")
+            local psiphon_enabled; psiphon_enabled=$(get_installed_var "PSIPHON_ENABLED")
+            local psiphon_region; psiphon_region=$(get_installed_var "PSIPHON_REGION")
+            [[ -z "$psiphon_region" ]] && psiphon_region="DE"
+            local psiphon_status="${RED}NOT INSTALLED${NC}"
+            if [[ "$psiphon_installed" == "true" ]]; then
+                if [[ "$psiphon_enabled" == "true" ]]; then
+                    psiphon_status="${GREEN}ON ($psiphon_region)${NC}"
+                else
+                    psiphon_status="${YELLOW}DISABLED${NC}"
+                fi
+            fi
+
             local ssl_badge="${RED}ОТСУТСТВУЕТ${NC}"
             if [[ -f "$SSL_DIR/fullchain.cer" ]]; then
                 local cert_end; cert_end=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
@@ -5066,7 +5386,7 @@ EOF
             ui_status "🌐" "Сервер" "${GREEN}$domain${NC} | SSL: [$ssl_badge]"
             ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
             ui_status "🧭" "Роутинг" "$routing_badge"
-            ui_status "🌀" "Обходы" "WARP: [$warp_status] | Opera: [$opera_status] | Tor: [$tor_status]"
+            ui_status "🌀" "Обходы" "WARP: [$warp_status] | Psiphon: [$psiphon_status] | Opera: [$opera_status] | Tor: [$tor_status]"
             ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
             ui_footer
         }
@@ -5878,6 +6198,30 @@ EOF
             fi
             
             ui_divider "${PURPLE}"
+            ui_item_color "" "${BOLD}[ Psiphon (Разблокировка Google / Gemini / AI Studio) ]${NC}" "" "${PURPLE}"
+            local psiphon_installed; psiphon_installed=$(get_installed_var "PSIPHON_INSTALLED")
+            local psiphon_enabled; psiphon_enabled=$(get_installed_var "PSIPHON_ENABLED")
+            local psiphon_region; psiphon_region=$(get_installed_var "PSIPHON_REGION")
+            [[ -z "$psiphon_region" ]] && psiphon_region="DE"
+            if [[ "$psiphon_installed" != "true" ]]; then
+                ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
+                ui_item_color "14" "📥 Установить и активировать Psiphon (Google/Gemini bypass)" "${YELLOW}" "${PURPLE}"
+            else
+                local ps_stat="${RED}Выключен${NC}"
+                [[ "$psiphon_enabled" == "true" ]] && ps_stat="${GREEN}Активен (Регион: $psiphon_region)${NC}"
+                ui_item_color "" "Статус: $ps_stat" "" "${PURPLE}"
+                if [[ "$psiphon_enabled" == "true" ]]; then
+                    ui_item_color "14" "📴 Отключить Psiphon" "${YELLOW}" "${PURPLE}"
+                else
+                    ui_item_color "14" "🌐 Включить Psiphon" "${YELLOW}" "${PURPLE}"
+                fi
+                ui_item_color "15" "🔄 Ротация IP Psiphon (получить новый чистый выход без капчи)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "16" "🌍 Сменить регион выхода Psiphon (DE, FI, SE, NL, US...)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "17" "📊 Проверить статус выхода и вердикт Google (vps-psiphon)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "18" "${RED}🗑️ Удалить Psiphon${NC}" "${RED}" "${PURPLE}"
+            fi
+
+            ui_divider "${PURPLE}"
             ui_item_color "" "${BOLD}[ Tor (.onion проксирование) ]${NC}" "" "${PURPLE}"
             local tor_installed; tor_installed=$(get_installed_var "TOR_INSTALLED")
             local tor_enabled; tor_enabled=$(get_installed_var "TOR_ENABLED")
@@ -5900,7 +6244,7 @@ EOF
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
             ui_footer "${PURPLE}"
             
-            read -r -p " Выберите действие (0-13): " bchoice
+            read -r -p " Выберите действие (0-18): " bchoice
             case $bchoice in
                 0)
                     main_menu
@@ -5923,6 +6267,58 @@ EOF
                         uninstall_tor
                     else
                         echo -e "${RED}❌ Tor не установлен!${NC}"
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                14)
+                    if [[ "$psiphon_installed" != "true" ]]; then
+                        install_psiphon
+                    else
+                        toggle_psiphon
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                15)
+                    if [[ "$psiphon_installed" == "true" ]]; then
+                        rotate_psiphon
+                        echo -e "\nНажмите Enter для возврата..."
+                        read -r
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
+                        sleep 1.5
+                    fi
+                    bypass_menu
+                    ;;
+                16)
+                    if [[ "$psiphon_installed" == "true" ]]; then
+                        change_psiphon_region
+                        echo -e "\nНажмите Enter для возврата..."
+                        read -r
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
+                        sleep 1.5
+                    fi
+                    bypass_menu
+                    ;;
+                17)
+                    if [[ "$psiphon_installed" == "true" ]] && command -v vps-psiphon &>/dev/null; then
+                        echo -e "\n${BOLD}${CYAN}--- Статус Psiphon (vps-psiphon) ---${NC}"
+                        vps-psiphon
+                        echo -e "\nНажмите Enter для возврата..."
+                        read -r
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
+                        sleep 1.5
+                    fi
+                    bypass_menu
+                    ;;
+                18)
+                    if [[ "$psiphon_installed" == "true" ]]; then
+                        uninstall_psiphon
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
                     fi
                     sleep 1.5
                     bypass_menu
@@ -6075,6 +6471,16 @@ EOF
             rm -f /etc/systemd/system/opera-proxy.service
             rm -f /usr/local/bin/opera-proxy
             rm -f /etc/xray/opera.lst
+
+            # Удаление Psiphon
+            if command -v vps-psiphon &>/dev/null; then
+                vps-psiphon uninstall >/dev/null 2>&1 || true
+            fi
+            systemctl stop vps-psiphon >/dev/null 2>&1 || true
+            systemctl disable vps-psiphon >/dev/null 2>&1 || true
+            systemctl stop vps-psiphon-watchdog.timer >/dev/null 2>&1 || true
+            systemctl disable vps-psiphon-watchdog.timer >/dev/null 2>&1 || true
+            rm -rf /opt/vps-psiphon /etc/default/vps-psiphon /usr/local/sbin/vps-psiphon* 2>/dev/null || true
 
             [[ -n "${XRAY_CONFIG_DIR:-}" ]] && rm -rf -- "$XRAY_CONFIG_DIR"
             [[ -n "${CLIENT_CONFIG_DIR:-}" ]] && rm -rf -- "$CLIENT_CONFIG_DIR"
