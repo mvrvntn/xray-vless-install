@@ -1055,29 +1055,53 @@ install_psiphon() {
     ensure_docker_installed || return 1
 
     if [[ -z "$target_region" ]]; then
+        local srv_country; srv_country=$(get_installed_var "COUNTRY_CODE")
+        [[ -z "$srv_country" || "$srv_country" == "UN" ]] && srv_country=$(get_country_code)
+        srv_country=$(echo "$srv_country" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
+
+        # Список регионов с гарантированной поддержкой Gemini и выходов Psiphon
+        local safe_gemini_regions="AT AU BE CA CH CZ DE DK ES FI FR GB IE IT JP NL NO PL SE SG US"
+        local default_region="DE"
+        local region_hint="Германия (рекомендуется)"
+
+        if [[ -n "$srv_country" && " $safe_gemini_regions " =~ [[:space:]]${srv_country}[[:space:]] ]]; then
+            default_region="$srv_country"
+            region_hint="Локация вашего сервера ($srv_country - поддерживается Gemini)"
+        elif [[ -n "$srv_country" && "$srv_country" != "UN" ]]; then
+            echo -e "${YELLOW}⚠️ Локация сервера (${srv_country}) не поддерживает Google Gemini (ограничения Google). Выбран проверенный регион: DE (Германия).${NC}"
+        fi
+
         echo -e "\n${BOLD}Выберите регион выхода Psiphon (страна, через которую пойдет Google):${NC}"
-        echo -e " ${BOLD}${YELLOW}1.${NC} DE (Германия - рекомендуется)"
-        echo -e " ${BOLD}${YELLOW}2.${NC} FI (Финляндия)"
-        echo -e " ${BOLD}${YELLOW}3.${NC} SE (Швеция)"
-        echo -e " ${BOLD}${YELLOW}4.${NC} NL (Нидерланды)"
-        echo -e " ${BOLD}${YELLOW}5.${NC} PL (Польша)"
-        echo -e " ${BOLD}${YELLOW}6.${NC} US (США)"
-        echo -e " ${BOLD}${YELLOW}7.${NC} Автоматический пул EU (DE,FI,SE,NL,PL,FR,AT)"
-        echo -e " ${BOLD}${YELLOW}8.${NC} Ввести двухбуквенный код вручную"
-        read -r -p " Регион [1]: " rchoice
+        echo -e " ${BOLD}${YELLOW}1.${NC} ${default_region} (${region_hint})"
+        echo -e " ${BOLD}${YELLOW}2.${NC} DE (Германия)"
+        echo -e " ${BOLD}${YELLOW}3.${NC} FI (Финляндия)"
+        echo -e " ${BOLD}${YELLOW}4.${NC} SE (Швеция)"
+        echo -e " ${BOLD}${YELLOW}5.${NC} NL (Нидерланды)"
+        echo -e " ${BOLD}${YELLOW}6.${NC} PL (Польша)"
+        echo -e " ${BOLD}${YELLOW}7.${NC} US (США)"
+        echo -e " ${BOLD}${YELLOW}8.${NC} Автоматический пул EU (DE,FI,SE,NL,PL,FR,AT)"
+        echo -e " ${BOLD}${YELLOW}9.${NC} Ввести двухбуквенный код вручную"
+        read -r -p " Регион [$default_region]: " rchoice
         case "${rchoice:-1}" in
-            1) target_region="DE" ;;
-            2) target_region="FI" ;;
-            3) target_region="SE" ;;
-            4) target_region="NL" ;;
-            5) target_region="PL" ;;
-            6) target_region="US" ;;
-            7) target_region="DE,FI,SE,NL,PL,FR,AT" ;;
-            8)
+            1) target_region="$default_region" ;;
+            2) target_region="DE" ;;
+            3) target_region="FI" ;;
+            4) target_region="SE" ;;
+            5) target_region="NL" ;;
+            6) target_region="PL" ;;
+            7) target_region="US" ;;
+            8) target_region="DE,FI,SE,NL,PL,FR,AT" ;;
+            9)
                 read -r -p " Введите код страны (например, DE, FI, CA): " custom_r
-                target_region=$(echo "${custom_r:-DE}" | tr '[:lower:]' '[:upper:]' | xargs)
+                target_region=$(echo "${custom_r:-$default_region}" | tr '[:lower:]' '[:upper:]' | xargs)
                 ;;
-            *) target_region="DE" ;;
+            *)
+                if [[ "$rchoice" =~ ^[A-Za-z]{2}$ ]]; then
+                    target_region=$(echo "$rchoice" | tr '[:lower:]' '[:upper:]')
+                else
+                    target_region="$default_region"
+                fi
+                ;;
         esac
     fi
 

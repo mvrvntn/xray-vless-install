@@ -261,6 +261,8 @@ print('OK')
     [ "$status" -eq 0 ]
     run grep "rotate_psiphon()" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
+    run grep "safe_gemini_regions=" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
 }
 
 @test "WARP конфигурация защищена от сброса сессий NAT (Keepalive) и IPv6 сбоев" {
