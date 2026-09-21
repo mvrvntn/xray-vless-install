@@ -1723,9 +1723,7 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -1738,9 +1736,7 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "DIRECT",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -1753,9 +1749,7 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "DIRECT",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -1768,9 +1762,7 @@ generate_server_config() {
             outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIPv4"
-      },
+      "settings": {},
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -4949,10 +4941,11 @@ main() {
                     nf_res="${YELLOW}🟡 Доступны только собственные релизы${NC}"
                 fi
 
-                # ChatGPT
-                local gpt_code; gpt_code=$(curl "${curl_opts[@]}" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com)
+                # ChatGPT / OpenAI
+                local gpt_code; gpt_code=$(curl "${curl_opts[@]}" -s -o /dev/null -w "%{http_code}" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" --connect-timeout 4 https://chatgpt.com 2>/dev/null || echo "000")
+                local gpt_api_code; gpt_api_code=$(curl "${curl_opts[@]}" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://api.openai.com/v1/models 2>/dev/null || echo "000")
                 local gpt_res="${RED}🔴 Заблокирован${NC}"
-                if [[ "$gpt_code" == "200" ]] || [[ "$gpt_code" == "302" ]]; then
+                if [[ "$gpt_code" =~ ^(200|301|302)$ ]] || [[ "$gpt_api_code" == "401" ]]; then
                     gpt_res="${GREEN}🟢 Доступен${NC}"
                 fi
 
