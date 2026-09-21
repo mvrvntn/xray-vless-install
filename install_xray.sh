@@ -800,8 +800,9 @@ install_warp() {
         grep -q "PersistentKeepalive" /etc/wireguard/warp.conf || sed -i '/^Endpoint/a PersistentKeepalive = 25' /etc/wireguard/warp.conf
         chmod 600 /etc/wireguard/warp.conf
 
+        wg-quick down warp >/dev/null 2>&1 || true
         systemctl enable wg-quick@warp >/dev/null 2>&1
-        systemctl start wg-quick@warp >/dev/null 2>&1
+        systemctl restart wg-quick@warp >/dev/null 2>&1 || systemctl start wg-quick@warp >/dev/null 2>&1
         update_geoblock_list
         
         # Добавляем обновление списка геоблокировок в cron
@@ -1795,7 +1796,9 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
-      "settings": {},
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -1808,7 +1811,9 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "DIRECT",
       "protocol": "freedom",
-      "settings": {},
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -1821,7 +1826,9 @@ generate_server_config() {
         outbounds_list+=('{
       "tag": "DIRECT",
       "protocol": "freedom",
-      "settings": {},
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -1834,7 +1841,9 @@ generate_server_config() {
             outbounds_list+=('{
       "tag": "WARP",
       "protocol": "freedom",
-      "settings": {},
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
       "streamSettings": {
         "sockopt": {
           "domainStrategy": "UseIPv4",
@@ -1882,16 +1891,15 @@ generate_server_config() {
     # Добавляем PSIPHON прокси, если включен (для разблокировки Google/Gemini)
     local psiphon_enabled; psiphon_enabled=$(get_installed_var "PSIPHON_ENABLED")
     if [[ "$psiphon_enabled" == "true" ]]; then
-        local psiphon_bind="127.0.0.1"
-        local psiphon_port="1080"
+        local psiphon_bind; psiphon_bind=$(get_installed_var "PSIPHON_BIND")
+        local psiphon_port; psiphon_port=$(get_installed_var "PSIPHON_PORT")
+        [[ -z "$psiphon_bind" ]] && psiphon_bind="127.0.0.1"
+        [[ -z "$psiphon_port" ]] && psiphon_port="1080"
         if [[ -f "/etc/default/vps-psiphon" ]]; then
             # shellcheck disable=SC1091
             source "/etc/default/vps-psiphon" 2>/dev/null || true
             [[ -n "${BIND:-}" ]] && psiphon_bind="$BIND"
             [[ -n "${SOCKS_PORT:-}" ]] && psiphon_port="$SOCKS_PORT"
-        else
-            local dgw; dgw=$(ip -4 -o addr show docker0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)
-            [[ -n "$dgw" ]] && psiphon_bind="$dgw"
         fi
         outbounds_list+=('{
       "tag": "PSIPHON",
