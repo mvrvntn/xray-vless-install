@@ -4785,7 +4785,122 @@ main() {
             esac
         }
 
-        run_diagnostics() {
+        run_ipregion_check() {
+            local mode="$1"
+            local ipregion_url="https://ipregion.vrnt.xyz"
+            local temp_script; temp_script=$(mktemp)
+
+            echo -e "\n${CYAN}📥 Загрузка утилиты ipregion (${ipregion_url})...${NC}"
+            if ! curl -fsSL --connect-timeout 8 "$ipregion_url" -o "$temp_script"; then
+                echo -e "${RED}❌ Не удалось загрузить скрипт ipregion. Проверьте интернет-соединение.${NC}"
+                rm -f "$temp_script"
+                return 1
+            fi
+            chmod +x "$temp_script"
+
+            # Проверка базовых зависимостей
+            if ! command -v jq &>/dev/null || ! command -v column &>/dev/null; then
+                echo -e "${YELLOW}📦 Установка утилит для форматирования (jq, util-linux)...${NC}"
+                apt-get update -qq >/dev/null 2>&1 || true
+                apt-get install -y -qq jq bsdmainutils util-linux dnsutils >/dev/null 2>&1 || true
+            fi
+
+            case "$mode" in
+                "host")
+                    echo -e "\n${BOLD}${GREEN}🚀 [1/1] Тест медиа-разблокировок через прямой IP хоста...${NC}\n"
+                    bash "$temp_script" -4
+                    ;;
+                "warp")
+                    if ! ip link show warp >/dev/null 2>&1; then
+                        echo -e "${RED}❌ Интерфейс warp не найден или отключен! Включите WARP в меню обходов.${NC}"
+                        rm -f "$temp_script"
+                        return 1
+                    fi
+                    echo -e "\n${BOLD}${PURPLE}🌀 [1/1] Тест медиа-разблокировок через интерфейс Cloudflare WARP...${NC}\n"
+                    bash "$temp_script" -i warp
+                    ;;
+                "psiphon")
+                    local ps_bind="127.0.0.1"; local ps_port="1080"
+                    if [[ -f "/etc/default/vps-psiphon" ]]; then
+                        # shellcheck disable=SC1091
+                        source "/etc/default/vps-psiphon" 2>/dev/null || true
+                        [[ -n "${BIND:-}" ]] && ps_bind="$BIND"
+                        [[ -n "${SOCKS_PORT:-}" ]] && ps_port="$SOCKS_PORT"
+                    fi
+                    if ! systemctl is-active --quiet vps-psiphon; then
+                        echo -e "${RED}❌ Служба Psiphon (vps-psiphon) не запущена! Включите Psiphon в меню обходов.${NC}"
+                        rm -f "$temp_script"
+                        return 1
+                    fi
+                    echo -e "\n${BOLD}${CYAN}🌐 [1/1] Тест медиа-разблокировок через Psiphon SOCKS5 ($ps_bind:$ps_port)...${NC}\n"
+                    bash "$temp_script" -p "${ps_bind}:${ps_port}"
+                    ;;
+                "all")
+                    echo -e "\n${BOLD}${GREEN}=== [1/3] ТЕСТ ОСНОВНОГО IP ХОСТА ===${NC}\n"
+                    bash "$temp_script" -4
+                    echo ""
+                    if ip link show warp >/dev/null 2>&1; then
+                        echo -e "\n${BOLD}${PURPLE}=== [2/3] ТЕСТ ИНТЕРФЕЙСА CLOUDFLARE WARP ===${NC}\n"
+                        bash "$temp_script" -i warp
+                        echo ""
+                    fi
+                    if systemctl is-active --quiet vps-psiphon; then
+                        local ps_bind="127.0.0.1"; local ps_port="1080"
+                        if [[ -f "/etc/default/vps-psiphon" ]]; then
+                            # shellcheck disable=SC1091
+                            source "/etc/default/vps-psiphon" 2>/dev/null || true
+                            [[ -n "${BIND:-}" ]] && ps_bind="$BIND"
+                            [[ -n "${SOCKS_PORT:-}" ]] && ps_port="$SOCKS_PORT"
+                        fi
+                        echo -e "\n${BOLD}${CYAN}=== [3/3] ТЕСТ ПРОКСИ PSIPHON ($ps_bind:$ps_port) ===${NC}\n"
+                        bash "$temp_script" -p "${ps_bind}:${ps_port}"
+                        echo ""
+                    fi
+                    ;;
+            esac
+
+            rm -f "$temp_script"
+            echo -e "\n${BOLD}Тестирование завершено. Нажмите Enter для возврата в меню...${NC}"
+            read -r
+        }
+
+        diagnostics_menu() {
+            local warp_active=false
+            ip link show warp >/dev/null 2>&1 && warp_active=true
+            local psiphon_active=false
+            systemctl is-active --quiet vps-psiphon 2>/dev/null && psiphon_active=true
+
+            ui_header "🛠️  ДИАГНОСТИКА И ТЕСТИРОВАНИЕ СЕРВЕРА" "${CYAN}"
+            ui_item_color "1" "📊 Системная экспресс-диагностика (порты, службы, SSL, память)" "${YELLOW}" "${CYAN}"
+            ui_item_color "2" "🌍 Углубленный тест медиа/AI хоста (ipregion)" "${GREEN}" "${CYAN}"
+            if [[ "$warp_active" == "true" ]]; then
+                ui_item_color "3" "🌀 Углубленный тест через Cloudflare WARP (ipregion -i warp)" "${PURPLE}" "${CYAN}"
+            else
+                ui_item_color "3" "🌀 Тест через Cloudflare WARP ${RED}[Интерфейс неактивен]${NC}" "${RED}" "${CYAN}"
+            fi
+            if [[ "$psiphon_active" == "true" ]]; then
+                ui_item_color "4" "🌐 Углубленный тест через Psiphon (ipregion -p SOCKS5)" "${BLUE}" "${CYAN}"
+            else
+                ui_item_color "4" "🌐 Тест через Psiphon ${RED}[Служба не активна]${NC}" "${RED}" "${CYAN}"
+            fi
+            ui_item_color "5" "🚀 Комплексный тест всех активных шлюзов (Хост + WARP + Psiphon)" "${YELLOW}" "${CYAN}"
+            ui_divider "${CYAN}"
+            ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${CYAN}"
+            ui_footer "${CYAN}"
+
+            read -r -p " Выберите действие (0-5): " dchoice
+            case $dchoice in
+                0) main_menu ;;
+                1) run_system_diagnostics ; diagnostics_menu ;;
+                2) run_ipregion_check "host" ; diagnostics_menu ;;
+                3) run_ipregion_check "warp" ; diagnostics_menu ;;
+                4) run_ipregion_check "psiphon" ; diagnostics_menu ;;
+                5) run_ipregion_check "all" ; diagnostics_menu ;;
+                *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; diagnostics_menu ;;
+            esac
+        }
+
+        run_system_diagnostics() {
             echo -e "\n${BOLD}${CYAN}🛠️  ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ${NC}"
             echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
             
@@ -5058,6 +5173,10 @@ main() {
 
             echo -e "\n${BOLD}Диагностика завершена. Нажмите Enter, чтобы вернуться назад...${NC}"
             read -r
+        }
+
+        run_diagnostics() {
+            diagnostics_menu
         }
 
 
@@ -5983,7 +6102,7 @@ EOF
                 4) bypass_menu ;;
                 5) show_logs ; main_menu ;;
                 6) show_connections ; main_menu ;;
-                7) run_diagnostics ; main_menu ;;
+                7) diagnostics_menu ;;
                 8) optimize_vps ;;
                 9) update_script_from_mirrors ;;
                 10) change_fingerprint ; main_menu ;;
