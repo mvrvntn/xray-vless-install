@@ -641,88 +641,18 @@ update_marker_val() {
     fi
 }
 
-update_geoblock_list() {
-    local list_file="/etc/xray/geoblock.lst"
-    local temp_file; temp_file=$(mktemp)
-    local temp_geoblock; temp_geoblock=$(mktemp)
-    
-    echo "📥 Обновление списка геоблокированных доменов (itdog геоблок)..."
-    
-    # Пытаемся скачать список с GitHub
-    local download_success=false
-    curl -sSL --connect-timeout 8 "https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Categories/geoblock.lst" -o "$temp_geoblock"
-    
-    if [[ -s "$temp_geoblock" ]]; then
-        cat "$temp_geoblock" 2>/dev/null > "$temp_file"
-        # Очищаем от Windows CRLF
-        sed -i 's/\r//g' "$temp_file"
-        # Удаляем пустые строки и комментарии, сортируем и убираем дубликаты
-        grep -v '^[[:space:]]*$' "$temp_file" | grep -v '^[[:space:]]*#' | sort -u > "${temp_file}.clean"
-        mv "${temp_file}.clean" "$temp_file"
-        
-        if [[ -s "$temp_file" ]]; then
-            download_success=true
-        fi
-    fi
-    
-    rm -f "$temp_geoblock"
-    
-    if [[ "$download_success" = true ]]; then
-        if ! cmp -s "$temp_file" "$list_file" 2>/dev/null; then
-            mkdir -p /etc/xray
-            mv "$temp_file" "$list_file"
-            echo "✅ Список доменов успешно обновлен."
-            rm -f "$temp_file"
-            return 0
-        fi
-        rm -f "$temp_file"
-    else
-        rm -f "$temp_file"
-    fi
-    
-    # Если файла еще нет (первая установка), создаем базовый дефолтный список
+init_warp_custom_list() {
+    local list_file="/etc/xray/warp_custom.lst"
     if [[ ! -f "$list_file" ]]; then
         mkdir -p /etc/xray
         cat > "$list_file" <<EOF
-4pda.to
-habr.com
-claude.ai
-claude.com
-anthropic.com
-openai.com
-chatgpt.com
-oaistatic.com
-oaiusercontent.com
-notion.so
-notion.site
-notion.com
-notion-static.com
-copilot.microsoft.com
-designer.microsoft.com
-netflix.com
-netflix.net
-nflxext.com
-nflximg.net
-nflxvideo.net
-primevideo.com
-instagram.com
-facebook.com
-fbcdn.net
-twitter.com
-x.com
-twimg.com
-spotify.com
-deepl.com
-openrouter.ai
-trae.ai
-windsurf.com
-elevenlabs.io
+# Пользовательский список дополнительных доменов для Cloudflare WARP.
+# Базовые AI-сервисы (ChatGPT, Claude, Perplexity, Grok), Spotify (с CDN)
+# и TikTok уже зашиты в конфигурацию по умолчанию согласно warp-psiphon-guide.
+# Добавляйте сюда домены только при необходимости (по одному на строку):
+# example.com
 EOF
-        echo "✅ Создан базовый список геоблокированных доменов."
-        return 0
     fi
-    echo "ℹ️ Обновление не требуется (список совпадает с текущим или недоступен GitHub)."
-    return 1
 }
 
 install_warp() {
@@ -803,12 +733,9 @@ install_warp() {
         wg-quick down warp >/dev/null 2>&1 || true
         systemctl enable wg-quick@warp >/dev/null 2>&1
         systemctl restart wg-quick@warp >/dev/null 2>&1 || systemctl start wg-quick@warp >/dev/null 2>&1
-        update_geoblock_list
-        
-        # Добавляем обновление списка геоблокировок в cron
-        local script_path; script_path=$(realpath "$0")
-        (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; \
-         echo "30 3 * * * bash \"$script_path\" --update-geoblocks >/dev/null 2>&1") | crontab -
+        init_warp_custom_list
+        # Очищаем устаревший cron обновления сторонних списков
+        crontab -l 2>/dev/null | grep -v 'update-geoblocks' | crontab - 2>/dev/null || true
 
         echo "✅ Cloudflare WARP успешно установлен и запущен!"
         update_marker_val "WARP_INSTALLED" "true"
@@ -2081,19 +2008,21 @@ EOF
     if [[ "$warp_enabled" == "true" ]]; then
         if [[ "$warp_mode" == "smart" ]]; then
             local geoblocks=()
-            if [[ -f "/etc/xray/geoblock.lst" ]]; then
-                while IFS= read -r line || [[ -n "$line" ]]; do
-                    line=$(echo "$line" | tr -d '\r' | xargs)
-                    if [[ -z "$line" || "$line" =~ ^# ]]; then
-                        continue
-                    fi
-                    # Исключаем Google/YouTube из WARP во избежание рассинхронизации сессий (IP A != B) и перегрузки видеопотоком
-                    if [[ "$line" =~ (google|youtube|googlevideo|gstatic|ggpht) ]]; then
-                        continue
-                    fi
-                    geoblocks+=("\"domain:$line\"")
-                done < "/etc/xray/geoblock.lst"
-            fi
+            for custom_f in "/etc/xray/warp_custom.lst" "/etc/xray/geoblock.lst"; do
+                if [[ -f "$custom_f" ]]; then
+                    while IFS= read -r line || [[ -n "$line" ]]; do
+                        line=$(echo "$line" | tr -d '\r' | xargs)
+                        if [[ -z "$line" || "$line" =~ ^# ]]; then
+                            continue
+                        fi
+                        # Исключаем Google/YouTube из WARP во избежание рассинхронизации сессий (IP A != B) и перегрузки видеопотоком
+                        if [[ "$line" =~ (google|youtube|googlevideo|gstatic|ggpht) ]]; then
+                            continue
+                        fi
+                        geoblocks+=("\"domain:$line\"")
+                    done < "$custom_f"
+                fi
+            done
             
             # Базовые geosite категории
             geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"" "\"geosite:tiktok\"")
@@ -6112,20 +6041,6 @@ EOF
             sleep 1.5
         }
 
-        toggle_warp_auto_update() {
-            local script_path; script_path=$(realpath "$0")
-            if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
-                echo "📴 Отключение автообновления геоблокировок..."
-                (crontab -l 2>/dev/null | grep -v 'update-geoblocks') | crontab -
-                echo -e "${GREEN}✅ Автообновление отключено${NC}"
-            else
-                echo "🔄 Включение автообновления геоблокировок..."
-                (crontab -l 2>/dev/null | grep -v 'update-geoblocks'; echo "30 3 * * * bash \"$script_path\" --update-geoblocks >/dev/null 2>&1") | crontab -
-                echo -e "${GREEN}✅ Автообновление включено (ежедневно в 03:30)${NC}"
-            fi
-            sleep 1.5
-        }
-
         toggle_ipv6() {
             local cur; cur=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)
             mkdir -p /etc/sysctl.d
@@ -6184,15 +6099,9 @@ EOF
                     ui_item_color "1" "🌀 Включить WARP" "${YELLOW}" "${PURPLE}"
                 fi
                 ui_item_color "2" "⚙️ Изменить режим WARP (Smart / Full)" "${YELLOW}" "${PURPLE}"
-                ui_item_color "3" "🔄 Обновить список геоблокировок WARP" "${YELLOW}" "${PURPLE}"
-                
-                local cron_status="${RED}Выключено${NC}"
-                if crontab -l 2>/dev/null | grep -q 'update-geoblocks'; then
-                    cron_status="${GREEN}Включено${NC}"
-                fi
-                ui_item_color "4" "🕒 Автообновление геоблоков: $cron_status" "${YELLOW}" "${PURPLE}"
-                ui_item_color "5" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
-                ui_item_color "6" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
+                ui_item_color "3" "📝 Редактировать пользовательский список WARP (/etc/xray/warp_custom.lst)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "4" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
+                ui_item_color "5" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
             fi
             
             ui_divider "${PURPLE}"
@@ -6406,11 +6315,18 @@ EOF
                     ;;
                 3)
                     if [[ "$warp_installed" == "true" ]]; then
-                        update_geoblock_list
+                        init_warp_custom_list
+                        if command -v nano &>/dev/null; then
+                            nano /etc/xray/warp_custom.lst
+                        elif command -v vi &>/dev/null; then
+                            vi /etc/xray/warp_custom.lst
+                        else
+                            echo -e "${RED}❌ Редактор не найден. Файл списка доменов находится в /etc/xray/warp_custom.lst${NC}"
+                        fi
                         DOMAIN=$(get_installed_var "DOMAIN")
                         NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
                         generate_server_config
-                        echo -e "${GREEN}✅ Список блокировок успешно обновлен!${NC}"
+                        echo -e "${GREEN}✅ Пользовательский список доменов WARP применен!${NC}"
                     else
                         echo -e "${RED}❌ Установите WARP сначала!${NC}"
                     fi
@@ -6418,14 +6334,6 @@ EOF
                     bypass_menu
                     ;;
                 4)
-                    if [[ "$warp_installed" == "true" ]]; then
-                        toggle_warp_auto_update
-                    else
-                        echo -e "${RED}❌ Установите WARP сначала!${NC}"
-                    fi
-                    bypass_menu
-                    ;;
-                5)
                     if [[ "$warp_installed" == "true" ]]; then
                         install_warp
                         DOMAIN=$(get_installed_var "DOMAIN")
@@ -6437,7 +6345,7 @@ EOF
                     sleep 1.5
                     bypass_menu
                     ;;
-                6)
+                5|6)
                     if [[ "$warp_installed" == "true" ]]; then
                         uninstall_warp
                     else
@@ -6670,9 +6578,8 @@ EOF
     mkdir -p /var/log/xray
     exec > >(tee -a "$INSTALL_LOG") 2>&1
 
-    # === Обработка флага автоматического обновления геоблокировок ===
+    # === Обработка флага обновления конфигурации маршрутизации ===
     if [[ "$1" == "--update-geoblocks" ]]; then
-        update_geoblock_list
         DOMAIN=$(get_installed_var "DOMAIN")
         NUM_DEVICES=$(get_installed_var "NUM_DEVICES")
         if [[ -n "$DOMAIN" ]] && [[ -n "$NUM_DEVICES" ]]; then
