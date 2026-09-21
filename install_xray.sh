@@ -2091,12 +2091,22 @@ EOF
                 done < "/etc/xray/geoblock.lst"
             fi
             
+            # Базовые geosite категории
             geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"geosite:spotify\"" "\"geosite:tiktok\"")
+            
+            # AI-сервисы (из руководства)
             geoblocks+=("\"domain:openai.com\"" "\"domain:chatgpt.com\"" "\"domain:oaistatic.com\"" "\"domain:oaiusercontent.com\"" "\"domain:sora.com\"")
             geoblocks+=("\"domain:claude.ai\"" "\"domain:anthropic.com\"" "\"domain:perplexity.ai\"" "\"domain:pplx.ai\"" "\"domain:grok.com\"" "\"domain:x.ai\"")
             geoblocks+=("\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"")
-            geoblocks+=("\"domain:tiktok.com\"" "\"domain:tiktokv.com\"" "\"domain:tiktokcdn.com\"" "\"domain:byteoversea.com\"" "\"domain:ibytedtos.com\"")
-            geoblocks+=("\"domain:spotify.com\"" "\"domain:scdn.co\"" "\"domain:spotifycdn.com\"")
+            
+            # TikTok (полный стек CDN и медиа-шардов из руководства)
+            geoblocks+=("\"domain:tiktok.com\"" "\"domain:tiktokv.com\"" "\"domain:tiktokv.us\"" "\"domain:tiktokcdn.com\"" "\"domain:tiktokcdn-us.com\"" "\"domain:tiktokrow-cdn.com\"")
+            geoblocks+=("\"domain:byteoversea.com\"" "\"domain:ibytedtos.com\"" "\"domain:ibyteimg.com\"" "\"domain:ipstatp.com\"" "\"domain:sgpstatp.com\"")
+            geoblocks+=("\"domain:muscdn.com\"" "\"domain:musical.ly\"" "\"domain:ttwstatic.com\"" "\"domain:byteicdn.com\"")
+            
+            # Spotify (полный стек аудио-CDN и внутренних сервисов из руководства)
+            geoblocks+=("\"domain:spotify.com\"" "\"domain:scdn.co\"" "\"domain:spotifycdn.com\"" "\"domain:spot-internal.com\"" "\"domain:pscdn.co\"" "\"domain:audio-ak-spotify-com.akamaized.net\"")
+            
             if [[ "$opera_enabled" != "true" ]]; then
                 geoblocks+=("\"geosite:openai\"")
             fi
