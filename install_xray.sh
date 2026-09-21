@@ -2031,9 +2031,11 @@ EOF
             if [[ "$auto_tune" == "true" ]]; then
                 local auto_warp_openai; auto_warp_openai=$(get_installed_var "AUTO_WARP_OPENAI")
                 local auto_warp_claude; auto_warp_claude=$(get_installed_var "AUTO_WARP_CLAUDE")
+                local auto_warp_pplx; auto_warp_pplx=$(get_installed_var "AUTO_WARP_PPLX")
                 local auto_warp_reddit; auto_warp_reddit=$(get_installed_var "AUTO_WARP_REDDIT")
                 local auto_warp_tiktok; auto_warp_tiktok=$(get_installed_var "AUTO_WARP_TIKTOK")
                 local auto_warp_spotify; auto_warp_spotify=$(get_installed_var "AUTO_WARP_SPOTIFY")
+                local auto_warp_streaming; auto_warp_streaming=$(get_installed_var "AUTO_WARP_STREAMING")
                 local auto_warp_media; auto_warp_media=$(get_installed_var "AUTO_WARP_MEDIA")
 
                 if [[ "$auto_warp_openai" == "true" ]] && [[ "$opera_enabled" != "true" ]]; then
@@ -2044,7 +2046,7 @@ EOF
                     geoblocks+=("\"geosite:anthropic\"" "\"domain:claude.ai\"" "\"domain:anthropic.com\"")
                 fi
 
-                if [[ "$auto_warp_openai" == "true" || "$auto_warp_claude" == "true" ]]; then
+                if [[ "$auto_warp_openai" == "true" || "$auto_warp_claude" == "true" || "$auto_warp_pplx" == "true" ]]; then
                     geoblocks+=("\"domain:perplexity.ai\"" "\"domain:pplx.ai\"" "\"domain:grok.com\"" "\"domain:x.ai\"" "\"domain:copilot.microsoft.com\"" "\"domain:githubcopilot.com\"" "\"domain:elevenlabs.io\"" "\"domain:eleven-labs.com\"" "\"domain:canva.com\"" "\"domain:midjourney.com\"" "\"domain:deepl.com\"")
                 fi
 
@@ -2060,8 +2062,12 @@ EOF
                     geoblocks+=("\"geosite:spotify\"" "\"domain:spotify.com\"" "\"domain:scdn.co\"" "\"domain:spotifycdn.com\"" "\"domain:spot-internal.com\"" "\"domain:pscdn.co\"" "\"domain:audio-ak-spotify-com.akamaized.net\"")
                 fi
 
+                if [[ "$auto_warp_streaming" == "true" ]]; then
+                    geoblocks+=("\"geosite:netflix\"" "\"geosite:disney\"" "\"domain:disneyplus.com\"")
+                fi
+
                 if [[ "$auto_warp_media" == "true" ]]; then
-                    geoblocks+=("\"geosite:netflix\"" "\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"" "\"geosite:disney\"" "\"domain:disneyplus.com\"")
+                    geoblocks+=("\"geosite:facebook\"" "\"geosite:instagram\"" "\"geosite:twitter\"")
                 fi
             else
                 # Базовые geosite категории (статический полный список по гайду)
@@ -6227,17 +6233,17 @@ EOF
                 need_psiphon_google="true"
             fi
 
-            # 2. OpenAI / ChatGPT
+            # 2. OpenAI / ChatGPT (Web + API)
             echo -n " 🔎 Проверка OpenAI / ChatGPT... "
             local oai_api_code
             oai_api_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://api.openai.com/v1/models 2>/dev/null || echo "000")
             local oai_web_code
             oai_web_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://chatgpt.com 2>/dev/null || echo "000")
             local need_warp_openai="false"
-            if [[ "$oai_api_code" == "401" ]] || [[ "$oai_web_code" =~ ^(200|301|302)$ ]]; then
+            if [[ "$oai_api_code" == "401" ]] && [[ "$oai_web_code" =~ ^(200|301|302)$ ]]; then
                 echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
             else
-                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $oai_api_code)${NC} ➔ [WARP]"
+                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $oai_api_code/$oai_web_code)${NC} ➔ [WARP]"
                 need_warp_openai="true"
             fi
 
@@ -6253,7 +6259,19 @@ EOF
                 need_warp_claude="true"
             fi
 
-            # 4. Reddit
+            # 4. Perplexity AI
+            echo -n " 🔎 Проверка Perplexity AI... "
+            local pplx_code
+            pplx_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.perplexity.ai 2>/dev/null || echo "000")
+            local need_warp_pplx="false"
+            if [[ "$pplx_code" =~ ^(200|301|302)$ ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Заблокирован на хосте (HTTP $pplx_code)${NC} ➔ [WARP]"
+                need_warp_pplx="true"
+            fi
+
+            # 5. Reddit
             echo -n " 🔎 Проверка Reddit... "
             local reddit_code
             reddit_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.reddit.com 2>/dev/null || echo "000")
@@ -6265,7 +6283,7 @@ EOF
                 need_warp_reddit="true"
             fi
 
-            # 5. TikTok
+            # 6. TikTok
             echo -n " 🔎 Проверка TikTok... "
             local tiktok_code
             tiktok_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.tiktok.com 2>/dev/null || echo "000")
@@ -6277,7 +6295,7 @@ EOF
                 need_warp_tiktok="true"
             fi
 
-            # 6. Spotify
+            # 7. Spotify
             echo -n " 🔎 Проверка Spotify... "
             local spotify_code
             spotify_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://open.spotify.com 2>/dev/null || echo "000")
@@ -6289,7 +6307,19 @@ EOF
                 need_warp_spotify="true"
             fi
 
-            # 7. Соцсети (Instagram / Twitter)
+            # 8. Стриминги (Disney+ / Netflix)
+            echo -n " 🔎 Проверка Стримингов (Disney+ / Netflix)... "
+            local disney_code
+            disney_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.disneyplus.com 2>/dev/null || echo "000")
+            local need_warp_streaming="false"
+            if [[ "$disney_code" =~ ^(200|301|302)$ ]]; then
+                echo -e "${GREEN}🟢 Открыт на хосте${NC} ➔ [DIRECT]"
+            else
+                echo -e "${RED}🔴 Блокировка датацентра (HTTP $disney_code)${NC} ➔ [WARP]"
+                need_warp_streaming="true"
+            fi
+
+            # 9. Соцсети (Instagram / Twitter)
             echo -n " 🔎 Проверка Instagram / Twitter... "
             local insta_code
             insta_code=$(curl -A "$ua" -s -o /dev/null -w "%{http_code}" --connect-timeout 4 https://www.instagram.com 2>/dev/null || echo "000")
@@ -6305,9 +6335,11 @@ EOF
             update_marker_val "AUTO_PSIPHON_GOOGLE" "$need_psiphon_google"
             update_marker_val "AUTO_WARP_OPENAI" "$need_warp_openai"
             update_marker_val "AUTO_WARP_CLAUDE" "$need_warp_claude"
+            update_marker_val "AUTO_WARP_PPLX" "$need_warp_pplx"
             update_marker_val "AUTO_WARP_REDDIT" "$need_warp_reddit"
             update_marker_val "AUTO_WARP_TIKTOK" "$need_warp_tiktok"
             update_marker_val "AUTO_WARP_SPOTIFY" "$need_warp_spotify"
+            update_marker_val "AUTO_WARP_STREAMING" "$need_warp_streaming"
             update_marker_val "AUTO_WARP_MEDIA" "$need_warp_media"
 
             echo -e "\n${GREEN}✅ Результаты автокалибровки сохранены!${NC}"
