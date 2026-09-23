@@ -2555,7 +2555,10 @@ EOF
           "host": "'"$DOMAIN"'",
           "mode": "auto",
           "extra": {
-            "xPaddingBytes": "100-1000"
+            "noSSEHeader": true,
+            "xPaddingBytes": "100-1000",
+            "scMaxBufferedPosts": 30,
+            "scMaxEachPostBytes": 1000000
           }
         },
         "sockopt": {
@@ -2682,7 +2685,10 @@ EOF
           "host": "'"$DOMAIN"'",
           "mode": "auto",
           "extra": {
-            "xPaddingBytes": "100-1000"
+            "noSSEHeader": true,
+            "xPaddingBytes": "100-1000",
+            "scMaxBufferedPosts": 30,
+            "scMaxEachPostBytes": 1000000
           }
         },
         "sockopt": {
