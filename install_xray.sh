@@ -5107,30 +5107,43 @@ main() {
 
     if [[ -f "$MARKER_FILE" ]]; then
         show_connections() {
-            echo -e "\n--- Активные подключения к Xray ---"
-            local conns; conns=$(ss -tnp | grep -E ':(443|2053|8443)\s' | grep -v '127.0.0.1')
+            ui_header "📊  МОНИТОРИНГ АКТИВНЫХ СОЕДИНЕНИЙ"
+            local conns; conns=$(ss -tnp 2>/dev/null | grep -E ':(443|2053|8443)\s' | grep -v '127.0.0.1')
             if [[ -z "$conns" ]]; then
-                echo "Нет активных подключений на порты 443 / 2053 / 8443."
+                ui_item "" "ℹ️ Нет активных внешних подключений на портах 443 / 2053 / 8443."
             else
-                echo "Состояние Локальный_Адрес Удаленный_Адрес Процесс"
-                echo "$conns" | awk '{print $1, $4, $5, $6}'
+                ui_item "" "${BOLD}Состояние    Локальный_Адрес        Удаленный_Адрес        Процесс${NC}"
+                ui_divider
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] && ui_item "" "$line"
+                done < <(echo "$conns" | awk '{printf "%-12s %-22s %-22s %s\n", $1, $4, $5, $6}')
             fi
+            ui_footer
+            echo -e "\nНажмите Enter для возврата..."
+            read -r
         }
 
         show_logs() {
-            echo -e "\n--- Выберите лог для просмотра ---"
-            echo "1. Лог Xray (systemd)"
-            echo "2. Лог Сервера подписок (systemd)"
-            echo "3. Лог ошибок Xray (/var/log/xray/error.log)"
-            echo "4. Назад"
-            read -r -p "Выбор (1-4): " lchoice
+            ui_header "📰  ПРОСМОТР СИСТЕМНЫХ ЛОГОВ"
+            ui_item "1" "Лог службы Xray (systemd journal)"
+            ui_item "2" "Лог Сервера подписок (xray-sub)"
+            ui_item "3" "Лог службы Hysteria 2 (hysteria-server)"
+            ui_item "4" "Лог ошибок Xray (/var/log/xray/error.log)"
+            ui_divider
+            ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
+            ui_footer
+            read -r -p " Выберите действие (0-4): " lchoice
             case $lchoice in
                 1) journalctl -u xray -n 50 --no-pager ;;
                 2) journalctl -u xray-sub -n 50 --no-pager ;;
-                3) tail -n 50 /var/log/xray/error.log ;;
-                4) return ;;
-                *) echo "Неверный выбор" ;;
+                3) journalctl -u hysteria-server -n 50 --no-pager 2>/dev/null || echo "Служба Hysteria 2 не запущена." ;;
+                4) tail -n 50 /var/log/xray/error.log 2>/dev/null || echo "Файл error.log пуст или отсутствует." ;;
+                0) return ;;
+                *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ;;
             esac
+            echo -e "\nНажмите Enter для возврата..."
+            read -r
+            show_logs
         }
 
         run_ipregion_check() {
@@ -5232,7 +5245,7 @@ main() {
                 ui_item_color "4" "🌐 Тест через Psiphon ${RED}[Служба не активна]${NC}" "${RED}" "${CYAN}"
             fi
             ui_item_color "5" "🚀 Комплексный тест всех активных шлюзов (Хост + WARP + Psiphon)" "${YELLOW}" "${CYAN}"
-            ui_item_color "6" "📊 Анализ занятости дискового пространства (Express Disk Audit)" "${CYAN}" "${CYAN}"
+            ui_item_color "6" "💽 Анализ занятости дискового пространства (Express Disk Audit)" "${CYAN}" "${CYAN}"
             ui_item_color "7" "🧹 Безопасная очистка диска (кэш apt, логи, docker, старые ядра)" "${GREEN}" "${CYAN}"
             ui_divider "${CYAN}"
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${CYAN}"
@@ -5629,9 +5642,9 @@ EOF
             local text="$2"
             local color="${3:-${YELLOW}}"
             if [[ -z "$num" ]]; then
-                 echo -e "${CYAN}│${NC}  ${text}"
+                 echo -e "${CYAN}│${NC}   ${text}"
             else
-                 echo -e "${CYAN}│${NC}  ${BOLD}${color}${num}.${NC} ${text}"
+                 printf "${CYAN}│${NC}  ${BOLD}${color}%2s.${NC} %b\n" "$num" "$text"
             fi
         }
 
@@ -5641,9 +5654,9 @@ EOF
             local num_color="${3:-${YELLOW}}"
             local border_color="${4:-${CYAN}}"
             if [[ -z "$num" ]]; then
-                 echo -e "${border_color}│${NC}  ${text}"
+                 echo -e "${border_color}│${NC}   ${text}"
             else
-                 echo -e "${border_color}│${NC}  ${BOLD}${num_color}${num}.${NC} ${text}"
+                 printf "${border_color}│${NC}  ${BOLD}${num_color}%2s.${NC} %b\n" "$num" "$text"
             fi
         }
 
@@ -5651,7 +5664,7 @@ EOF
             local icon="$1"
             local key="$2"
             local val="$3"
-            printf "${CYAN}│${NC} %s ${BOLD}%-12s${NC} %b\n" "$icon" "$key:" "$val"
+            printf "${CYAN}│${NC}  %s ${BOLD}%-9s${NC} %b\n" "$icon" "$key:" "$val"
         }
 
         remove_client() {
@@ -5827,7 +5840,7 @@ EOF
 
             ui_header "🖥️  СТАТУС СЕРВЕРА"
             ui_status "🌐" "Сервер" "${GREEN}$domain${NC} | SSL: [$ssl_badge]"
-            ui_status "⚙️ " "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
+            ui_status "⚙️" "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
             ui_status "🧭" "Роутинг" "$routing_badge"
             ui_status "🌀" "Обходы" "WARP: [$warp_status] | Psiphon: [$psiphon_status] | Opera: [$opera_status] | Tor: [$tor_status]"
             ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
@@ -5846,9 +5859,12 @@ EOF
             ui_item "8" "qq (Браузер QQ)"
             ui_item "9" "random (Случайный из списка браузеров)"
             ui_item "10" "randomized (Полная рандомизация - может вызывать обрывы)"
+            ui_divider
+            ui_item "0" "↩️ Отмена и возврат назад" "${CYAN}"
             ui_footer
-            read -r -p " Выберите отпечаток (1-10): " fp_choice
+            read -r -p " Выберите отпечаток (1-10, или 0 для отмены): " fp_choice
             case $fp_choice in
+                0) return ;;
                 1) new_fp="chrome" ;;
                 2) new_fp="safari" ;;
                 3) new_fp="ios" ;;
@@ -5888,9 +5904,10 @@ EOF
             ui_item "" "ℹ️ Страница отдается активным DPI-сканерам и браузерам на https://$DOMAIN/"
             ui_divider
             ui_item "1" "📥 Клонировать реальный сайт по URL в камуфляж"
-            ui_item "2" "✍️ Сгенерировать стильную визитку/лендинг (ввод названия и описания)"
+            ui_item "2" "✍️  Сгенерировать стильную визитку/лендинг (ввод названия и описания)"
             ui_item "3" "🧹 Сбросить на стандартную страницу Confluence"
             ui_item "4" "🚀 Установить готовый реалистичный бизнес/tech-шаблон Selfsteal"
+            ui_divider
             ui_item "0" "↩️ Назад в меню SSL и домена" "${CYAN}"
             ui_footer
 
@@ -6102,13 +6119,16 @@ EOF
             ui_item "2" "🧪 Проверить автопродление (Dry-run тест)"
             ui_item "3" "🌐 Сменить основной домен (с перевыпуском SSL)"
             ui_item "4" "🎭 Управление камуфляжем (Decoy / SelfSteal сайт-заглушка)"
-            ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+            ui_item "5" "🛡️ Управление маскировкой Reality (VLESS-REALITY)"
+            ui_divider
+            ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
             
-            read -r -p " Выберите действие (0-4): " dchoice
+            read -r -p " Выберите действие (0-5): " dchoice
             case $dchoice in
                 0) main_menu ;;
                 4) manage_decoy_menu ;;
+                5) reality_management_menu ;;
                 1)
                     renew_ssl_certificate --force
                     echo -e "\nНажмите Enter для возврата в меню..."
@@ -6219,8 +6239,9 @@ EOF
             else
                 ui_item "1" "🛡️ Включить маскировку Reality (маскироваться под $reality_sni)"
             fi
-            ui_item "2" "⚙️ Изменить маскировочный сайт (SNI и DEST)"
-            ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+            ui_item "2" "⚙️  Изменить маскировочный сайт (SNI и DEST)"
+            ui_divider
+            ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
 
             read -r -p " Выберите действие (0-2): " rchoice
@@ -6298,18 +6319,18 @@ EOF
             fi
 
             local prof_upper; prof_upper=$(echo "$current_prof" | tr '[:lower:]' '[:upper:]')
-            echo -e " Текущий активный профиль: ${BOLD}${CYAN}${prof_upper}${NC}\n"
-            ui_item "1" "⭐️ DEFAULT — Обход блокировок для РФ [Для зарубежных VPS]"
-            echo -e "     ${GRAY}• РФ ресурсы напрямую без VPN, зарубежные/блокировки — через сервер.${NC}"
-            ui_item "2" "🌍 RELOCANT — Для релокантов за рубежом [Для российских VPS]"
-            echo -e "     ${GRAY}• Весь мировой интернет напрямую (1 Гбит/с), сервисы РФ (Госуслуги,${NC}"
-            echo -e "       ${GRAY}банки, Кинопоиск) — через этот российский сервер.${NC}"
-            ui_item "3" "🛡️ WHITELIST — Режим высокой автономии (Белые списки)"
-            echo -e "     ${GRAY}• Напрямую исключительно критическая инфраструктура РФ, остальное в VPN.${NC}"
-            ui_item "4" "📴 OFF — Отключить передачу маршрутов"
-            echo -e "     ${GRAY}• Клиенты отключают сплит-туннелирование и пускают весь трафик в туннель.${NC}"
+            ui_item "" "Текущий активный профиль: ${BOLD}${CYAN}${prof_upper}${NC}"
             ui_divider
-            ui_item "0" "↩️ Вернуться назад" "${CYAN}"
+            ui_item "1" "⭐️ DEFAULT — Обход блокировок для РФ [Для зарубежных VPS]"
+            ui_item "" "   ${GRAY}• РФ ресурсы напрямую без VPN, зарубежные/блокировки — через сервер.${NC}"
+            ui_item "2" "🌍 RELOCANT — Для релокантов за рубежом [Для российских VPS]"
+            ui_item "" "   ${GRAY}• Весь мировой интернет напрямую (1 Гбит/с), сервисы РФ — через сервер.${NC}"
+            ui_item "3" "🛡️ WHITELIST — Режим высокой автономии (Белые списки)"
+            ui_item "" "   ${GRAY}• Напрямую исключительно критическая инфраструктура РФ, остальное в VPN.${NC}"
+            ui_item "4" "📴 OFF — Отключить передачу маршрутов"
+            ui_item "" "   ${GRAY}• Клиенты отключают сплит-туннелирование и пускают весь трафик в туннель.${NC}"
+            ui_divider
+            ui_item "0" "↩️ Назад в меню обходов" "${CYAN}"
             ui_footer
             read -r -p " Выберите действие (0-4): " r_choice
             case "$r_choice" in
@@ -6357,17 +6378,19 @@ EOF
         }
 
         manage_provider_id() {
-            ui_header "🔑 УПРАВЛЕНИЕ PROVIDER ID"
+            ui_header "🔑  УПРАВЛЕНИЕ PROVIDER ID"
             local current_pid; current_pid=$(get_installed_var "PROVIDER_ID")
             if [[ -z "$current_pid" ]]; then
-                echo -e " Текущий статус: ${RED}Не установлен${NC}"
+                ui_item "" "Текущий статус: ${RED}Не установлен${NC}"
             else
-                echo -e " Текущий статус: ${GREEN}${current_pid}${NC}"
+                ui_item "" "Текущий статус: ${GREEN}${current_pid}${NC}"
             fi
+            ui_item "" "ℹ️  Используется клиентами HAPP (happ-proxy.com) для автонастройки"
             ui_divider
-            ui_item "1" "✏️ Указать / Изменить Provider ID"
+            ui_item "1" "✏️  Указать / Изменить Provider ID"
             ui_item "2" "🗑️ Удалить Provider ID"
-            ui_item "0" "⬅️ Вернуться в главное меню"
+            ui_divider
+            ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
             read -r -p " Выберите действие (0-2): " pid_choice
             case $pid_choice in
@@ -6404,12 +6427,12 @@ EOF
 
         backup_restore_menu() {
             ui_header "💾  РЕЗЕРВНОЕ КОПИРОВАНИЕ И ВОССТАНОВЛЕНИЕ"
-            ui_item "1" "📦 Создать резервную копию сейчас"
+            ui_item "1" "📦 Создать резервную копию прямо сейчас"
             ui_item "2" "🔄 Восстановить из последней копии (latest)"
             ui_item "3" "📋 Выбрать резервную копию из списка для восстановления"
             ui_item "4" "📁 Показать список существующих резервных копий"
             ui_divider
-            ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+            ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
             read -r -p " Выберите действие (0-4): " br_choice
             case $br_choice in
@@ -6432,7 +6455,7 @@ EOF
             local cur_source; cur_source=$(get_installed_var "XRAY_CORE_SOURCE")
             [[ -z "$cur_source" ]] && cur_source="jolymmiles"
 
-            ui_header "⚙️  ВЫБОР ВЕРСИИ И ИСТОЧНИКА ЯДРА XRAY"
+            ui_header "⚙️   ВЫБОР ВЕРСИИ И ИСТОЧНИКА ЯДРА XRAY"
             local cur_bin_v; cur_bin_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
             ui_item "" "Текущее активное ядро: ${GREEN}${cur_bin_v}${NC}"
             if [[ "$cur_source" == "jolymmiles" ]]; then
@@ -6445,7 +6468,7 @@ EOF
             ui_item "2" "📦 Переключить на Официальный XTLS/Xray-core"
             ui_item "3" "🔄 Проверить и обновить текущее ядро до актуального релиза"
             ui_divider
-            ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+            ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
 
             read -r -p " Выберите действие (0-3): " cchoice
@@ -6479,24 +6502,25 @@ EOF
             ui_item "1" "📱 Показать QR-коды и ссылки подключения"
             ui_item "2" "👤 Добавить нового пользователя / устройство"
             ui_item "3" "🗑️ Удалить существующего пользователя"
-            ui_item "4" "🌀 Управление обходами и маршрутизацией (Routing, WARP, Tor)"
+            ui_item "4" "🌀 Управление обходами и маршрутизацией (Routing, WARP, Psiphon, Tor)"
             ui_divider
             ui_item "5" "📰 Просмотреть системные логи служб"
-            ui_item "6" "📊 Мониторинг active-соединений (порты 443 / 2053 / 8443)"
+            ui_item "6" "📊 Мониторинг активных соединений (порты 443 / 2053 / 8443)"
             ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
             ui_divider
-            ui_item "8" "🔧 Оптимизация VPS (Xanmod ядро, BBR, RPS, Sysctl, ZRAM)"
+            ui_item "8" "🚀 Оптимизация VPS (Xanmod ядро, BBR, RPS, Sysctl, ZRAM)"
             ui_item "9" "🔄 Обновить скрипт с GitHub / зеркал и применить новые фиксы"
-            ui_item "10" "⚙️ Выбор версии ядра Xray (Официальное XTLS / Форк Jolymmiles)"
-            ui_item "11" "🌐 Изменить отпечаток TLS (Fingerprint)"
-            ui_item "12" "🔐 Управление SSL-сертификатом и доменом"
-            ui_item "13" "🔑 Управление Provider ID (happ-proxy.com)"
-            ui_item "14" "💾 Резервное копирование и восстановление (Backup & Restore)"
+            ui_item "10" "⚙️  Выбор версии ядра Xray (Официальное XTLS / Форк Jolymmiles)"
+            ui_item "11" "🛡️ Управление маскировкой Reality (VLESS-REALITY)"
+            ui_item "12" "🌐 Изменить отпечаток TLS (Fingerprint)"
+            ui_item "13" "🔐 Управление SSL-сертификатом и доменом"
+            ui_item "14" "🔑 Управление Provider ID (happ-proxy.com)"
+            ui_item "15" "💾 Резервное копирование и восстановление (Backup & Restore)"
             ui_divider
-            ui_item_color "15" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
-            ui_item "16" "🚪 Выйти из терминала" "${CYAN}"
+            ui_item_color "16" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+            ui_item "17" "🚪 Выйти из терминала" "${CYAN}"
             ui_footer
-            read -r -p " Выберите действие (1-16): " choice
+            read -r -p " Выберите действие (1-17): " choice
             case $choice in
                 1) "$GENERATE_SCRIPT" ; main_menu ;;
                 2) add_client ; main_menu ;;
@@ -6508,11 +6532,12 @@ EOF
                 8) optimize_vps ;;
                 9) update_script_from_mirrors ;;
                 10) select_xray_core ;;
-                11) change_fingerprint ; main_menu ;;
-                12) ssl_and_domain_menu ;;
-                13) manage_provider_id ;;
-                14) backup_restore_menu ;;
-                15) 
+                11) reality_management_menu ;;
+                12) change_fingerprint ; main_menu ;;
+                13) ssl_and_domain_menu ;;
+                14) manage_provider_id ;;
+                15) backup_restore_menu ;;
+                16) 
                     echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP, Opera Proxy и Tor!${NC}"
                     read -r -p "Вы уверены? (y/n): " uconf
                     if [[ "$uconf" =~ ^[Yy]$ ]]; then
@@ -6521,7 +6546,7 @@ EOF
                         main_menu
                     fi
                     ;;
-                16) exit 0 ;;
+                17) exit 0 ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
             esac
         }
@@ -6743,51 +6768,14 @@ EOF
             local opera_installed; opera_installed=$(get_installed_var "OPERA_INSTALLED")
             local opera_enabled; opera_enabled=$(get_installed_var "OPERA_ENABLED")
 
-            ui_header "🌀  УПРАВЛЕНИЕ ОБХОДАМИ БЛОКИРОВОК" "${PURPLE}"
-            
-            # Секция Cloudflare WARP
-            ui_item_color "" "${BOLD}[ Cloudflare WARP ]${NC}" "" "${PURPLE}"
-            if [[ "$warp_installed" != "true" ]]; then
-                ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
-                ui_item_color "1" "📥 Установить и активировать Cloudflare WARP" "${YELLOW}" "${PURPLE}"
-            else
-                local warp_status="${RED}Выключен${NC}"
-                [[ "$warp_enabled" == "true" ]] && warp_status="${GREEN}Активен${NC}"
-                local mode_text="${CYAN}Smart-обход${NC}"
-                [[ "$warp_mode" == "full" ]] && mode_text="${PURPLE}Full-обход (весь трафик)${NC}"
-                ui_item_color "" "Статус: $warp_status | Режим: $mode_text" "" "${PURPLE}"
-                if [[ "$warp_enabled" == "true" ]]; then
-                    ui_item_color "1" "📴 Отключить WARP" "${YELLOW}" "${PURPLE}"
-                else
-                    ui_item_color "1" "🌀 Включить WARP" "${YELLOW}" "${PURPLE}"
-                fi
-                ui_item_color "2" "⚙️ Изменить режим WARP (Smart / Full)" "${YELLOW}" "${PURPLE}"
-                ui_item_color "3" "📝 Редактировать пользовательский список WARP (/etc/xray/warp_custom.lst)" "${YELLOW}" "${PURPLE}"
-                ui_item_color "4" "⚡ Пересоздать/обновить профиль WARP" "${YELLOW}" "${PURPLE}"
-                ui_item_color "5" "${RED}🗑️ Удалить Cloudflare WARP${NC}" "${RED}" "${PURPLE}"
-            fi
-            
-            ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ Opera Proxy (для OpenAI/ChatGPT) ]${NC}" "" "${PURPLE}"
-            
-            if [[ "$opera_installed" != "true" ]]; then
-                ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
-                ui_item_color "7" "📥 Установить и активировать Opera Proxy" "${YELLOW}" "${PURPLE}"
-            else
-                local opera_status="${RED}Выключен${NC}"
-                [[ "$opera_enabled" == "true" ]] && opera_status="${GREEN}Активен${NC}"
-                ui_item_color "" "Статус: $opera_status" "" "${PURPLE}"
-                if [[ "$opera_enabled" == "true" ]]; then
-                    ui_item_color "7" "📴 Отключить Opera Proxy" "${YELLOW}" "${PURPLE}"
-                else
-                    ui_item_color "7" "🌀 Включить Opera Proxy" "${YELLOW}" "${PURPLE}"
-                fi
-                ui_item_color "8" "📝 Редактировать список доменов Opera Proxy" "${YELLOW}" "${PURPLE}"
-                ui_item_color "9" "${RED}🗑️ Удалить Opera Proxy${NC}" "${RED}" "${PURPLE}"
-            fi
-            
-            ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ Профиль маршрутизации клиентов (Routing) ]${NC}" "" "${PURPLE}"
+            local psiphon_installed; psiphon_installed=$(get_installed_var "PSIPHON_INSTALLED")
+            local psiphon_enabled; psiphon_enabled=$(get_installed_var "PSIPHON_ENABLED")
+            local psiphon_region; psiphon_region=$(get_installed_var "PSIPHON_REGION")
+            [[ -z "$psiphon_region" ]] && psiphon_region="DE"
+
+            local tor_installed; tor_installed=$(get_installed_var "TOR_INSTALLED")
+            local tor_enabled; tor_enabled=$(get_installed_var "TOR_ENABLED")
+
             local routing_enabled; routing_enabled=$(get_installed_var "ROUTING_ENABLED")
             local routing_prof; routing_prof=$(get_installed_var "ROUTING_PROFILE")
             [[ -z "$routing_prof" ]] && routing_prof="default"
@@ -6801,168 +6789,128 @@ EOF
             else
                 r_desc="${GREEN}DEFAULT (РФ напрямую / Обход блокировок)${NC}"
             fi
-            ui_item_color "" "Текущий профиль: $r_desc" "" "${PURPLE}"
-            ui_item_color "10" "🧭 Сменить профиль маршрутизации (Default / Relocant / Whitelist / Off)" "${YELLOW}" "${PURPLE}"
 
-            ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ Сетевой стек (IPv6) ]${NC}" "" "${PURPLE}"
-            local ipv6_val; ipv6_val=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)
-            if [[ "$ipv6_val" == "1" ]]; then
-                ui_item_color "" "Статус IPv6: ${RED}Отключен (защита от утечек и таймаутов)${NC}" "" "${PURPLE}"
-                ui_item_color "11" "🌐 Включить IPv6 на сервере (Dual-Stack)" "${YELLOW}" "${PURPLE}"
-            else
-                ui_item_color "" "Статус IPv6: ${GREEN}Включен (Dual-Stack)${NC}" "" "${PURPLE}"
-                ui_item_color "11" "📴 Отключить IPv6 (предотвратить утечки и сбои)" "${YELLOW}" "${PURPLE}"
+            local auto_tune_val; auto_tune_val=$(get_installed_var "ROUTING_AUTO_TUNE")
+            local tune_status="${YELLOW}СТАТИЧЕСКИЙ (Все списки)${NC}"
+            if [[ "$auto_tune_val" == "true" ]]; then
+                tune_status="${GREEN}АДАПТИВНЫЙ (Автокалибровка VPS)${NC}"
             fi
+
+            local ipv6_val; ipv6_val=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 0)
+
+            ui_header "🌀  УПРАВЛЕНИЕ ОБХОДАМИ И МАРШРУТИЗАЦИЕЙ" "${PURPLE}"
             
+            # --- СЕКЦИЯ 1: МАРШРУТИЗАЦИЯ И AUTO-TUNE ---
+            ui_item_color "" "${BOLD}[ 🧭 Интеллектуальная маршрутизация клиентов ]${NC}" "" "${PURPLE}"
+            ui_item_color "" "Профиль: $r_desc | Калибровка: $tune_status" "" "${PURPLE}"
+            ui_item_color "1" "🧭 Сменить профиль маршрутизации (Default / Relocant / Whitelist / Off)" "${YELLOW}" "${PURPLE}"
+            ui_item_color "2" "🎯 Запустить автокалибровку маршрутов (Auto-Tune)" "${YELLOW}" "${PURPLE}"
+            if [[ "$auto_tune_val" == "true" ]]; then
+                ui_item_color "3" "🔄 Сбросить калибровку на статический роутинг (полный список)" "${YELLOW}" "${PURPLE}"
+            fi
+
+            # --- СЕКЦИЯ 2: CLOUDFLARE WARP ---
             ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ Psiphon (Разблокировка Google / Gemini / AI Studio) ]${NC}" "" "${PURPLE}"
-            local psiphon_installed; psiphon_installed=$(get_installed_var "PSIPHON_INSTALLED")
-            local psiphon_enabled; psiphon_enabled=$(get_installed_var "PSIPHON_ENABLED")
-            local psiphon_region; psiphon_region=$(get_installed_var "PSIPHON_REGION")
-            [[ -z "$psiphon_region" ]] && psiphon_region="DE"
+            ui_item_color "" "${BOLD}[ 🌀 Cloudflare WARP (Шлюз обхода) ]${NC}" "" "${PURPLE}"
+            if [[ "$warp_installed" != "true" ]]; then
+                ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
+                ui_item_color "4" "📥 Установить и активировать Cloudflare WARP" "${YELLOW}" "${PURPLE}"
+            else
+                local warp_status="${RED}Выключен${NC}"
+                [[ "$warp_enabled" == "true" ]] && warp_status="${GREEN}Активен${NC}"
+                local mode_text="${CYAN}Smart-обход${NC}"
+                [[ "$warp_mode" == "full" ]] && mode_text="${PURPLE}Full-обход (весь трафик)${NC}"
+                ui_item_color "" "Статус: $warp_status | Режим: $mode_text" "" "${PURPLE}"
+                if [[ "$warp_enabled" == "true" ]]; then
+                    ui_item_color "4" "📴 Отключить Cloudflare WARP" "${YELLOW}" "${PURPLE}"
+                else
+                    ui_item_color "4" "🌀 Включить Cloudflare WARP" "${YELLOW}" "${PURPLE}"
+                fi
+                ui_item_color "5" "⚙️  Изменить режим WARP (Smart / Full)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "6" "📝 Редактировать список WARP (/etc/xray/warp_custom.lst)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "7" "⚡ Пересоздать / обновить профиль WARP" "${YELLOW}" "${PURPLE}"
+                ui_item_color "8" "${RED}🗑️ Удалить Cloudflare WARP с сервера${NC}" "${RED}" "${PURPLE}"
+            fi
+
+            # --- СЕКЦИЯ 3: PSIPHON ---
+            ui_divider "${PURPLE}"
+            ui_item_color "" "${BOLD}[ 🌐 Psiphon (Google / Gemini / AI Studio Bypass) ]${NC}" "" "${PURPLE}"
             if [[ "$psiphon_installed" != "true" ]]; then
                 ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
-                ui_item_color "14" "📥 Установить и активировать Psiphon (Google/Gemini bypass)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "9" "📥 Установить и активировать Psiphon" "${YELLOW}" "${PURPLE}"
             else
                 local ps_stat="${RED}Выключен${NC}"
                 [[ "$psiphon_enabled" == "true" ]] && ps_stat="${GREEN}Активен (Регион: $psiphon_region)${NC}"
                 ui_item_color "" "Статус: $ps_stat" "" "${PURPLE}"
                 if [[ "$psiphon_enabled" == "true" ]]; then
-                    ui_item_color "14" "📴 Отключить Psiphon" "${YELLOW}" "${PURPLE}"
+                    ui_item_color "9" "📴 Отключить Psiphon" "${YELLOW}" "${PURPLE}"
                 else
-                    ui_item_color "14" "🌐 Включить Psiphon" "${YELLOW}" "${PURPLE}"
+                    ui_item_color "9" "🌐 Включить Psiphon" "${YELLOW}" "${PURPLE}"
                 fi
-                ui_item_color "15" "🔄 Ротация IP Psiphon (получить новый чистый выход без капчи)" "${YELLOW}" "${PURPLE}"
-                ui_item_color "16" "🌍 Сменить регион выхода Psiphon (DE, FI, SE, NL, US...)" "${YELLOW}" "${PURPLE}"
-                ui_item_color "17" "📊 Проверить статус выхода и вердикт Google (vps-psiphon)" "${YELLOW}" "${PURPLE}"
-                ui_item_color "18" "${RED}🗑️ Удалить Psiphon${NC}" "${RED}" "${PURPLE}"
+                ui_item_color "10" "🔄 Ротация IP Psiphon (чистый выход без Cloudflare капчи)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "11" "🌍 Сменить регион выхода Psiphon (DE, FI, SE, NL, US...)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "12" "📊 Проверить статус выхода и вердикт Google (vps-psiphon)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "13" "${RED}🗑️ Удалить Psiphon с сервера${NC}" "${RED}" "${PURPLE}"
             fi
 
+            # --- СЕКЦИЯ 4: ДОПОЛНИТЕЛЬНЫЕ ШЛЮЗЫ И СЕТЬ ---
             ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ Tor (.onion проксирование) ]${NC}" "" "${PURPLE}"
-            local tor_installed; tor_installed=$(get_installed_var "TOR_INSTALLED")
-            local tor_enabled; tor_enabled=$(get_installed_var "TOR_ENABLED")
+            ui_item_color "" "${BOLD}[ 🧅 Tor & 🎭 Opera Proxy & 🌐 Сеть ]${NC}" "" "${PURPLE}"
             if [[ "$tor_installed" != "true" ]]; then
-                ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
-                ui_item_color "12" "📥 Установить и активировать Tor (127.0.0.1:9050)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "14" "📥 Установить и активировать Tor (.onion проксирование)" "${YELLOW}" "${PURPLE}"
             else
                 local tor_status="${RED}Выключен${NC}"
-                [[ "$tor_enabled" == "true" ]] && tor_status="${GREEN}Активен${NC}"
-                ui_item_color "" "Статус: $tor_status (.onion направляется в Tor)" "" "${PURPLE}"
+                [[ "$tor_enabled" == "true" ]] && tor_status="${GREEN}Активен (.onion в Tor)${NC}"
                 if [[ "$tor_enabled" == "true" ]]; then
-                    ui_item_color "12" "📴 Отключить Tor" "${YELLOW}" "${PURPLE}"
+                    ui_item_color "14" "📴 Отключить Tor [Статус: $tor_status]" "${YELLOW}" "${PURPLE}"
                 else
-                    ui_item_color "12" "🧅 Включить Tor" "${YELLOW}" "${PURPLE}"
+                    ui_item_color "14" "🧅 Включить Tor [Статус: $tor_status]" "${YELLOW}" "${PURPLE}"
                 fi
-                ui_item_color "13" "${RED}🗑️ Удалить Tor${NC}" "${RED}" "${PURPLE}"
+                ui_item_color "15" "${RED}🗑️ Удалить Tor${NC}" "${RED}" "${PURPLE}"
             fi
 
-            ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ Адаптивная калибровка маршрутов (Auto-Tune) ]${NC}" "" "${PURPLE}"
-            local auto_tune_val; auto_tune_val=$(get_installed_var "ROUTING_AUTO_TUNE")
-            local tune_status="${YELLOW}СТАТИЧЕСКИЙ (Все списки из гайда)${NC}"
-            if [[ "$auto_tune_val" == "true" ]]; then
-                tune_status="${GREEN}АДАПТИВНЫЙ (Только реально заблокированное на VPS)${NC}"
+            if [[ "$opera_installed" != "true" ]]; then
+                ui_item_color "16" "📥 Установить и активировать Opera Proxy (ChatGPT bypass)" "${YELLOW}" "${PURPLE}"
+            else
+                local opera_status="${RED}Выключен${NC}"
+                [[ "$opera_enabled" == "true" ]] && opera_status="${GREEN}Активен${NC}"
+                if [[ "$opera_enabled" == "true" ]]; then
+                    ui_item_color "16" "📴 Отключить Opera Proxy [Статус: $opera_status]" "${YELLOW}" "${PURPLE}"
+                else
+                    ui_item_color "16" "🎭 Включить Opera Proxy [Статус: $opera_status]" "${YELLOW}" "${PURPLE}"
+                fi
+                ui_item_color "17" "📝 Редактировать список доменов Opera Proxy (/etc/xray/opera.lst)" "${YELLOW}" "${PURPLE}"
+                ui_item_color "18" "${RED}🗑️ Удалить Opera Proxy${NC}" "${RED}" "${PURPLE}"
             fi
-            ui_item_color "" "Режим: $tune_status" "" "${PURPLE}"
-            ui_item_color "19" "🎯 Запустить автокалибровку маршрутов (Auto-Tune)" "${YELLOW}" "${PURPLE}"
-            if [[ "$auto_tune_val" == "true" ]]; then
-                ui_item_color "20" "🔄 Сбросить на статический роутинг (полный список)" "${YELLOW}" "${PURPLE}"
+
+            if [[ "$ipv6_val" == "1" ]]; then
+                ui_item_color "19" "🌐 Включить IPv6 Dual-Stack [Текущий статус: ${RED}Отключен${NC}]" "${YELLOW}" "${PURPLE}"
+            else
+                ui_item_color "19" "📴 Отключить IPv6 [Текущий статус: ${GREEN}Включен (Dual-Stack)${NC}]" "${YELLOW}" "${PURPLE}"
             fi
 
             ui_divider "${PURPLE}"
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
             ui_footer "${PURPLE}"
             
-            read -r -p " Выберите действие (0-20): " bchoice
+            read -r -p " Выберите действие (0-19): " bchoice
             case $bchoice in
                 0)
                     main_menu
                     ;;
-                19)
+                1)
+                    manage_routing_profile
+                    bypass_menu
+                    ;;
+                2)
                     run_auto_tune
                     bypass_menu
                     ;;
-                20)
+                3)
                     reset_auto_tune
                     bypass_menu
                     ;;
-                11)
-                    toggle_ipv6
-                    bypass_menu
-                    ;;
-                12)
-                    if [[ "$tor_installed" != "true" ]]; then
-                        install_tor
-                    else
-                        toggle_tor
-                    fi
-                    sleep 1.5
-                    bypass_menu
-                    ;;
-                13)
-                    if [[ "$tor_installed" == "true" ]]; then
-                        uninstall_tor
-                    else
-                        echo -e "${RED}❌ Tor не установлен!${NC}"
-                    fi
-                    sleep 1.5
-                    bypass_menu
-                    ;;
-                14)
-                    if [[ "$psiphon_installed" != "true" ]]; then
-                        install_psiphon
-                    else
-                        toggle_psiphon
-                    fi
-                    sleep 1.5
-                    bypass_menu
-                    ;;
-                15)
-                    if [[ "$psiphon_installed" == "true" ]]; then
-                        rotate_psiphon
-                        echo -e "\nНажмите Enter для возврата..."
-                        read -r
-                    else
-                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
-                        sleep 1.5
-                    fi
-                    bypass_menu
-                    ;;
-                16)
-                    if [[ "$psiphon_installed" == "true" ]]; then
-                        change_psiphon_region
-                        echo -e "\nНажмите Enter для возврата..."
-                        read -r
-                    else
-                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
-                        sleep 1.5
-                    fi
-                    bypass_menu
-                    ;;
-                17)
-                    if [[ "$psiphon_installed" == "true" ]] && command -v vps-psiphon &>/dev/null; then
-                        echo -e "\n${BOLD}${CYAN}--- Статус Psiphon (vps-psiphon) ---${NC}"
-                        vps-psiphon
-                        echo -e "\nНажмите Enter для возврата..."
-                        read -r
-                    else
-                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
-                        sleep 1.5
-                    fi
-                    bypass_menu
-                    ;;
-                18)
-                    if [[ "$psiphon_installed" == "true" ]]; then
-                        uninstall_psiphon
-                    else
-                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
-                    fi
-                    sleep 1.5
-                    bypass_menu
-                    ;;
-                1)
+                4)
                     if [[ "$warp_installed" != "true" ]]; then
                         install_warp
                         DOMAIN=$(get_installed_var "DOMAIN")
@@ -6973,7 +6921,7 @@ EOF
                     fi
                     bypass_menu
                     ;;
-                2)
+                5)
                     if [[ "$warp_installed" == "true" ]]; then
                         echo -e "\n${BOLD}Выберите новый режим исходящего трафика:${NC}"
                         echo -e " ${BOLD}${YELLOW}1.${NC} Smart-обход"
@@ -6997,7 +6945,7 @@ EOF
                     sleep 1.5
                     bypass_menu
                     ;;
-                3)
+                6)
                     if [[ "$warp_installed" == "true" ]]; then
                         init_warp_custom_list
                         if command -v nano &>/dev/null; then
@@ -7017,7 +6965,7 @@ EOF
                     sleep 1.5
                     bypass_menu
                     ;;
-                4)
+                7)
                     if [[ "$warp_installed" == "true" ]]; then
                         install_warp
                         DOMAIN=$(get_installed_var "DOMAIN")
@@ -7029,7 +6977,7 @@ EOF
                     sleep 1.5
                     bypass_menu
                     ;;
-                5|6)
+                8)
                     if [[ "$warp_installed" == "true" ]]; then
                         uninstall_warp
                     else
@@ -7037,7 +6985,77 @@ EOF
                     fi
                     bypass_menu
                     ;;
-                7)
+                9)
+                    if [[ "$psiphon_installed" != "true" ]]; then
+                        install_psiphon
+                    else
+                        toggle_psiphon
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                10)
+                    if [[ "$psiphon_installed" == "true" ]]; then
+                        rotate_psiphon
+                        echo -e "\nНажмите Enter для возврата..."
+                        read -r
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
+                        sleep 1.5
+                    fi
+                    bypass_menu
+                    ;;
+                11)
+                    if [[ "$psiphon_installed" == "true" ]]; then
+                        change_psiphon_region
+                        echo -e "\nНажмите Enter для возврата..."
+                        read -r
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
+                        sleep 1.5
+                    fi
+                    bypass_menu
+                    ;;
+                12)
+                    if [[ "$psiphon_installed" == "true" ]] && command -v vps-psiphon &>/dev/null; then
+                        echo -e "\n${BOLD}${CYAN}--- Статус Psiphon (vps-psiphon) ---${NC}"
+                        vps-psiphon
+                        echo -e "\nНажмите Enter для возврата..."
+                        read -r
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
+                        sleep 1.5
+                    fi
+                    bypass_menu
+                    ;;
+                13)
+                    if [[ "$psiphon_installed" == "true" ]]; then
+                        uninstall_psiphon
+                    else
+                        echo -e "${RED}❌ Psiphon не установлен!${NC}"
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                14)
+                    if [[ "$tor_installed" != "true" ]]; then
+                        install_tor
+                    else
+                        toggle_tor
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                15)
+                    if [[ "$tor_installed" == "true" ]]; then
+                        uninstall_tor
+                    else
+                        echo -e "${RED}❌ Tor не установлен!${NC}"
+                    fi
+                    sleep 1.5
+                    bypass_menu
+                    ;;
+                16)
                     if [[ "$opera_installed" != "true" ]]; then
                         install_opera_proxy
                     else
@@ -7046,7 +7064,7 @@ EOF
                     sleep 1.5
                     bypass_menu
                     ;;
-                8)
+                17)
                     if [[ "$opera_installed" == "true" ]]; then
                         if command -v nano &>/dev/null; then
                             nano /etc/xray/opera.lst
@@ -7063,7 +7081,7 @@ EOF
                     fi
                     bypass_menu
                     ;;
-                9)
+                18)
                     if [[ "$opera_installed" == "true" ]]; then
                         uninstall_opera_proxy
                     else
@@ -7072,8 +7090,8 @@ EOF
                     sleep 1.5
                     bypass_menu
                     ;;
-                10)
-                    manage_routing_profile
+                19)
+                    toggle_ipv6
                     bypass_menu
                     ;;
                 *)
