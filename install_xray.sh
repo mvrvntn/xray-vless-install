@@ -34,6 +34,8 @@ YELLOW='\033[0;33m'; # shellcheck disable=SC2034
 BLUE='\033[0;34m'; # shellcheck disable=SC2034
 PURPLE='\033[0;35m'; # shellcheck disable=SC2034
 CYAN='\033[0;36m'; # shellcheck disable=SC2034
+WHITE='\033[1;37m'; # shellcheck disable=SC2034
+GRAY='\033[0;90m'; # shellcheck disable=SC2034
 BOLD='\033[1m'; # shellcheck disable=SC2034
 NC='\033[0m'
 
@@ -5232,22 +5234,29 @@ main() {
             systemctl is-active --quiet vps-psiphon 2>/dev/null && psiphon_active=true
 
             ui_header "🛠️  ДИАГНОСТИКА И ТЕСТИРОВАНИЕ СЕРВЕРА" "${CYAN}"
+            
+            ui_section "🔍  СИСТЕМНЫЕ СЛУЖБЫ" "${CYAN}"
             ui_item_color "1" "📊 Системная экспресс-диагностика (порты, службы, SSL, память)" "${YELLOW}" "${CYAN}"
-            ui_item_color "2" "🌍 Углубленный тест медиа/AI хоста (ipregion)" "${GREEN}" "${CYAN}"
+            
+            ui_section "🌍  ПРОВЕРКА РАЗБЛОКИРОВОК (IPREGION)" "${CYAN}"
+            ui_item_color "2" "🌍 Экспресс-тест медиа/AI с хоста VPS (ipregion)" "${GREEN}" "${CYAN}"
             if [[ "$warp_active" == "true" ]]; then
-                ui_item_color "3" "🌀 Углубленный тест через Cloudflare WARP (ipregion -i warp)" "${PURPLE}" "${CYAN}"
+                ui_item_color "3" "🌀 Тест через Cloudflare WARP (ipregion -i warp)" "${PURPLE}" "${CYAN}"
             else
                 ui_item_color "3" "🌀 Тест через Cloudflare WARP ${RED}[Интерфейс неактивен]${NC}" "${RED}" "${CYAN}"
             fi
             if [[ "$psiphon_active" == "true" ]]; then
-                ui_item_color "4" "🌐 Углубленный тест через Psiphon (ipregion -p SOCKS5)" "${BLUE}" "${CYAN}"
+                ui_item_color "4" "🌐 Тест через Psiphon (ipregion -p SOCKS5)" "${BLUE}" "${CYAN}"
             else
                 ui_item_color "4" "🌐 Тест через Psiphon ${RED}[Служба не активна]${NC}" "${RED}" "${CYAN}"
             fi
-            ui_item_color "5" "🚀 Комплексный тест всех активных шлюзов (Хост + WARP + Psiphon)" "${YELLOW}" "${CYAN}"
-            ui_item_color "6" "💽 Анализ занятости дискового пространства (Express Disk Audit)" "${CYAN}" "${CYAN}"
+            ui_item_color "5" "🚀 Комплексный тест всех шлюзов (Хост + WARP + Psiphon)" "${YELLOW}" "${CYAN}"
+            
+            ui_section "💽  ДИСКОВОЕ ПРОСТРАНСТВО" "${CYAN}"
+            ui_item_color "6" "💽 Анализ занятости дискового пространства (Disk Audit)" "${CYAN}" "${CYAN}"
             ui_item_color "7" "🧹 Безопасная очистка диска (кэш apt, логи, docker, старые ядра)" "${GREEN}" "${CYAN}"
-            ui_divider "${CYAN}"
+            
+            ui_section "🚪  НАВИГАЦИЯ" "${CYAN}"
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${CYAN}"
             ui_footer "${CYAN}"
 
@@ -5620,21 +5629,24 @@ EOF
         ui_header() {
             local title="$1"
             local color="${2:-${CYAN}}"
-            echo -e "\n${color}╭─────── ${BOLD}${title}${NC} ${color}─────────────────────────────────────────${NC}"
-            echo -e "${color}│${NC}"
+            echo -e "\n${color}╭── ${BOLD}${title}${NC} ${color}─────────────────────────────────────────${NC}"
+        }
+
+        ui_section() {
+            local title="$1"
+            local color="${2:-${CYAN}}"
+            echo -e "${color}├── ${BOLD}${WHITE}${title}${NC} ${color}─────────────────────────────────────────${NC}"
         }
 
         ui_footer() {
             local color="${1:-${CYAN}}"
-            echo -e "${color}│${NC}"
             echo -e "${color}╰────────────────────────────────────────────────────────────${NC}"
         }
 
+        # shellcheck disable=SC2120
         ui_divider() {
             local color="${1:-${CYAN}}"
-            echo -e "${color}│${NC}"
             echo -e "${color}├────────────────────────────────────────────────────────────${NC}"
-            echo -e "${color}│${NC}"
         }
 
         ui_item() {
@@ -5739,56 +5751,56 @@ EOF
             local core_badge="XTLS"
             [[ "$core_source" == "jolymmiles" ]] && core_badge="Jolymmiles"
 
-            local xray_status="${RED}OFF${NC}"
-            if [[ -n "$xray_ver" ]]; then
-                systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC} (v$xray_ver · $core_badge)" || xray_status="${RED}OFF${NC} (v$xray_ver · $core_badge)"
+            local xray_status="${RED}● OFF${NC}"
+            if systemctl is-active xray >/dev/null 2>&1; then
+                xray_status="${GREEN}● ACTIVE${NC} ${GRAY}(v$xray_ver · $core_badge)${NC}"
             else
-                systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}" || xray_status="${RED}OFF${NC}"
+                xray_status="${RED}● OFF${NC} ${GRAY}(v$xray_ver · $core_badge)${NC}"
             fi
             
-            local sub_status="${RED}OFF${NC}"
-            systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}ACTIVE${NC}"
+            local sub_status="${RED}● OFF${NC}"
+            systemctl is-active xray-sub >/dev/null 2>&1 && sub_status="${GREEN}● ACTIVE${NC}"
             
-            local hy2_status="${RED}OFF${NC}"
-            systemctl is-active hysteria-server >/dev/null 2>&1 && hy2_status="${GREEN}ACTIVE${NC}"
+            local hy2_status="${RED}● OFF${NC}"
+            systemctl is-active hysteria-server >/dev/null 2>&1 && hy2_status="${GREEN}● ACTIVE${NC}"
             
             local warp_installed; warp_installed=$(get_installed_var "WARP_INSTALLED")
             local warp_enabled; warp_enabled=$(get_installed_var "WARP_ENABLED")
             local warp_mode; warp_mode=$(get_installed_var "WARP_MODE")
             [[ -z "$warp_mode" ]] && warp_mode="smart"
             
-            local warp_status="${RED}NOT INSTALLED${NC}"
+            local warp_status="${GRAY}○ N/A${NC}"
             if [[ "$warp_installed" == "true" ]]; then
                 if [[ "$warp_enabled" == "true" ]]; then
                     if [[ "$warp_mode" == "full" ]]; then
-                        warp_status="${GREEN}ON (FULL)${NC}"
+                        warp_status="${GREEN}● FULL${NC}"
                     else
-                        warp_status="${GREEN}ON (SMART)${NC}"
+                        warp_status="${GREEN}● SMART${NC}"
                     fi
                 else
-                    warp_status="${YELLOW}DISABLED${NC}"
+                    warp_status="${YELLOW}○ OFF${NC}"
                 fi
             fi
 
             local opera_installed; opera_installed=$(get_installed_var "OPERA_INSTALLED")
             local opera_enabled; opera_enabled=$(get_installed_var "OPERA_ENABLED")
-            local opera_status="${RED}NOT INSTALLED${NC}"
+            local opera_status="${GRAY}○ N/A${NC}"
             if [[ "$opera_installed" == "true" ]]; then
                 if [[ "$opera_enabled" == "true" ]]; then
-                    opera_status="${GREEN}ON${NC}"
+                    opera_status="${GREEN}● ON${NC}"
                 else
-                    opera_status="${YELLOW}DISABLED${NC}"
+                    opera_status="${YELLOW}○ OFF${NC}"
                 fi
             fi
 
             local tor_installed; tor_installed=$(get_installed_var "TOR_INSTALLED")
             local tor_enabled; tor_enabled=$(get_installed_var "TOR_ENABLED")
-            local tor_status="${RED}NOT INSTALLED${NC}"
+            local tor_status="${GRAY}○ N/A${NC}"
             if [[ "$tor_installed" == "true" ]]; then
                 if [[ "$tor_enabled" == "true" ]]; then
-                    tor_status="${GREEN}ON${NC}"
+                    tor_status="${GREEN}● ON${NC}"
                 else
-                    tor_status="${YELLOW}DISABLED${NC}"
+                    tor_status="${YELLOW}○ OFF${NC}"
                 fi
             fi
 
@@ -5796,12 +5808,12 @@ EOF
             local psiphon_enabled; psiphon_enabled=$(get_installed_var "PSIPHON_ENABLED")
             local psiphon_region; psiphon_region=$(get_installed_var "PSIPHON_REGION")
             [[ -z "$psiphon_region" ]] && psiphon_region="DE"
-            local psiphon_status="${RED}NOT INSTALLED${NC}"
+            local psiphon_status="${GRAY}○ N/A${NC}"
             if [[ "$psiphon_installed" == "true" ]]; then
                 if [[ "$psiphon_enabled" == "true" ]]; then
-                    psiphon_status="${GREEN}ON ($psiphon_region)${NC}"
+                    psiphon_status="${GREEN}● $psiphon_region${NC}"
                 else
-                    psiphon_status="${YELLOW}DISABLED${NC}"
+                    psiphon_status="${YELLOW}○ OFF${NC}"
                 fi
             fi
 
@@ -5815,11 +5827,11 @@ EOF
                 else
                     local days_left=$(( (end_epoch - now_epoch) / 86400 ))
                     if (( days_left < 0 )); then
-                        ssl_badge="${RED}ИСТЕК!${NC}"
+                        ssl_badge="${RED}● ИСТЕК!${NC}"
                     elif (( days_left < 15 )); then
-                        ssl_badge="${YELLOW}Истекает ($days_left дн.)${NC}"
+                        ssl_badge="${YELLOW}● Истекает ($days_left дн.)${NC}"
                     else
-                        ssl_badge="${GREEN}OK ($days_left дн.)${NC}"
+                        ssl_badge="${GREEN}● OK ($days_left дн.)${NC}"
                     fi
                 fi
             fi
@@ -5829,7 +5841,7 @@ EOF
             [[ -z "$routing_prof" ]] && routing_prof="default"
             local routing_badge
             if [[ "$routing_enabled" == "false" || "$routing_prof" == "off" ]]; then
-                routing_badge="${RED}ОТКЛЮЧЕН (100% в туннель)${NC}"
+                routing_badge="${RED}ОТКЛЮЧЕН (весь трафик в туннель)${NC}"
             elif [[ "$routing_prof" == "relocant" ]]; then
                 routing_badge="${CYAN}RELOCANT (Мир напрямую / РФ через сервер)${NC}"
             elif [[ "$routing_prof" == "whitelist" ]]; then
@@ -5838,12 +5850,11 @@ EOF
                 routing_badge="${GREEN}DEFAULT (РФ напрямую / Обход блокировок)${NC}"
             fi
 
-            ui_header "🖥️  СТАТУС СЕРВЕРА"
-            ui_status "🌐" "Сервер" "${GREEN}$domain${NC} | SSL: [$ssl_badge]"
-            ui_status "⚙️" "Службы" "Xray: [$xray_status] | Hysteria 2: [$hy2_status] | Sub: [$sub_status]"
+            ui_header "🖥️  СТАТУС ИНФРАСТРУКТУРЫ"
+            ui_status "🌐" "Сервер" "${BOLD}${WHITE}$domain${NC}  ${GRAY}│${NC}  📜 SSL: $ssl_badge  ${GRAY}│${NC}  👥 Клиенты: ${BOLD}${YELLOW}$clients_count${NC}"
+            ui_status "⚡" "Службы" "Xray: $xray_status  ${GRAY}│${NC}  Hy2: $hy2_status  ${GRAY}│${NC}  Sub: $sub_status"
             ui_status "🧭" "Роутинг" "$routing_badge"
-            ui_status "🌀" "Обходы" "WARP: [$warp_status] | Psiphon: [$psiphon_status] | Opera: [$opera_status] | Tor: [$tor_status]"
-            ui_status "👥" "Клиенты" "${BOLD}${YELLOW}$clients_count${NC} активных устройств"
+            ui_status "🌀" "Обходы" "WARP: $warp_status  ${GRAY}│${NC}  Psiphon: $psiphon_status  ${GRAY}│${NC}  Opera: $opera_status  ${GRAY}│${NC}  Tor: $tor_status"
             ui_footer
         }
 
@@ -6498,29 +6509,34 @@ EOF
 
         main_menu() {
             show_status_dashboard
-            ui_header "⚡  ГЛАВНОЕ МЕНЮ"
+            ui_header "⚡  ПАНЕЛЬ УПРАВЛЕНИЯ XRAY"
+            
+            ui_section "👥  КЛИЕНТЫ И ПОДКЛЮЧЕНИЯ"
             ui_item "1" "📱 Показать QR-коды и ссылки подключения"
             ui_item "2" "👤 Добавить нового пользователя / устройство"
-            ui_item "3" "🗑️ Удалить существующего пользователя"
-            ui_item "4" "🌀 Управление обходами и маршрутизацией (Routing, WARP, Psiphon, Tor)"
-            ui_divider
+            ui_item "3" "🗑️  Удалить существующего пользователя"
+            ui_item "4" "🌀 Управление маршрутизацией и обходами (WARP, Psiphon, Tor)"
+            
+            ui_section "📊  МОНИТОРИНГ И ДИАГНОСТИКА"
             ui_item "5" "📰 Просмотреть системные логи служб"
-            ui_item "6" "📊 Мониторинг активных соединений (порты 443 / 2053 / 8443)"
-            ui_item "7" "🛠️ Запустить полную диагностику системы (Troubleshooting)"
-            ui_divider
+            ui_item "6" "📈 Мониторинг активных соединений (порты 443 / 2053 / 8443)"
+            ui_item "7" "🛠️  Комплексная диагностика системы (Troubleshooting)"
+            
+            ui_section "⚙️  СЕРВЕР И БЕЗОПАСНОСТЬ"
             ui_item "8" "🚀 Оптимизация VPS (Xanmod ядро, BBR, RPS, Sysctl, ZRAM)"
             ui_item "9" "🔄 Обновить скрипт с GitHub / зеркал и применить новые фиксы"
-            ui_item "10" "⚙️  Выбор версии ядра Xray (Официальное XTLS / Форк Jolymmiles)"
-            ui_item "11" "🛡️ Управление маскировкой Reality (VLESS-REALITY)"
+            ui_item "10" "🧬 Выбор версии ядра Xray (Официальное XTLS / Форк Jolymmiles)"
+            ui_item "11" "🛡️  Маскировка трафика Reality (VLESS-REALITY)"
             ui_item "12" "🌐 Изменить отпечаток TLS (Fingerprint)"
             ui_item "13" "🔐 Управление SSL-сертификатом и доменом"
             ui_item "14" "🔑 Управление Provider ID (happ-proxy.com)"
             ui_item "15" "💾 Резервное копирование и восстановление (Backup & Restore)"
-            ui_divider
-            ui_item_color "16" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
-            ui_item "17" "🚪 Выйти из терминала" "${CYAN}"
+            
+            ui_section "🚪  ДЕЙСТВИЯ И ВЫХОД"
+            ui_item_color "16" "${RED}🧨 Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+            ui_item "0" "🚪 Выйти из терминала" "${CYAN}"
             ui_footer
-            read -r -p " Выберите действие (1-17): " choice
+            read -r -p " Выберите действие (0-16): " choice
             case $choice in
                 1) "$GENERATE_SCRIPT" ; main_menu ;;
                 2) add_client ; main_menu ;;
@@ -6546,7 +6562,7 @@ EOF
                         main_menu
                     fi
                     ;;
-                17) exit 0 ;;
+                0|17) exit 0 ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
             esac
         }
@@ -6801,8 +6817,8 @@ EOF
             ui_header "🌀  УПРАВЛЕНИЕ ОБХОДАМИ И МАРШРУТИЗАЦИЕЙ" "${PURPLE}"
             
             # --- СЕКЦИЯ 1: МАРШРУТИЗАЦИЯ И AUTO-TUNE ---
-            ui_item_color "" "${BOLD}[ 🧭 Интеллектуальная маршрутизация клиентов ]${NC}" "" "${PURPLE}"
-            ui_item_color "" "Профиль: $r_desc | Калибровка: $tune_status" "" "${PURPLE}"
+            ui_section "🧭  ИНТЕЛЛЕКТУАЛЬНАЯ МАРШРУТИЗАЦИЯ" "${PURPLE}"
+            ui_item_color "" "Профиль: $r_desc  ${GRAY}│${NC}  Калибровка: $tune_status" "" "${PURPLE}"
             ui_item_color "1" "🧭 Сменить профиль маршрутизации (Default / Relocant / Whitelist / Off)" "${YELLOW}" "${PURPLE}"
             ui_item_color "2" "🎯 Запустить автокалибровку маршрутов (Auto-Tune)" "${YELLOW}" "${PURPLE}"
             if [[ "$auto_tune_val" == "true" ]]; then
@@ -6810,8 +6826,7 @@ EOF
             fi
 
             # --- СЕКЦИЯ 2: CLOUDFLARE WARP ---
-            ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ 🌀 Cloudflare WARP (Шлюз обхода) ]${NC}" "" "${PURPLE}"
+            ui_section "🌀  CLOUDFLARE WARP (ШЛЮЗ ОБХОДА)" "${PURPLE}"
             if [[ "$warp_installed" != "true" ]]; then
                 ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
                 ui_item_color "4" "📥 Установить и активировать Cloudflare WARP" "${YELLOW}" "${PURPLE}"
@@ -6820,7 +6835,7 @@ EOF
                 [[ "$warp_enabled" == "true" ]] && warp_status="${GREEN}Активен${NC}"
                 local mode_text="${CYAN}Smart-обход${NC}"
                 [[ "$warp_mode" == "full" ]] && mode_text="${PURPLE}Full-обход (весь трафик)${NC}"
-                ui_item_color "" "Статус: $warp_status | Режим: $mode_text" "" "${PURPLE}"
+                ui_item_color "" "Статус: $warp_status  ${GRAY}│${NC}  Режим: $mode_text" "" "${PURPLE}"
                 if [[ "$warp_enabled" == "true" ]]; then
                     ui_item_color "4" "📴 Отключить Cloudflare WARP" "${YELLOW}" "${PURPLE}"
                 else
@@ -6833,8 +6848,7 @@ EOF
             fi
 
             # --- СЕКЦИЯ 3: PSIPHON ---
-            ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ 🌐 Psiphon (Google / Gemini / AI Studio Bypass) ]${NC}" "" "${PURPLE}"
+            ui_section "🌐  PSIPHON (GOOGLE / GEMINI / AI STUDIO)" "${PURPLE}"
             if [[ "$psiphon_installed" != "true" ]]; then
                 ui_item_color "" "Статус: ${RED}Не установлен${NC}" "" "${PURPLE}"
                 ui_item_color "9" "📥 Установить и активировать Psiphon" "${YELLOW}" "${PURPLE}"
@@ -6854,8 +6868,7 @@ EOF
             fi
 
             # --- СЕКЦИЯ 4: ДОПОЛНИТЕЛЬНЫЕ ШЛЮЗЫ И СЕТЬ ---
-            ui_divider "${PURPLE}"
-            ui_item_color "" "${BOLD}[ 🧅 Tor & 🎭 Opera Proxy & 🌐 Сеть ]${NC}" "" "${PURPLE}"
+            ui_section "🧅  TOR, OPERA PROXY И ДВУХСТЕКОВАЯ СЕТЬ" "${PURPLE}"
             if [[ "$tor_installed" != "true" ]]; then
                 ui_item_color "14" "📥 Установить и активировать Tor (.onion проксирование)" "${YELLOW}" "${PURPLE}"
             else
@@ -6889,7 +6902,7 @@ EOF
                 ui_item_color "19" "📴 Отключить IPv6 [Текущий статус: ${GREEN}Включен (Dual-Stack)${NC}]" "${YELLOW}" "${PURPLE}"
             fi
 
-            ui_divider "${PURPLE}"
+            ui_section "🚪  НАВИГАЦИЯ" "${PURPLE}"
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${PURPLE}"
             ui_footer "${PURPLE}"
             
@@ -7164,8 +7177,6 @@ EOF
             echo "✅ Удалено"
         }
 
-        echo "⚠️ Xray уже установлен"
-        
         # Самодиагностика и исправление пустых/отсутствующих UUID
         repaired=false
         if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
