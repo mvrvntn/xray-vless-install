@@ -79,6 +79,8 @@ usage() {
   --update-core                                           Обновить ядро Xray, Hysteria 2 и подписки
   --update-geoblocks                                      Обновить списки блокировок Роскомнадзора и Google AI
   --auto-tune                                             Автокалибровка маршрутов (проверить хост и включить только нужные шлюзы)
+  --clean-disk                                            Очистить дисковое пространство (кэш apt, логи, docker, старые ядра)
+  --disk-analysis                                         Экспресс-анализ занятости диска (топ папок, файлов и пакетов)
   --renew-cert                                            Принудительно обновить SSL-сертификат и перезапустить службы
   --backup                                                Создать резервную копию конфигураций и сертификатов
   --restore [файл|latest]                                 Восстановить конфигурации из резервной копии
@@ -592,8 +594,198 @@ EOF
         exit 0
     else
         echo -e "\n${BOLD}${GREEN}✅ Базовая оптимизация VPS успешно применена на лету (без смены ядра и без перезагрузки)!${NC}"
+        echo -e "${YELLOW}🧹 Запуск автоматической очистки кэша и временных файлов...${NC}"
+        clean_disk_space "true"
         sleep 2
     fi
+}
+
+# === Экспресс-диагностика и безопасная очистка диска ===
+clean_old_kernels_internal() {
+    local auto_mode="${1:-false}"
+    local is_container=false
+    if command -v systemd-detect-virt &>/dev/null; then
+        local virt; virt="$(systemd-detect-virt 2>/dev/null || echo "none")"
+        if [[ "$virt" =~ ^(lxc|openvz|docker|podman|container)$ ]]; then
+            is_container=true
+        fi
+    fi
+    if [[ "$is_container" == "true" ]]; then
+        echo -e "  – Контейнерное окружение, ядра управляются хостом. Шаг пропущен."
+        return 0
+    fi
+
+    local cur_kernel
+    cur_kernel="$(uname -r 2>/dev/null || echo "")"
+    if [[ -z "$cur_kernel" ]]; then
+        echo -e "  ${RED}✗ Не удалось определить текущее ядро uname -r. Пропуск удаления ядер.${NC}"
+        return 0
+    fi
+
+    local old_kernels=()
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        # Защита 1: Строго пропускаем активное рабочее ядро
+        if [[ "$pkg" == *"$cur_kernel"* ]]; then
+            continue
+        fi
+        # Защита 2: Пропускаем мета-пакеты
+        if [[ "$pkg" =~ ^linux-(image|headers)-(generic|amd64|virtual|xanmod|server)$ ]]; then
+            continue
+        fi
+        old_kernels+=("$pkg")
+    done < <(dpkg-query -W -f='${Package} ${Status}\n' 'linux-image-[0-9]*' 'linux-headers-[0-9]*' 2>/dev/null | awk '/install ok installed/{print $1}')
+
+    if [[ ${#old_kernels[@]} -eq 0 ]]; then
+        echo -e "${GREEN}  ✓ Старых неиспользуемых ядер не обнаружено (активно: ${cur_kernel}).${NC}"
+        return 0
+    fi
+
+    echo -e "${CYAN}  👉 Обнаружены старые неактивные ядра (${#old_kernels[@]} шт.):${NC}"
+    for ok in "${old_kernels[@]}"; do
+        echo -e "     • $ok"
+    done
+
+    wait_for_apt
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "${old_kernels[@]}" >/dev/null 2>&1 || true
+    update-grub >/dev/null 2>&1 || true
+
+    # Удаление каталогов модулей удаленных ядер
+    if [[ -d /usr/lib/modules ]]; then
+        for mod_dir in /usr/lib/modules/*; do
+            if [[ -d "$mod_dir" ]]; then
+                local mod_name; mod_name="$(basename "$mod_dir")"
+                if [[ "$mod_name" != "$cur_kernel" ]]; then
+                    if ! dpkg -S "$mod_dir" >/dev/null 2>&1; then
+                        rm -rf "$mod_dir" 2>/dev/null || true
+                    fi
+                fi
+            fi
+        done
+    fi
+    echo -e "${GREEN}  ✓ Старые ядра удалены, загрузчик GRUB обновлен.${NC}"
+}
+
+clean_disk_space() {
+    local auto_mode="${1:-false}"
+    echo -e "\n${BOLD}${GREEN}🧹  БЕЗОПАСНАЯ ОЧИСТКА И ОПТИМИЗАЦИЯ ДИСКА${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+    echo -e " Операция освобождает от 1 до 5 ГБ дискового пространства:"
+    echo -e " • Кэш deb-пакетов APT и осиротевшие библиотеки (autoremove --purge)"
+    echo -e " • Сжатие системных журналов journald до 50 МБ"
+    echo -e " • Ротированные архивы логов (*.gz, *.1) в /var/log"
+    echo -e " • Временные файлы старше суток в /tmp и /var/tmp"
+    echo -e " • Неиспользуемые слои сборки и кэш Docker (если установлен)"
+    echo -e " • Старые неактивные ядра Linux (с защитой текущего рабочего ядра)\n"
+
+    if [[ "$auto_mode" != "true" ]]; then
+        read -r -p " Начать безопасную очистку диска? [Y/n]: " c_confirm
+        if [[ "$c_confirm" =~ ^[Nn]$ ]]; then
+            echo -e "${YELLOW}Очистка отменена.${NC}"
+            sleep 1
+            return 0
+        fi
+    fi
+
+    local free_before_mb free_before_h
+    free_before_mb=$(LANG=C df -BM / 2>/dev/null | awk 'NR==2 {gsub(/M/,"",$4); print $4}')
+    free_before_h=$(df -h / 2>/dev/null | awk 'NR==2 {print $4}')
+
+    echo -e "\n${YELLOW}[1/6] Очистка кэша пакетов и осиротевших зависимостей APT...${NC}"
+    wait_for_apt
+    apt-get clean >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y >/dev/null 2>&1 || true
+    echo -e "${GREEN}  ✓ Кэш /var/cache/apt/archives очищен, осиротевшие пакеты удалены.${NC}"
+
+    echo -e "${YELLOW}[2/6] Сжатие системных журналов systemd (journalctl)...${NC}"
+    journalctl --vacuum-size=50M >/dev/null 2>&1 || true
+    echo -e "${GREEN}  ✓ Журналы сжаты до 50M.${NC}"
+
+    echo -e "${YELLOW}[3/6] Удаление старых ротированных логов в /var/log...${NC}"
+    find /var/log -type f \( -name "*.gz" -o -name "*.[0-9]" \) -delete 2>/dev/null || true
+    echo -e "${GREEN}  ✓ Архивные логи удалены.${NC}"
+
+    echo -e "${YELLOW}[4/6] Очистка устаревших временных файлов в /tmp и /var/tmp...${NC}"
+    find /tmp /var/tmp -mindepth 1 -maxdepth 2 -mtime +1 -delete 2>/dev/null || true
+    echo -e "${GREEN}  ✓ Временные файлы очищены.${NC}"
+
+    echo -e "${YELLOW}[5/6] Очистка неиспользуемых слоев и кэша Docker...${NC}"
+    if command -v docker &>/dev/null && systemctl is-active --quiet docker 2>/dev/null; then
+        docker builder prune -af >/dev/null 2>&1 || true
+        docker image prune -f >/dev/null 2>&1 || true
+        echo -e "${GREEN}  ✓ Docker builder cache и dangling-образы очищены.${NC}"
+    else
+        echo -e "  – Docker не запущен, шаг пропущен."
+    fi
+
+    echo -e "${YELLOW}[6/6] Проверка и безопасное удаление старых ядер Linux...${NC}"
+    clean_old_kernels_internal "$auto_mode"
+
+    local free_after_mb free_after_h
+    free_after_mb=$(LANG=C df -BM / 2>/dev/null | awk 'NR==2 {gsub(/M/,"",$4); print $4}')
+    free_after_h=$(df -h / 2>/dev/null | awk 'NR==2 {print $4}')
+
+    local freed_mb=0
+    if [[ -n "$free_after_mb" && -n "$free_before_mb" ]] && [[ "$free_after_mb" -ge "$free_before_mb" ]]; then
+        freed_mb=$((free_after_mb - free_before_mb))
+    fi
+
+    echo -e "\n${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}${GREEN}✅ ОЧИСТКА ДИСКА УСПЕШНО ЗАВЕРШЕНА!${NC}"
+    echo -e "   Свободно до очистки:   ${YELLOW}${free_before_h}${NC}"
+    echo -e "   Свободно после:        ${GREEN}${free_after_h}${NC}"
+    echo -e "   Освобождено места:     ${BOLD}${CYAN}~${freed_mb} MB${NC}"
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    if [[ "$auto_mode" != "true" ]]; then
+        echo -e "\nНажмите Enter для возврата..."
+        read -r
+    fi
+}
+
+analyze_disk_space() {
+    echo -e "\n${BOLD}${CYAN}📊  ЭКСПРЕСС-АНАЛИЗ ДИСКОВОГО ПРОСТРАНСТВА${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+    
+    echo -e "\n${BOLD}[1] Общая занятость корневого диска (df -h /):${NC}"
+    df -h / | awk 'NR==1 {printf "  %-15s %-10s %-10s %-10s %-10s\n", $1, $2, $3, $4, $5} NR==2 {printf "  %-15s %-10s %-10s %-10s %-10s\n", $1, $2, $3, $4, $5}'
+    
+    echo -e "\n${BOLD}[2] Топ-10 самых объемных директорий первого уровня (/):${NC}"
+    du -h --max-depth=1 / 2>/dev/null | sort -hr | grep -vE '^0|/proc|/sys|/dev' | head -n 10 | awk '{printf "  %-10s %s\n", $1, $2}'
+    
+    echo -e "\n${BOLD}[3] Топ-10 самых тяжелых файлов на диске (>30 МБ):${NC}"
+    local top_files
+    top_files=$(find / -xdev -type f -size +30M -exec ls -lh {} + 2>/dev/null | awk '{printf "  %-10s %s\n", $5, $9}' | sort -hr | head -n 10)
+    if [[ -n "$top_files" ]]; then
+        echo "$top_files"
+    else
+        echo -e "  ${GREEN}Файлов крупнее 30 МБ не обнаружено.${NC}"
+    fi
+
+    echo -e "\n${BOLD}[4] Объем системных журналов (journalctl):${NC}"
+    local j_usage
+    j_usage=$(journalctl --disk-usage 2>/dev/null || echo "Недоступно")
+    echo -e "  $j_usage"
+
+    if command -v docker &>/dev/null && systemctl is-active --quiet docker 2>/dev/null; then
+        echo -e "\n${BOLD}[5] Дисковое пространство Docker (docker system df):${NC}"
+        docker system df 2>/dev/null | sed 's/^/  /'
+    fi
+
+    echo -e "\n${BOLD}[6] Состояние подкачки (Swap & ZRAM):${NC}"
+    local swap_info
+    swap_info=$(swapon --show 2>/dev/null)
+    if [[ -n "$swap_info" ]]; then
+        echo "$swap_info" | sed 's/^/  /'
+    else
+        echo -e "  ${YELLOW}Дисковый Swap не подключен.${NC}"
+    fi
+
+    echo -e "\n${BOLD}[7] Топ-10 самых тяжелых deb-пакетов в системе:${NC}"
+    dpkg-query -Wf '${Installed-Size}\t${Package}\n' 2>/dev/null | sort -nr | head -n 10 | awk '{printf "  %-10.1f MB  %s\n", $1/1024, $2}'
+
+    echo -e "\nНажмите Enter для возврата..."
+    read -r
 }
 
 # === Проверка флагов справки и аргументов (не требуют root) ===
@@ -605,7 +797,7 @@ case "${1:-}" in
         echo "$SCRIPT_NAME version 1.0.0"
         exit 0
         ;;
-    --optimize|--renew-cert|--update-core|--update-geoblocks|--auto-tune|--headless|--backup|--restore|"")
+    --optimize|--renew-cert|--update-core|--update-geoblocks|--auto-tune|--clean-disk|--disk-analysis|--headless|--backup|--restore|"")
         # Допустимые режимы работы (требуют root)
         ;;
     -*)
@@ -4807,6 +4999,14 @@ main() {
             restore_backup "${2:-}"
             exit 0
             ;;
+        --clean-disk)
+            clean_disk_space "true"
+            exit 0
+            ;;
+        --disk-analysis)
+            analyze_disk_space
+            exit 0
+            ;;
         --update-core|--update-geoblocks|--headless|"")
             # Корректные режимы работы, продолжаем выполнение
             ;;
@@ -4944,11 +5144,13 @@ main() {
                 ui_item_color "4" "🌐 Тест через Psiphon ${RED}[Служба не активна]${NC}" "${RED}" "${CYAN}"
             fi
             ui_item_color "5" "🚀 Комплексный тест всех активных шлюзов (Хост + WARP + Psiphon)" "${YELLOW}" "${CYAN}"
+            ui_item_color "6" "📊 Анализ занятости дискового пространства (Express Disk Audit)" "${CYAN}" "${CYAN}"
+            ui_item_color "7" "🧹 Безопасная очистка диска (кэш apt, логи, docker, старые ядра)" "${GREEN}" "${CYAN}"
             ui_divider "${CYAN}"
             ui_item_color "0" "↩️ Назад в главное меню" "${CYAN}" "${CYAN}"
             ui_footer "${CYAN}"
 
-            read -r -p " Выберите действие (0-5): " dchoice
+            read -r -p " Выберите действие (0-7): " dchoice
             case $dchoice in
                 0) main_menu ;;
                 1) run_system_diagnostics ; diagnostics_menu ;;
@@ -4956,6 +5158,8 @@ main() {
                 3) run_ipregion_check "warp" ; diagnostics_menu ;;
                 4) run_ipregion_check "psiphon" ; diagnostics_menu ;;
                 5) run_ipregion_check "all" ; diagnostics_menu ;;
+                6) analyze_disk_space ; diagnostics_menu ;;
+                7) clean_disk_space "false" ; diagnostics_menu ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; diagnostics_menu ;;
             esac
         }
