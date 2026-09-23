@@ -1539,14 +1539,102 @@ EOF
     sysctl -p > /dev/null 2>&1 || true
 }
 
-# === Установка Xray ===
+# === Установка Xray (Официальное XTLS или Оптимизированный форк Jolymmiles) ===
 install_xray() {
-    echo "🚀 Установка / обновление Xray (актуальная версия / pre-release)..."
-    bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --beta
-    bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install-geodata >/dev/null 2>&1 || true
-    systemctl enable xray >/dev/null 2>&1 || true
-    local xray_v; xray_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
-    echo "✅ Xray ядро обновлено: $xray_v"
+    local target_source="${1:-}"
+    if [[ -z "$target_source" ]]; then
+        target_source=$(get_installed_var "XRAY_CORE_SOURCE")
+        [[ -z "$target_source" ]] && target_source="jolymmiles"
+    fi
+
+    local arch; arch=$(uname -m)
+    local arch_suffix="64"
+    if [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
+        arch_suffix="arm64-v8a"
+    fi
+
+    if [[ "$target_source" == "jolymmiles" ]]; then
+        echo -e "🚀 Установка / обновление Xray ядра: ${BOLD}${GREEN}Jolymmiles/Xray-core (TCP Brutal v2 + RemnaNode)${NC} (${arch})..."
+        local download_url="https://github.com/Jolymmiles/Xray-core/releases/latest/download/Xray-linux-${arch_suffix}.zip"
+        local tmp_zip; tmp_zip=$(mktemp)
+        local tmp_dir; tmp_dir=$(mktemp -d)
+
+        local dl_ok=false
+        # 1. Прямая загрузка с GitHub Releases Latest
+        if curl -fsSL --connect-timeout 20 --max-time 120 -L -o "$tmp_zip" "$download_url" && [[ -s "$tmp_zip" ]]; then
+            dl_ok=true
+        else
+            # 2. Зеркало gh-proxy если прямой доступ ограничен
+            echo -e " ${YELLOW}Попытка через зеркало...${NC}"
+            if curl -fsSL --connect-timeout 20 --max-time 120 -L -o "$tmp_zip" "https://gh-proxy.com/${download_url}" && [[ -s "$tmp_zip" ]]; then
+                dl_ok=true
+            fi
+        fi
+
+        if [[ "$dl_ok" == "true" ]]; then
+            unzip -q -o "$tmp_zip" -d "$tmp_dir" 2>/dev/null || true
+            if [[ -f "$tmp_dir/xray" ]]; then
+                chmod +x "$tmp_dir/xray"
+                if "$tmp_dir/xray" version >/dev/null 2>&1; then
+                    mkdir -p /usr/local/bin /usr/local/share/xray /var/log/xray /etc/xray
+                    systemctl stop xray >/dev/null 2>&1 || true
+                    mv -f "$tmp_dir/xray" /usr/local/bin/xray
+                    [[ -f "$tmp_dir/geoip.dat" ]] && mv -f "$tmp_dir/geoip.dat" /usr/local/share/xray/
+                    [[ -f "$tmp_dir/geosite.dat" ]] && mv -f "$tmp_dir/geosite.dat" /usr/local/share/xray/
+                    update_marker_val "XRAY_CORE_SOURCE" "jolymmiles"
+                    systemctl start xray >/dev/null 2>&1 || systemctl restart xray >/dev/null 2>&1 || true
+                    systemctl enable xray >/dev/null 2>&1 || true
+                    local xray_v; xray_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
+                    echo -e "${GREEN}✅ Xray ядро (Jolymmiles fork) успешно установлено и запущено: $xray_v${NC}"
+                else
+                    echo -e "${RED}❌ Ошибка валидации бинарного файла Xray. Откат...${NC}"
+                fi
+            else
+                echo -e "${RED}❌ Не найден бинарник xray в скачанном архиве.${NC}"
+            fi
+            rm -rf "$tmp_zip" "$tmp_dir"
+        else
+            echo -e "${RED}❌ Ошибка загрузки ядра Jolymmiles. Пробуем официальный установщик...${NC}"
+            rm -rf "$tmp_zip" "$tmp_dir"
+            target_source="xtls"
+        fi
+    fi
+
+    if [[ "$target_source" == "xtls" ]]; then
+        echo -e "🚀 Установка / обновление официального Xray ядра (${BOLD}${CYAN}XTLS/Xray-core${NC})..."
+        bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --beta
+        bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install-geodata >/dev/null 2>&1 || true
+        update_marker_val "XRAY_CORE_SOURCE" "xtls"
+        systemctl enable xray >/dev/null 2>&1 || true
+        local xray_v; xray_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
+        echo -e "${GREEN}✅ Официальное ядро Xray обновлено: $xray_v${NC}"
+    fi
+
+    # Гарантируем наличие systemd сервиса
+    if [[ ! -f /etc/systemd/system/xray.service ]]; then
+        cat << 'EOF' > /etc/systemd/system/xray.service
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl enable xray >/dev/null 2>&1 || true
+    fi
 }
 
 # === Установка Hysteria 2 ===
@@ -5634,9 +5722,13 @@ EOF
                 xray_ver=$(xray version 2>/dev/null | head -n 1 | awk '{print $2}')
             fi
 
+            local core_source; core_source=$(get_installed_var "XRAY_CORE_SOURCE")
+            local core_badge="XTLS"
+            [[ "$core_source" == "jolymmiles" ]] && core_badge="Jolymmiles"
+
             local xray_status="${RED}OFF${NC}"
             if [[ -n "$xray_ver" ]]; then
-                systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC} (v$xray_ver)" || xray_status="${RED}OFF${NC} (v$xray_ver)"
+                systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC} (v$xray_ver · $core_badge)" || xray_status="${RED}OFF${NC} (v$xray_ver · $core_badge)"
             else
                 systemctl is-active xray >/dev/null 2>&1 && xray_status="${GREEN}ACTIVE${NC}" || xray_status="${RED}OFF${NC}"
             fi
@@ -6336,6 +6428,51 @@ EOF
             esac
         }
 
+        select_xray_core() {
+            local cur_source; cur_source=$(get_installed_var "XRAY_CORE_SOURCE")
+            [[ -z "$cur_source" ]] && cur_source="jolymmiles"
+
+            ui_header "⚙️  ВЫБОР ВЕРСИИ И ИСТОЧНИКА ЯДРА XRAY"
+            local cur_bin_v; cur_bin_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
+            ui_item "" "Текущее активное ядро: ${GREEN}${cur_bin_v}${NC}"
+            if [[ "$cur_source" == "jolymmiles" ]]; then
+                ui_item "" "Выбранный репозиторий: ${GREEN}Jolymmiles/Xray-core (TCP Brutal v2 + RemnaNode)${NC}"
+            else
+                ui_item "" "Выбранный репозиторий: ${CYAN}XTLS/Xray-core (Официальный upstream)${NC}"
+            fi
+            ui_divider
+            ui_item "1" "🚀 Переключить на Jolymmiles (TCP Brutal v2, фиксы RemnaNode)"
+            ui_item "2" "📦 Переключить на Официальный XTLS/Xray-core"
+            ui_item "3" "🔄 Проверить и обновить текущее ядро до актуального релиза"
+            ui_divider
+            ui_item "0" "↩️ Вернуться в главное меню" "${CYAN}"
+            ui_footer
+
+            read -r -p " Выберите действие (0-3): " cchoice
+            case $cchoice in
+                0) main_menu ;;
+                1)
+                    update_marker_val "XRAY_CORE_SOURCE" "jolymmiles"
+                    install_xray "jolymmiles"
+                    main_menu
+                    ;;
+                2)
+                    update_marker_val "XRAY_CORE_SOURCE" "xtls"
+                    install_xray "xtls"
+                    main_menu
+                    ;;
+                3)
+                    install_xray "$cur_source"
+                    main_menu
+                    ;;
+                *)
+                    echo -e "${RED}❌ Неверный выбор!${NC}"
+                    sleep 1
+                    select_xray_core
+                    ;;
+            esac
+        }
+
         main_menu() {
             show_status_dashboard
             ui_header "⚡  ГЛАВНОЕ МЕНЮ"
@@ -6350,15 +6487,16 @@ EOF
             ui_divider
             ui_item "8" "🔧 Оптимизация VPS (Xanmod ядро, BBR, RPS, Sysctl, ZRAM)"
             ui_item "9" "🔄 Обновить скрипт с GitHub / зеркал и применить новые фиксы"
-            ui_item "10" "🌐 Изменить отпечаток TLS (Fingerprint)"
-            ui_item "11" "🔐 Управление SSL-сертификатом и доменом"
-            ui_item "12" "🔑 Управление Provider ID (happ-proxy.com)"
-            ui_item "13" "💾 Резервное копирование и восстановление (Backup & Restore)"
+            ui_item "10" "⚙️ Выбор версии ядра Xray (Официальное XTLS / Форк Jolymmiles)"
+            ui_item "11" "🌐 Изменить отпечаток TLS (Fingerprint)"
+            ui_item "12" "🔐 Управление SSL-сертификатом и доменом"
+            ui_item "13" "🔑 Управление Provider ID (happ-proxy.com)"
+            ui_item "14" "💾 Резервное копирование и восстановление (Backup & Restore)"
             ui_divider
-            ui_item_color "14" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
-            ui_item "15" "🚪 Выйти из терминала" "${CYAN}"
+            ui_item_color "15" "${RED}🗑️ Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+            ui_item "16" "🚪 Выйти из терминала" "${CYAN}"
             ui_footer
-            read -r -p " Выберите действие (1-15): " choice
+            read -r -p " Выберите действие (1-16): " choice
             case $choice in
                 1) "$GENERATE_SCRIPT" ; main_menu ;;
                 2) add_client ; main_menu ;;
@@ -6369,11 +6507,12 @@ EOF
                 7) diagnostics_menu ;;
                 8) optimize_vps ;;
                 9) update_script_from_mirrors ;;
-                10) change_fingerprint ; main_menu ;;
-                11) ssl_and_domain_menu ;;
-                12) manage_provider_id ;;
-                13) backup_restore_menu ;;
-                14) 
+                10) select_xray_core ;;
+                11) change_fingerprint ; main_menu ;;
+                12) ssl_and_domain_menu ;;
+                13) manage_provider_id ;;
+                14) backup_restore_menu ;;
+                15) 
                     echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP, Opera Proxy и Tor!${NC}"
                     read -r -p "Вы уверены? (y/n): " uconf
                     if [[ "$uconf" =~ ^[Yy]$ ]]; then
@@ -6382,7 +6521,7 @@ EOF
                         main_menu
                     fi
                     ;;
-                15) exit 0 ;;
+                16) exit 0 ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
             esac
         }
