@@ -2558,7 +2558,17 @@ EOF
             "noSSEHeader": true,
             "xPaddingBytes": "100-1000",
             "scMaxBufferedPosts": 30,
-            "scMaxEachPostBytes": 1000000
+            "scMaxEachPostBytes": 1000000,
+            "scMinPostsIntervalMs": 5,
+            "scStreamUpServerSecs": "20-80",
+            "xmux": {
+              "cMaxReuseTimes": 0,
+              "maxConcurrency": "6-8",
+              "maxConnections": 0,
+              "hKeepAlivePeriod": 0,
+              "hMaxRequestTimes": "600-900",
+              "hMaxReusableSecs": "1800-3000"
+            }
           }
         },
         "sockopt": {
@@ -2688,7 +2698,17 @@ EOF
             "noSSEHeader": true,
             "xPaddingBytes": "100-1000",
             "scMaxBufferedPosts": 30,
-            "scMaxEachPostBytes": 1000000
+            "scMaxEachPostBytes": 1000000,
+            "scMinPostsIntervalMs": 5,
+            "scStreamUpServerSecs": "20-80",
+            "xmux": {
+              "cMaxReuseTimes": 0,
+              "maxConcurrency": "6-8",
+              "maxConnections": 0,
+              "hKeepAlivePeriod": 0,
+              "hMaxRequestTimes": "600-900",
+              "hMaxReusableSecs": "1800-3000"
+            }
           }
         },
         "sockopt": {
@@ -3522,7 +3542,22 @@ def vless_url_to_xray_outbound(url: str, index: int):
             outbound["streamSettings"]["xhttpSettings"] = {
                 "path": path or "/xhttp",
                 "host": sni or host,
-                "mode": get_param("mode") or "auto"
+                "mode": get_param("mode") or "auto",
+                "extra": {
+                    "noSSEHeader": True,
+                    "xPaddingBytes": "100-1000",
+                    "scMaxEachPostBytes": 1000000,
+                    "scMinPostsIntervalMs": 5,
+                    "scStreamUpServerSecs": "20-80",
+                    "xmux": {
+                        "cMaxReuseTimes": 0,
+                        "maxConcurrency": "6-8",
+                        "maxConnections": 0,
+                        "hKeepAlivePeriod": 0,
+                        "hMaxRequestTimes": "600-900",
+                        "hMaxReusableSecs": "1800-3000"
+                    }
+                }
             }
             
         return outbound
