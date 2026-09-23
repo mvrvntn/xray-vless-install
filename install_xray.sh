@@ -5160,6 +5160,8 @@ main() {
                 return 1
             fi
             chmod +x "$temp_script"
+            # Фикс race condition спиннера в ipregion при завершении
+            sed -i 's/cat "$SPINNER_SERVICE_FILE"/cat "$SPINNER_SERVICE_FILE" 2>\/dev\/null/g' "$temp_script" 2>/dev/null || true
 
             # Проверка базовых зависимостей
             if ! command -v jq &>/dev/null || ! command -v column &>/dev/null; then
@@ -5180,7 +5182,7 @@ main() {
                         return 1
                     fi
                     echo -e "\n${BOLD}${PURPLE}🌀 [1/1] Тест медиа-разблокировок через интерфейс Cloudflare WARP...${NC}\n"
-                    bash "$temp_script" -i warp
+                    bash "$temp_script" -4 -i warp
                     ;;
                 "psiphon")
                     local ps_bind="127.0.0.1"; local ps_port="1080"
@@ -5196,7 +5198,7 @@ main() {
                         return 1
                     fi
                     echo -e "\n${BOLD}${CYAN}🌐 [1/1] Тест медиа-разблокировок через Psiphon SOCKS5 ($ps_bind:$ps_port)...${NC}\n"
-                    bash "$temp_script" -p "${ps_bind}:${ps_port}"
+                    bash "$temp_script" -4 -p "${ps_bind}:${ps_port}"
                     ;;
                 "all")
                     echo -e "\n${BOLD}${GREEN}=== [1/3] ТЕСТ ОСНОВНОГО IP ХОСТА ===${NC}\n"
@@ -5204,7 +5206,7 @@ main() {
                     echo ""
                     if ip link show warp >/dev/null 2>&1; then
                         echo -e "\n${BOLD}${PURPLE}=== [2/3] ТЕСТ ИНТЕРФЕЙСА CLOUDFLARE WARP ===${NC}\n"
-                        bash "$temp_script" -i warp
+                        bash "$temp_script" -4 -i warp
                         echo ""
                     fi
                     if systemctl is-active --quiet vps-psiphon; then
@@ -5216,7 +5218,7 @@ main() {
                             [[ -n "${SOCKS_PORT:-}" ]] && ps_port="$SOCKS_PORT"
                         fi
                         echo -e "\n${BOLD}${CYAN}=== [3/3] ТЕСТ ПРОКСИ PSIPHON ($ps_bind:$ps_port) ===${NC}\n"
-                        bash "$temp_script" -p "${ps_bind}:${ps_port}"
+                        bash "$temp_script" -4 -p "${ps_bind}:${ps_port}"
                         echo ""
                     fi
                     ;;
