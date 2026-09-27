@@ -1144,6 +1144,414 @@ uninstall_tor() {
     echo -e "${GREEN}✅ Tor успешно отключен и удален из маршрутизации!${NC}"
 }
 
+# === Управление Telegram MTProto прокси (Telemt Fake-TLS) ===
+get_telemt_link() {
+    local domain; domain=$(get_installed_var "DOMAIN")
+    local port; port=$(get_installed_var "TELEMT_PORT")
+    [[ -z "$port" ]] && port="8444"
+    local secret; secret=$(get_installed_var "TELEMT_FULL_SECRET")
+
+    # Попытка получить секрет из REST API Telemt при активной службе
+    if [[ -z "$secret" ]]; then
+        secret=$(curl -s --max-time 2 http://127.0.0.1:9091/v1/users 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['data'][0]['links']['tls'][0].split('secret=')[1])" 2>/dev/null || true)
+        if [[ -n "$secret" ]]; then
+            update_marker_val "TELEMT_FULL_SECRET" "$secret"
+        fi
+    fi
+
+    # Fallback: вычисление секрета из raw_secret и SNI
+    if [[ -z "$secret" && -f "/etc/telemt/telemt.toml" ]]; then
+        local raw_sec; raw_sec=$(awk -F= '/^[[:space:]]*tg_user[[:space:]]*=/{print $2}' /etc/telemt/telemt.toml | tr -d ' "\t\r\n')
+        local sni; sni=$(awk -F= '/^[[:space:]]*tls_domain[[:space:]]*=/{print $2}' /etc/telemt/telemt.toml | tr -d ' "\t\r\n')
+        [[ -z "$sni" ]] && sni="www.cloudflare.com"
+        if [[ -n "$raw_sec" ]]; then
+            local hex_sni; hex_sni=$(python3 -c "import sys; print(sys.argv[1].encode().hex())" "$sni" 2>/dev/null || true)
+            secret="ee${raw_sec}${hex_sni}"
+            update_marker_val "TELEMT_FULL_SECRET" "$secret"
+        fi
+    fi
+
+    if [[ -z "$domain" ]]; then
+        domain=$(curl -s --max-time 3 http://ifconfig.me 2>/dev/null || curl -s --max-time 3 http://ipinfo.io/ip 2>/dev/null || echo "127.0.0.1")
+    fi
+
+    echo "tg://proxy?server=${domain}&port=${port}&secret=${secret}"
+}
+
+install_telemt() {
+    echo -e "\n${BOLD}${CYAN}✈️  УСТАНОВКА TELEGRAM MTPROTO ПРОКСИ (TELEMT FAKE-TLS)${NC}"
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+    echo -e " ${BOLD}О порте подключения:${NC}"
+    echo -e "   • Порт ${BOLD}${GREEN}8444${NC} является ${BOLD}лучшим и оптимальным выбором${NC}:"
+    echo -e "     он входит в список стандартных HTTPS-портов Cloudflare, не конфликтует с"
+    echo -e "     Xray VLESS (443, 8443, 2053) и Hysteria2 (20443), и свободно пропускается"
+    echo -e "     провайдерами без блокировок."
+    echo -e "   • Вы также можете указать любой свободный порт при необходимости."
+    echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
+
+    local default_port="8444"
+    read -r -p " Введите порт для Telemt [$default_port]: " input_port
+    local tele_port="${input_port:-$default_port}"
+    while ! [[ "$tele_port" =~ ^[0-9]+$ ]] || (( tele_port < 1 || tele_port > 65535 )) || [[ "$tele_port" =~ ^(80|443|8443|2053|20443)$ ]]; do
+        echo -e " ${RED}❌ Недопустимый порт! Порты 80, 443, 8443, 2053, 20443 уже заняты службами Xray/Hy2.${NC}"
+        read -r -p " Введите порт для Telemt [$default_port]: " input_port
+        tele_port="${input_port:-$default_port}"
+    done
+
+    local default_sni="www.cloudflare.com"
+    read -r -p " Введите SNI домен для Fake-TLS [$default_sni]: " input_sni
+    local tele_sni="${input_sni:-$default_sni}"
+
+    echo -e "\n ${YELLOW}⏳ Загрузка официального релиза Telemt...${NC}"
+    local arch_type; arch_type=$(uname -m)
+    local libc_type; libc_type=$(ldd --version 2>&1 | grep -iq musl && echo musl || echo gnu)
+    local dl_url="https://github.com/telemt/telemt/releases/latest/download/telemt-${arch_type}-linux-${libc_type}.tar.gz"
+
+    systemctl stop telemt >/dev/null 2>&1 || true
+
+    local tmp_dir; tmp_dir=$(mktemp -d)
+    if ! curl -fsSL --connect-timeout 10 --max-time 60 "$dl_url" | tar -xz -C "$tmp_dir" 2>/dev/null; then
+        echo -e " ${RED}❌ Не удалось скачать бинарный файл Telemt (${dl_url}).${NC}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if [[ ! -f "$tmp_dir/telemt" ]]; then
+        echo -e " ${RED}❌ Бинарник telemt не найден в архиве.${NC}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    mv -f "$tmp_dir/telemt" /usr/local/bin/telemt
+    chmod +x /usr/local/bin/telemt
+    rm -rf "$tmp_dir"
+
+    # Создание системного пользователя telemt при отсутствии
+    if ! id -u telemt >/dev/null 2>&1; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin telemt 2>/dev/null || true
+    fi
+
+    mkdir -p /etc/telemt
+    local raw_secret; raw_secret=$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    local hex_sni; hex_sni=$(python3 -c "import sys; print(sys.argv[1].encode().hex())" "$tele_sni" 2>/dev/null || true)
+    local full_secret="ee${raw_secret}${hex_sni}"
+
+    cat > /etc/telemt/telemt.toml <<EOF
+[general]
+prefer_ipv6 = false
+fast_mode = true
+use_middle_proxy = false
+
+[general.modes]
+classic = false
+secure = false
+tls = true
+
+[general.links]
+show = "*"
+
+[server]
+port = $tele_port
+listen_addr_ipv4 = "0.0.0.0"
+
+[timeouts]
+client_handshake = 15
+tg_connect = 10
+client_keepalive = 60
+client_ack = 300
+
+[server.api]
+enabled = true
+listen = "127.0.0.1:9091"
+whitelist = ["127.0.0.1/32"]
+
+[censorship]
+tls_domain = "$tele_sni"
+mask = true
+mask_host = "$tele_sni"
+mask_port = 443
+
+[access]
+replay_check_len = 65536
+ignore_time_skew = false
+
+[access.users]
+tg_user = "$raw_secret"
+EOF
+
+    chown -R telemt:telemt /etc/telemt
+    chmod 640 /etc/telemt/telemt.toml
+
+    # Создание systemd службы
+    cat > /etc/systemd/system/telemt.service <<EOF
+[Unit]
+Description=Telemt MTProto Fake-TLS Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telemt
+Group=telemt
+WorkingDirectory=/etc/telemt
+ExecStart=/usr/local/bin/telemt /etc/telemt/telemt.toml
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now telemt >/dev/null 2>&1
+
+    # Настройка Firewall (UFW)
+    if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
+        ufw allow "${tele_port}/tcp" >/dev/null 2>&1
+    fi
+
+    # Обновление маркера
+    update_marker_val "TELEMT_INSTALLED" "true"
+    update_marker_val "TELEMT_ENABLED" "true"
+    update_marker_val "TELEMT_PORT" "$tele_port"
+    update_marker_val "TELEMT_SNI" "$tele_sni"
+    update_marker_val "TELEMT_RAW_SECRET" "$raw_secret"
+    update_marker_val "TELEMT_FULL_SECRET" "$full_secret"
+
+    # Обновляем скрипт генерации ссылок, чтобы он сразу включал Telegram
+    install_generate_script
+
+    echo -e "\n${GREEN}✅ Telemt успешно установлен и запущен на порту ${tele_port}!${NC}"
+    show_telemt_info
+}
+
+uninstall_telemt() {
+    echo -e "\n${BOLD}${RED}🧹 Полное удаление Telegram MTProto (Telemt)...${NC}"
+    local cur_port; cur_port=$(get_installed_var "TELEMT_PORT")
+    [[ -z "$cur_port" ]] && cur_port="8444"
+
+    systemctl stop telemt >/dev/null 2>&1 || true
+    systemctl disable telemt >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/telemt.service
+    systemctl daemon-reload >/dev/null 2>&1
+
+    rm -f /usr/local/bin/telemt
+    rm -rf /etc/telemt
+
+    if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
+        ufw delete allow "${cur_port}/tcp" >/dev/null 2>&1 || true
+    fi
+
+    update_marker_val "TELEMT_INSTALLED" "false"
+    update_marker_val "TELEMT_ENABLED" "false"
+    update_marker_val "TELEMT_FULL_SECRET" ""
+
+    install_generate_script
+    echo -e "${GREEN}✅ Telemt полностью удален с сервера!${NC}"
+    sleep 1.5
+}
+
+toggle_telemt() {
+    local cur_status; cur_status=$(get_installed_var "TELEMT_ENABLED")
+    if [[ "$cur_status" == "true" ]]; then
+        echo -e "\n${BOLD}${YELLOW}📴 Остановка службы Telemt...${NC}"
+        systemctl stop telemt >/dev/null 2>&1
+        update_marker_val "TELEMT_ENABLED" "false"
+        echo -e "${GREEN}✅ Telemt остановлен.${NC}"
+    else
+        echo -e "\n${BOLD}${GREEN}✈️  Запуск службы Telemt...${NC}"
+        if [[ "$(get_installed_var "TELEMT_INSTALLED")" != "true" ]]; then
+            install_telemt
+            return
+        fi
+        systemctl start telemt >/dev/null 2>&1
+        update_marker_val "TELEMT_ENABLED" "true"
+        echo -e "${GREEN}✅ Telemt запущен.${NC}"
+    fi
+    sleep 1
+}
+
+show_telemt_info() {
+    if [[ "$(get_installed_var "TELEMT_INSTALLED")" != "true" ]]; then
+        echo -e "\n${RED}❌ Telemt не установлен на этом сервере.${NC}"
+        return 1
+    fi
+
+    local domain; domain=$(get_installed_var "DOMAIN")
+    local port; port=$(get_installed_var "TELEMT_PORT")
+    [[ -z "$port" ]] && port="8444"
+    local sni; sni=$(get_installed_var "TELEMT_SNI")
+    [[ -z "$sni" ]] && sni="www.cloudflare.com"
+
+    local tg_link; tg_link=$(get_telemt_link)
+    local secret; secret="${tg_link##*secret=}"
+    local web_link="https://t.me/proxy?server=${domain}&port=${port}&secret=${secret}"
+
+    ui_header "✈️   ДАННЫЕ ПОДКЛЮЧЕНИЯ TELEGRAM PROXY"
+    ui_item "" "Хост: ${BOLD}${WHITE}${domain}${NC}"
+    ui_item "" "Порт: ${BOLD}${GREEN}${port}${NC} ${GRAY}(лучший порт, маскировка под HTTPS)${NC}"
+    ui_item "" "SNI маскировки: ${CYAN}${sni}${NC}"
+    ui_item "" "Fake-TLS секрет: ${YELLOW}${secret}${NC}"
+    ui_divider
+    ui_item "Прямая ссылка (tg://):" ""
+    echo -e "   ${GREEN}${tg_link}${NC}"
+    echo ""
+    ui_item "HTTPS ссылка (t.me):" ""
+    echo -e "   ${CYAN}${web_link}${NC}"
+    ui_divider
+    ui_item "" "📲 Для быстрого добавления кликните по ссылке или отсканируйте QR-код ниже:"
+    echo ""
+    if command -v qrencode >/dev/null 2>&1; then
+        qrencode -t UTF8 "$tg_link" || true
+    fi
+    ui_footer
+}
+
+telemt_menu() {
+    local installed; installed=$(get_installed_var "TELEMT_INSTALLED")
+    local port; port=$(get_installed_var "TELEMT_PORT")
+    [[ -z "$port" ]] && port="8444"
+
+    local status_text="${RED}НЕ УСТАНОВЛЕН${NC}"
+    if [[ "$installed" == "true" ]]; then
+        if systemctl is-active telemt >/dev/null 2>&1; then
+            status_text="${GREEN}● РАБОТАЕТ (Порт $port)${NC}"
+        else
+            status_text="${YELLOW}○ ОСТАНОВЛЕН (Порт $port)${NC}"
+        fi
+    fi
+
+    ui_header "✈️   УПРАВЛЕНИЕ TELEGRAM MTPROTO ПРОКСИ (TELEMT)"
+    ui_item "" "Текущий статус: $status_text"
+    ui_divider
+    if [[ "$installed" != "true" ]]; then
+        ui_item "1" "📦 Установить Telemt MTProto прокси (порт 8444, Fake-TLS)"
+    else
+        ui_item "1" "📱 Показать ссылку подключения и QR-код для Telegram"
+        if systemctl is-active telemt >/dev/null 2>&1; then
+            ui_item "2" "⏹️  Остановить службу Telemt"
+        else
+            ui_item "2" "▶️  Запустить службу Telemt"
+        fi
+        ui_item "3" "🔄 Сменить порт (рекомендуется 8444)"
+        ui_item "4" "🌐 Сменить SNI маскировки (Fake-TLS домен)"
+        ui_item "5" "🔑 Сгенерировать новый секрет подключения"
+        ui_item "6" "📰 Просмотреть системные логи службы (journalctl)"
+        ui_item "7" "🗑️  Полностью удалить Telemt с сервера"
+    fi
+    ui_divider
+    ui_item "0" "↩️  Назад в главное меню" "${CYAN}"
+    ui_footer
+
+    local max_choice=1
+    [[ "$installed" == "true" ]] && max_choice=7
+
+    read -r -p " Выберите действие (0-${max_choice}): " tchoice
+    case $tchoice in
+        0) main_menu ;;
+        1)
+            if [[ "$installed" != "true" ]]; then
+                install_telemt
+            else
+                show_telemt_info
+            fi
+            echo -e "\nНажмите Enter для возврата в меню..."
+            read -r
+            telemt_menu
+            ;;
+        2)
+            [[ "$installed" == "true" ]] && toggle_telemt
+            telemt_menu
+            ;;
+        3)
+            if [[ "$installed" == "true" ]]; then
+                echo -e "\n${BOLD}${CYAN}🔄 СМЕНА ПОРТА TELEMT${NC}"
+                echo -e " ${GRAY}Напоминание: порт 8444 является лучшим, так как не конфликтует со службами Xray и входит в HTTPS-порты Cloudflare.${NC}"
+                read -r -p " Введите новый порт [8444]: " np
+                local new_port="${np:-8444}"
+                if [[ "$new_port" =~ ^[0-9]+$ ]] && (( new_port >= 1 && new_port <= 65535 )) && ! [[ "$new_port" =~ ^(80|443|8443|2053|20443)$ ]]; then
+                    local old_port; old_port=$(get_installed_var "TELEMT_PORT")
+                    if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
+                        ufw delete allow "${old_port}/tcp" >/dev/null 2>&1 || true
+                        ufw allow "${new_port}/tcp" >/dev/null 2>&1 || true
+                    fi
+                    sed -i "s/^port = .*/port = $new_port/" /etc/telemt/telemt.toml
+                    update_marker_val "TELEMT_PORT" "$new_port"
+                    systemctl restart telemt >/dev/null 2>&1
+                    install_generate_script
+                    echo -e "${GREEN}✅ Порт успешно изменен на $new_port и служба перезапущена!${NC}"
+                else
+                    echo -e "${RED}❌ Неверный порт или конфликт с существующими службами!${NC}"
+                fi
+                sleep 1.5
+            fi
+            telemt_menu
+            ;;
+        4)
+            if [[ "$installed" == "true" ]]; then
+                read -r -p " Введите новый SNI для Fake-TLS [www.cloudflare.com]: " ns
+                local new_sni="${ns:-www.cloudflare.com}"
+                local raw_sec; raw_sec=$(get_installed_var "TELEMT_RAW_SECRET")
+                local hex_sni; hex_sni=$(python3 -c "import sys; print(sys.argv[1].encode().hex())" "$new_sni" 2>/dev/null || true)
+                local full_sec="ee${raw_sec}${hex_sni}"
+                sed -i "s/^tls_domain = .*/tls_domain = \"$new_sni\"/" /etc/telemt/telemt.toml
+                sed -i "s/^mask_host = .*/mask_host = \"$new_sni\"/" /etc/telemt/telemt.toml
+                update_marker_val "TELEMT_SNI" "$new_sni"
+                update_marker_val "TELEMT_FULL_SECRET" "$full_sec"
+                systemctl restart telemt >/dev/null 2>&1
+                install_generate_script
+                echo -e "${GREEN}✅ SNI изменен на $new_sni!${NC}"
+                sleep 1.5
+            fi
+            telemt_menu
+            ;;
+        5)
+            if [[ "$installed" == "true" ]]; then
+                local raw_sec; raw_sec=$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+                local cur_sni; cur_sni=$(get_installed_var "TELEMT_SNI")
+                [[ -z "$cur_sni" ]] && cur_sni="www.cloudflare.com"
+                local hex_sni; hex_sni=$(python3 -c "import sys; print(sys.argv[1].encode().hex())" "$cur_sni" 2>/dev/null || true)
+                local full_sec="ee${raw_sec}${hex_sni}"
+                sed -i "s/^tg_user = .*/tg_user = \"$raw_sec\"/" /etc/telemt/telemt.toml
+                update_marker_val "TELEMT_RAW_SECRET" "$raw_sec"
+                update_marker_val "TELEMT_FULL_SECRET" "$full_sec"
+                systemctl restart telemt >/dev/null 2>&1
+                install_generate_script
+                echo -e "${GREEN}✅ Сгенерирован новый секрет!${NC}"
+                sleep 1.5
+            fi
+            telemt_menu
+            ;;
+        6)
+            if [[ "$installed" == "true" ]]; then
+                echo -e "\n${BOLD}${CYAN}📰 Последние 30 строк логов Telemt:${NC}"
+                journalctl -u telemt -n 30 --no-pager
+                echo -e "\nНажмите Enter для возврата..."
+                read -r
+            fi
+            telemt_menu
+            ;;
+        7)
+            if [[ "$installed" == "true" ]]; then
+                read -r -p "Точно удалить Telemt? (y/n): " cdel
+                if [[ "$cdel" =~ ^[Yy]$ ]]; then
+                    uninstall_telemt
+                fi
+            fi
+            telemt_menu
+            ;;
+        *)
+            echo -e "${RED}❌ Неверный выбор!${NC}"
+            sleep 1
+            telemt_menu
+            ;;
+    esac
+}
+
 # === Управление Psiphon (Разблокировка Google / Gemini / AI Studio) ===
 ensure_docker_installed() {
     if command -v docker &>/dev/null && docker info >/dev/null 2>&1; then
@@ -3162,7 +3570,10 @@ def get_installed_vars():
         "reality_sid": "",
         "routing_enabled": "true",
         "routing_profile": "default",
-        "providerid": ""
+        "providerid": "",
+        "telemt_installed": "false",
+        "telemt_port": "8444",
+        "telemt_secret": ""
     }
     try:
         if os.path.exists(INSTALLED_FILE):
@@ -3183,6 +3594,9 @@ def get_installed_vars():
                         elif key == "routing_enabled": vars["routing_enabled"] = val
                         elif key in ("routing_profile", "routing_mode"): vars["routing_profile"] = val.lower()
                         elif key in ("provider_id", "providerid"): vars["providerid"] = val
+                        elif key == "telemt_installed": vars["telemt_installed"] = val.lower()
+                        elif key == "telemt_port": vars["telemt_port"] = val
+                        elif key == "telemt_full_secret": vars["telemt_secret"] = val
     except Exception:
         pass
     if not vars["fp"]:
@@ -3756,7 +4170,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
-        announce_text = f"Профиль: {client_name} • Локации: VLESS TCP (443), Hysteria2 (20443), VLESS XHTTP (8443), VLESS gRPC (2053) • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
+        tg_note = f", TG Proxy ({ivars['telemt_port']})" if ivars.get("telemt_installed") == "true" and ivars.get("telemt_secret") else ""
+        announce_text = f"Профиль: {client_name} • Локации: VLESS TCP (443), Hysteria2 (20443), VLESS XHTTP (8443), VLESS gRPC (2053){tg_note} • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
         support_url = "https://t.me/mavrtunbot"
@@ -4762,6 +5177,10 @@ RED='\033[0;31m'
   REALITY_SNI=$(awk -F= '/^REALITY_SNI=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
   REALITY_PBK=$(awk -F= '/^REALITY_PUBLIC_KEY=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
   REALITY_SID=$(awk -F= '/^REALITY_SHORT_ID=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  TELEMT_INSTALLED=$(awk -F= '/^TELEMT_INSTALLED=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  TELEMT_PORT=$(awk -F= '/^TELEMT_PORT=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
+  [[ -z "$TELEMT_PORT" ]] && TELEMT_PORT="8444"
+  TELEMT_SECRET=$(awk -F= '/^TELEMT_FULL_SECRET=/{print $2}' /etc/xray/.installed | tr -d '[:space:]')
 
 mapfile -t -d '' config_files < <(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' -print0 | sort -z)
 
@@ -4834,6 +5253,11 @@ if [[ "$REALITY_ENABLED" = "true" ]]; then
   VLESS_REALITY="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=reality&sni=${REALITY_SNI}&pbk=${REALITY_PBK}&sid=${REALITY_SID}&fp=${FINGERPRINT}&type=tcp#${encoded_remark_reality}"
 fi
 
+TELEMT_LINK=""
+if [[ "$TELEMT_INSTALLED" = "true" && -n "$TELEMT_SECRET" ]]; then
+  TELEMT_LINK="tg://proxy?server=${DOMAIN}&port=${TELEMT_PORT}&secret=${TELEMT_SECRET}"
+fi
+
 echo -e "\n${BOLD}${PURPLE}🔗  ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ${NC}"
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и ПК, порт 443):${NC}"
@@ -4847,6 +5271,10 @@ echo -e "    ${GREEN}$VLESS_GRPC${NC}"
 if [[ "$REALITY_ENABLED" = "true" ]]; then
 echo -e " ${BOLD}${YELLOW}5. VLESS Reality (Маскировка ${REALITY_SNI}):${NC}"
 echo -e "    ${GREEN}$VLESS_REALITY${NC}"
+fi
+if [[ "$TELEMT_INSTALLED" = "true" && -n "$TELEMT_LINK" ]]; then
+echo -e " ${BOLD}${YELLOW}✈️  Telegram MTProto Proxy (Fake-TLS, порт ${TELEMT_PORT}):${NC}"
+echo -e "    ${GREEN}$TELEMT_LINK${NC}"
 fi
 
 echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (универсальная):${NC}"
@@ -4876,6 +5304,9 @@ else
 echo -e " ${BOLD}${YELLOW}5.${NC} Ссылка подписки (https://)"
 echo -e " ${BOLD}${YELLOW}6.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
 fi
+if [[ "$TELEMT_INSTALLED" = "true" && -n "$TELEMT_LINK" ]]; then
+echo -e " ${BOLD}${YELLOW}T.${NC} ✈️  Telegram MTProto (tg://proxy, порт ${TELEMT_PORT})"
+fi
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 read -r -p "Ваш выбор: " qr_choice
 if [[ "$REALITY_ENABLED" = "true" ]]; then
@@ -4887,6 +5318,7 @@ if [[ "$REALITY_ENABLED" = "true" ]]; then
     5) qrencode -t UTF8 "$VLESS_REALITY" ;;
     6) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
     7) qrencode -t UTF8 "$HAPP_URL" ;;
+    T|t) [[ -n "$TELEMT_LINK" ]] && qrencode -t UTF8 "$TELEMT_LINK" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
 else
@@ -4897,6 +5329,7 @@ else
     4) qrencode -t UTF8 "$VLESS_GRPC" ;;
     5) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
     6) qrencode -t UTF8 "$HAPP_URL" ;;
+    T|t) [[ -n "$TELEMT_LINK" ]] && qrencode -t UTF8 "$TELEMT_LINK" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
 fi
@@ -5095,9 +5528,11 @@ main() {
     if [[ -f "$MARKER_FILE" ]]; then
         show_connections() {
             ui_header "📊  МОНИТОРИНГ АКТИВНЫХ СОЕДИНЕНИЙ"
-            local conns; conns=$(ss -tnp 2>/dev/null | grep -E ':(443|2053|8443)\s' | grep -v '127.0.0.1')
+            local t_port; t_port=$(get_installed_var "TELEMT_PORT")
+            [[ -z "$t_port" ]] && t_port="8444"
+            local conns; conns=$(ss -tnp 2>/dev/null | grep -E ":(443|2053|8443|${t_port})\s" | grep -v '127.0.0.1')
             if [[ -z "$conns" ]]; then
-                ui_item "" "ℹ️ Нет активных внешних подключений на портах 443 / 2053 / 8443."
+                ui_item "" "ℹ️ Нет активных внешних подключений на портах 443 / 2053 / 8443 / ${t_port}."
             else
                 ui_item "" "${BOLD}Состояние    Локальный_Адрес        Удаленный_Адрес        Процесс${NC}"
                 ui_divider
@@ -5116,15 +5551,17 @@ main() {
             ui_item "2" "Лог Сервера подписок (xray-sub)"
             ui_item "3" "Лог службы Hysteria 2 (hysteria-server)"
             ui_item "4" "Лог ошибок Xray (/var/log/xray/error.log)"
+            ui_item "5" "Лог службы Telegram MTProto (telemt)"
             ui_divider
             ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
-            read -r -p " Выберите действие (0-4): " lchoice
+            read -r -p " Выберите действие (0-5): " lchoice
             case $lchoice in
                 1) journalctl -u xray -n 50 --no-pager ;;
                 2) journalctl -u xray-sub -n 50 --no-pager ;;
                 3) journalctl -u hysteria-server -n 50 --no-pager 2>/dev/null || echo "Служба Hysteria 2 не запущена." ;;
                 4) tail -n 50 /var/log/xray/error.log 2>/dev/null || echo "Файл error.log пуст или отсутствует." ;;
+                5) journalctl -u telemt -n 50 --no-pager 2>/dev/null || echo "Служба Telemt не запущена." ;;
                 0) return ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ;;
             esac
@@ -5306,6 +5743,18 @@ main() {
                 echo -e " 🟡 Порт 80 (TCP) свободен (требуется Certbot для обновления сертификатов)."
             fi
 
+            local telemt_inst; telemt_inst=$(get_installed_var "TELEMT_INSTALLED")
+            if [[ "$telemt_inst" == "true" ]]; then
+                local t_port; t_port=$(get_installed_var "TELEMT_PORT")
+                [[ -z "$t_port" ]] && t_port="8444"
+                local port_telemt_process; port_telemt_process=$(ss -tlnp "sport = :$t_port" 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+                if [[ -n "$port_telemt_process" ]]; then
+                    echo -e " 🟢 Порт $t_port (TCP - Telemt MTProto) успешно занят процессом: ${GREEN}$port_telemt_process${NC}"
+                else
+                    echo -e " 🔴 ${RED}Порт $t_port (TCP - Telemt MTProto) Свободен или Telemt не запущен!${NC}"
+                fi
+            fi
+
             # 2. Проверка служб
             echo -e "\n${BOLD}[2] Статус системных служб:${NC}"
             if systemctl is-active --quiet xray; then
@@ -5327,6 +5776,15 @@ main() {
             else
                 echo -e " Sub Service:  🔴 ${RED}INACTIVE (Остановлен)${NC}"
                 journalctl -u xray-sub -n 10 --no-pager
+            fi
+
+            if [[ "$telemt_inst" == "true" ]]; then
+                if systemctl is-active --quiet telemt; then
+                    echo -e " Telemt (TG):  🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+                else
+                    echo -e " Telemt (TG):  🔴 ${RED}INACTIVE (Остановлен)${NC}"
+                    journalctl -u telemt -n 10 --no-pager
+                fi
             fi
 
             # 3. Проверка резолва домена и подмены DNS (dnsmap)
@@ -5804,6 +6262,18 @@ EOF
                 fi
             fi
 
+            local telemt_installed; telemt_installed=$(get_installed_var "TELEMT_INSTALLED")
+            local telemt_status="${GRAY}○ N/A${NC}"
+            if [[ "$telemt_installed" == "true" ]]; then
+                if systemctl is-active telemt >/dev/null 2>&1; then
+                    local tele_port; tele_port=$(get_installed_var "TELEMT_PORT")
+                    [[ -z "$tele_port" ]] && tele_port="8444"
+                    telemt_status="${GREEN}● ACTIVE${NC} ${GRAY}($tele_port)${NC}"
+                else
+                    telemt_status="${YELLOW}○ OFF${NC}"
+                fi
+            fi
+
             local ssl_badge="${RED}ОТСУТСТВУЕТ${NC}"
             if [[ -f "$SSL_DIR/fullchain.cer" ]]; then
                 local cert_end; cert_end=$(openssl x509 -enddate -noout -in "$SSL_DIR/fullchain.cer" 2>/dev/null | cut -d= -f2)
@@ -5839,7 +6309,7 @@ EOF
 
             ui_header "🖥️  СТАТУС ИНФРАСТРУКТУРЫ"
             ui_status "🌐" "Сервер" "${BOLD}${WHITE}$domain${NC}  ${GRAY}│${NC}  📜 SSL: $ssl_badge  ${GRAY}│${NC}  👥 Клиенты: ${BOLD}${YELLOW}$clients_count${NC}"
-            ui_status "⚡" "Службы" "Xray: $xray_status  ${GRAY}│${NC}  Hy2: $hy2_status  ${GRAY}│${NC}  Sub: $sub_status"
+            ui_status "⚡" "Службы" "Xray: $xray_status  ${GRAY}│${NC}  Hy2: $hy2_status  ${GRAY}│${NC}  Sub: $sub_status  ${GRAY}│${NC}  TG: $telemt_status"
             ui_status "🧭" "Роутинг" "$routing_badge"
             ui_status "🌀" "Обходы" "WARP: $warp_status  ${GRAY}│${NC}  Psiphon: $psiphon_status  ${GRAY}│${NC}  Opera: $opera_status  ${GRAY}│${NC}  Tor: $tor_status"
             ui_footer
@@ -6518,12 +6988,13 @@ EOF
             ui_item "13" "🔐 Управление SSL-сертификатом и доменом"
             ui_item "14" "🔑 Управление Provider ID (happ-proxy.com)"
             ui_item "15" "💾 Резервное копирование и восстановление (Backup & Restore)"
+            ui_item "16" "✈️  Telegram MTProto прокси (Telemt Fake-TLS, порт 8444)"
             
             ui_section "🚪  ДЕЙСТВИЯ И ВЫХОД"
-            ui_item_color "16" "${RED}🧨 Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
+            ui_item_color "17" "${RED}🧨 Полностью удалить всю установку Xray с сервера${NC}" "${RED}" "${CYAN}"
             ui_item "0" "🚪 Выйти из терминала" "${CYAN}"
             ui_footer
-            read -r -p " Выберите действие (0-16): " choice
+            read -r -p " Выберите действие (0-17): " choice
             case $choice in
                 1) "$GENERATE_SCRIPT" ; main_menu ;;
                 2) add_client ; main_menu ;;
@@ -6540,7 +7011,8 @@ EOF
                 13) ssl_and_domain_menu ;;
                 14) manage_provider_id ;;
                 15) backup_restore_menu ;;
-                16) 
+                16) telemt_menu ;;
+                17) 
                     echo -e "\n${BOLD}${RED}⚠️ ВНИМАНИЕ! Это действие удалит Xray, все конфигурации, WARP, Opera Proxy и Tor!${NC}"
                     read -r -p "Вы уверены? (y/n): " uconf
                     if [[ "$uconf" =~ ^[Yy]$ ]]; then
@@ -6549,7 +7021,7 @@ EOF
                         main_menu
                     fi
                     ;;
-                0|17) exit 0 ;;
+                0|18) exit 0 ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ; main_menu ;;
             esac
         }
@@ -7127,6 +7599,12 @@ EOF
             rm -f /etc/systemd/system/opera-proxy.service
             rm -f /usr/local/bin/opera-proxy
             rm -f /etc/xray/opera.lst
+
+            # Удаление Telemt MTProto proxy
+            uninstall_telemt >/dev/null 2>&1 || true
+
+            # Удаление Tor
+            uninstall_tor >/dev/null 2>&1 || true
 
             # Удаление Psiphon
             if command -v vps-psiphon &>/dev/null; then
