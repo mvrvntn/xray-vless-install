@@ -2630,7 +2630,7 @@ generate_server_config() {
       }')
     routing_rules_list+=('{
         "type": "field",
-        "port": "25,135,137,138,139,445,465,587",
+        "port": "25,2525,135,137,138,139,445,465,587",
         "network": "tcp,udp",
         "outboundTag": "BLOCK"
       }')
@@ -3244,6 +3244,8 @@ EOF
   },
   "dns": {
     "servers": [
+      "1.1.1.2",
+      "1.0.0.2",
       "1.1.1.1",
       "8.8.8.8",
       "1.0.0.1",
@@ -3275,6 +3277,7 @@ EOF
   "inbounds": $inbounds_str,
   "outbounds": $outbounds_str,
   "routing": {
+    "domainMatcher": "hybrid",
     "domainStrategy": "IPIfNonMatch",
     "rules": [
       $routing_rules_str
@@ -4388,7 +4391,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                             ]
                         },
                         {
-                            "port": [25, 135, 137, 138, 139, 445, 465, 587],
+                            "port": [25, 2525, 135, 137, 138, 139, 445, 465, 587],
                             "outbound": "block"
                         },
                         {
@@ -4405,7 +4408,21 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                                 "lava.ru",
                                 "lava.top",
                                 "lava.link",
-                                "lava.money"
+                                "lava.money",
+                                "apple-pay-gateway.apple.com",
+                                "wallet.apple.com",
+                                "api.apple-pay.com",
+                                "apple-pay.com",
+                                "applepay.com",
+                                "applewallet.com",
+                                "pay.google.com",
+                                "payments.google.com",
+                                "wallet.google.com",
+                                "vts.visa.com",
+                                "token.visa.com",
+                                "mdes.mastercard.com",
+                                "visa.com",
+                                "mastercard.com"
                             ],
                             "outbound": "→ Remnawave"
                         },
@@ -4594,7 +4611,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                             "::1/128", "fc00::/7", "fe80::/10"
                         ]
                     },
-                    {"port": [25, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
+                    {"port": [25, 2525, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
                     {"outbound": "block", "rule_set": ["oisd-big"]},
                     {"port": [443], "network": ["udp"], "outbound": "block"},
                     {"outbound": "→ Remnawave", "rule_set": ["ru-bundle"]},
@@ -4613,7 +4630,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         "action": "hijack-dns"
                     },
                     {"outbound": "direct", "ip_is_private": True},
-                    {"port": [25, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
+                    {"port": [25, 2525, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
                     {"outbound": "→ Remnawave"}
                 ]
 
@@ -4645,6 +4662,15 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "servers": [
                         "https://8.8.8.8/dns-query",
                         "https://1.1.1.1/dns-query",
+                        {
+                            "address": "https://1.1.1.1/dns-query",
+                            "domains": [
+                                "domain:apps.apple.com",
+                                "domain:itunes.apple.com",
+                                "domain:mzstatic.com",
+                                "domain:iads.apple.com"
+                            ]
+                        },
                         {
                             "address": "https://8.8.8.8/dns-query",
                             "domains": [
@@ -4687,7 +4713,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 "policy": {
                     "levels": {
                         "8": {
-                            "connIdle": 300,
+                            "connIdle": 90,
                             "handshake": 4,
                             "uplinkOnly": 1,
                             "downlinkOnly": 1
@@ -4699,6 +4725,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     }
                 },
                 "routing": {
+                    "domainMatcher": "hybrid",
                     "domainStrategy": "IPIfNonMatch",
                     "rules": [
                         {
@@ -4707,7 +4734,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                             "outboundTag": "dns-out"
                         },
                         {
-                            "port": "25,135,137,138,139,445,465,587",
+                            "port": "25,2525,135,137,138,139,445,465,587",
                             "type": "field",
                             "network": "tcp,udp",
                             "outboundTag": "block"
@@ -4748,7 +4775,15 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                                 "geosite:github",
                                 "geosite:twitch-ads",
                                 "geosite:youtube",
-                                "geosite:telegram"
+                                "geosite:telegram",
+                                "geosite:category-geoblock-ru",
+                                "apple-pay-gateway.apple.com",
+                                "wallet.apple.com",
+                                "ssp.apple.com",
+                                "pay.google.com",
+                                "payments.google.com",
+                                "vts.visa.com",
+                                "mdes.mastercard.com"
                             ],
                             "balancerTag": "Super_Balancer"
                         },
@@ -4794,8 +4829,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                             },
                             "fallbackTag": "direct"
                         }
-                    ],
-                    "domainStrategy": "IPIfNonMatch"
+                    ]
                 },
                 "inbounds": [
                     {
@@ -4855,7 +4889,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             if routing_profile == "relocant":
                 xray_config["routing"]["rules"] = [
                     {"port": 53, "type": "field", "outboundTag": "dns-out"},
-                    {"port": "25,135,137,138,139,445,465,587", "type": "field", "network": "tcp,udp", "outboundTag": "block"},
+                    {"port": "25,2525,135,137,138,139,445,465,587", "type": "field", "network": "tcp,udp", "outboundTag": "block"},
                     {"port": 443, "type": "field", "network": "udp", "outboundTag": "block"},
                     {"type": "field", "domain": ["geosite:win-spy", "geosite:torrent", "geosite:category-ads"], "outboundTag": "block"},
                     {"type": "field", "domain": ["geosite:category-ru", "geosite:whitelist", "geosite:faceit"], "balancerTag": "Super_Balancer"},
@@ -4865,7 +4899,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             elif routing_profile == "off":
                 xray_config["routing"]["rules"] = [
                     {"port": 53, "type": "field", "outboundTag": "dns-out"},
-                    {"port": "25,135,137,138,139,445,465,587", "type": "field", "network": "tcp,udp", "outboundTag": "block"},
+                    {"port": "25,2525,135,137,138,139,445,465,587", "type": "field", "network": "tcp,udp", "outboundTag": "block"},
                     {"type": "field", "network": "tcp,udp", "balancerTag": "Super_Balancer"}
                 ]
 
@@ -5033,6 +5067,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 "proxies": proxies_list,
                 "rules": [
                     "DST-PORT,25,REJECT",
+                    "DST-PORT,2525,REJECT",
                     "DST-PORT,135,REJECT",
                     "DST-PORT,137,REJECT",
                     "DST-PORT,138,REJECT",
@@ -5042,6 +5077,13 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "DST-PORT,587,REJECT",
                     "AND,((NETWORK,udp),(PORT,443)),REJECT",
                     "RULE-SET,private-domains,DIRECT",
+                    "DOMAIN-SUFFIX,apple-pay-gateway.apple.com,🛡️ VPN",
+                    "DOMAIN-SUFFIX,wallet.apple.com,🛡️ VPN",
+                    "DOMAIN-SUFFIX,ssp.apple.com,🛡️ VPN",
+                    "DOMAIN-SUFFIX,pay.google.com,🛡️ VPN",
+                    "DOMAIN-SUFFIX,payments.google.com,🛡️ VPN",
+                    "DOMAIN-SUFFIX,vts.visa.com,🛡️ VPN",
+                    "DOMAIN-SUFFIX,mdes.mastercard.com,🛡️ VPN",
                     "RULE-SET,category-ru,DIRECT",
                     "RULE-SET,microsoft,DIRECT",
                     "RULE-SET,steam,🎮 Игры",
@@ -5069,6 +5111,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             if routing_profile == "relocant":
                 clash_config["rules"] = [
                     "DST-PORT,25,REJECT",
+                    "DST-PORT,2525,REJECT",
                     "DST-PORT,135,REJECT",
                     "DST-PORT,137,REJECT",
                     "DST-PORT,138,REJECT",
@@ -5085,6 +5128,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             elif routing_profile == "off":
                 clash_config["rules"] = [
                     "DST-PORT,25,REJECT",
+                    "DST-PORT,2525,REJECT",
                     "DST-PORT,135,REJECT",
                     "DST-PORT,137,REJECT",
                     "DST-PORT,138,REJECT",
