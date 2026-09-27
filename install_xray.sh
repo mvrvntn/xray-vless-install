@@ -1203,7 +1203,14 @@ install_telemt() {
     local tele_sni="${input_sni:-$default_sni}"
 
     echo -e "\n ${YELLOW}⏳ Загрузка официального релиза Telemt...${NC}"
-    local arch_type; arch_type=$(uname -m)
+    local raw_arch; raw_arch=$(uname -m)
+    local arch_type="x86_64"
+    case "$raw_arch" in
+        x86_64|amd64) arch_type="x86_64" ;;
+        aarch64|arm64) arch_type="aarch64" ;;
+        armv7*|armhf) arch_type="armv7" ;;
+        *) arch_type="$raw_arch" ;;
+    esac
     local libc_type; libc_type=$(ldd --version 2>&1 | grep -iq musl && echo musl || echo gnu)
     local dl_url="https://github.com/telemt/telemt/releases/latest/download/telemt-${arch_type}-linux-${libc_type}.tar.gz"
 
@@ -1277,6 +1284,11 @@ ignore_time_skew = false
 
 [access.users]
 tg_user = "$raw_secret"
+
+[[upstreams]]
+type = "direct"
+enabled = true
+weight = 10
 EOF
 
     chown -R telemt:telemt /etc/telemt
@@ -1309,9 +1321,14 @@ EOF
     systemctl daemon-reload
     systemctl enable --now telemt >/dev/null 2>&1
 
-    # Настройка Firewall (UFW)
+    # Настройка Firewall (UFW / AntiZapret iptables)
     if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
         ufw allow "${tele_port}/tcp" >/dev/null 2>&1
+    fi
+    local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
+    if [[ -x "$ipt_path" ]] && { $ipt_path -t nat -S 2>/dev/null | grep -qi "antizapret" || systemctl list-units --all --quiet 2>/dev/null | grep -q "antizapret"; }; then
+        $ipt_path -D INPUT -p tcp --dport "${tele_port}" -j ACCEPT >/dev/null 2>&1 || true
+        $ipt_path -I INPUT 1 -p tcp --dport "${tele_port}" -j ACCEPT
     fi
 
     # Обновление маркера
@@ -1344,6 +1361,10 @@ uninstall_telemt() {
 
     if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
         ufw delete allow "${cur_port}/tcp" >/dev/null 2>&1 || true
+    fi
+    local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
+    if [[ -x "$ipt_path" ]] && { $ipt_path -t nat -S 2>/dev/null | grep -qi "antizapret" || systemctl list-units --all --quiet 2>/dev/null | grep -q "antizapret"; }; then
+        $ipt_path -D INPUT -p tcp --dport "${cur_port}" -j ACCEPT >/dev/null 2>&1 || true
     fi
 
     update_marker_val "TELEMT_INSTALLED" "false"
@@ -1475,9 +1496,15 @@ telemt_menu() {
                 local new_port="${np:-8444}"
                 if [[ "$new_port" =~ ^[0-9]+$ ]] && (( new_port >= 1 && new_port <= 65535 )) && ! [[ "$new_port" =~ ^(80|443|8443|2053|20443)$ ]]; then
                     local old_port; old_port=$(get_installed_var "TELEMT_PORT")
+                    [[ -z "$old_port" ]] && old_port="8444"
                     if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
                         ufw delete allow "${old_port}/tcp" >/dev/null 2>&1 || true
                         ufw allow "${new_port}/tcp" >/dev/null 2>&1 || true
+                    fi
+                    local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
+                    if [[ -x "$ipt_path" ]] && { $ipt_path -t nat -S 2>/dev/null | grep -qi "antizapret" || systemctl list-units --all --quiet 2>/dev/null | grep -q "antizapret"; }; then
+                        $ipt_path -D INPUT -p tcp --dport "${old_port}" -j ACCEPT >/dev/null 2>&1 || true
+                        $ipt_path -I INPUT 1 -p tcp --dport "${new_port}" -j ACCEPT
                     fi
                     sed -i "s/^port = .*/port = $new_port/" /etc/telemt/telemt.toml
                     update_marker_val "TELEMT_PORT" "$new_port"
@@ -2126,8 +2153,14 @@ setup_firewall() {
         # Гарантируем доступ к нужным портам в iptables на самых первых позициях цепочки INPUT
         local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
         if [[ -x "$ipt_path" ]]; then
-            $ipt_path -D INPUT -p tcp -m multiport --dports 80,443,2053,8443 -j ACCEPT >/dev/null 2>&1 || true
-            $ipt_path -I INPUT 1 -p tcp -m multiport --dports 80,443,2053,8443 -j ACCEPT
+            local tcp_ports="80,443,2053,8443"
+            local t_installed; t_installed=$(get_installed_var "TELEMT_INSTALLED")
+            local t_port; t_port=$(get_installed_var "TELEMT_PORT")
+            [[ -z "$t_port" ]] && t_port="8444"
+            [[ "$t_installed" == "true" ]] && tcp_ports="${tcp_ports},${t_port}"
+
+            $ipt_path -D INPUT -p tcp -m multiport --dports "$tcp_ports" -j ACCEPT >/dev/null 2>&1 || true
+            $ipt_path -I INPUT 1 -p tcp -m multiport --dports "$tcp_ports" -j ACCEPT
             
             $ipt_path -D INPUT -p udp -m multiport --dports 443,20000:50000 -j ACCEPT >/dev/null 2>&1 || true
             $ipt_path -I INPUT 2 -p udp -m multiport --dports 443,20000:50000 -j ACCEPT
@@ -2143,6 +2176,12 @@ setup_firewall() {
     ufw allow 443/tcp > /dev/null
     ufw allow 2053/tcp > /dev/null
     ufw allow 8443/tcp > /dev/null
+    local t_installed; t_installed=$(get_installed_var "TELEMT_INSTALLED")
+    if [[ "$t_installed" == "true" ]]; then
+        local t_port; t_port=$(get_installed_var "TELEMT_PORT")
+        [[ -z "$t_port" ]] && t_port="8444"
+        ufw allow "${t_port}/tcp" > /dev/null 2>&1 || true
+    fi
     ufw allow 443/udp > /dev/null
     ufw allow 20000:50000/udp > /dev/null
     ufw allow 80/tcp > /dev/null
@@ -5388,9 +5427,10 @@ create_backup() {
     [[ -d "$SSL_DIR" ]] && cp -a "$SSL_DIR" "$tmp_dir/ssl-vless"
     [[ -d "/etc/hysteria" ]] && cp -a "/etc/hysteria" "$tmp_dir/etc-hysteria"
     [[ -f "/etc/tor/torrc" ]] && mkdir -p "$tmp_dir/etc-tor" && cp "/etc/tor/torrc" "$tmp_dir/etc-tor/"
+    [[ -d "/etc/telemt" ]] && cp -a "/etc/telemt" "$tmp_dir/etc-telemt"
     
     mkdir -p "$tmp_dir/services"
-    for s in xray hysteria-server xray-sub opera-proxy tor; do
+    for s in xray hysteria-server xray-sub opera-proxy tor telemt; do
         [[ -f "/etc/systemd/system/${s}.service" ]] && cp "/etc/systemd/system/${s}.service" "$tmp_dir/services/"
     done
 
@@ -5447,7 +5487,7 @@ restore_backup() {
     [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Отменено."; return 0; }
 
     echo "🛑 Остановка сервисов..."
-    systemctl stop xray hysteria-server xray-sub opera-proxy tor 2>/dev/null || true
+    systemctl stop xray hysteria-server xray-sub opera-proxy tor telemt 2>/dev/null || true
 
     local tmp_dir; tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' RETURN
@@ -5459,6 +5499,15 @@ restore_backup() {
     [[ -d "$tmp_dir/ssl-vless" ]] && { mkdir -p "$SSL_DIR"; cp -a "$tmp_dir/ssl-vless/." "$SSL_DIR/"; chown -R nobody:nogroup "$SSL_DIR"; chmod 755 "$SSL_DIR"; chmod 600 "$SSL_DIR"/private.key 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-hysteria" ]] && { mkdir -p /etc/hysteria; cp -a "$tmp_dir/etc-hysteria/." /etc/hysteria/; chmod 600 /etc/hysteria/config.yaml 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-tor" ]] && { mkdir -p /etc/tor; cp -a "$tmp_dir/etc-tor/." /etc/tor/; }
+    if [[ -d "$tmp_dir/etc-telemt" ]]; then
+        if ! id -u telemt >/dev/null 2>&1; then
+            useradd --system --no-create-home --shell /usr/sbin/nologin telemt 2>/dev/null || true
+        fi
+        mkdir -p /etc/telemt
+        cp -a "$tmp_dir/etc-telemt/." /etc/telemt/
+        chown -R telemt:telemt /etc/telemt 2>/dev/null || true
+        chmod 640 /etc/telemt/telemt.toml 2>/dev/null || true
+    fi
     if [[ -d "$tmp_dir/services" ]]; then
         cp -a "$tmp_dir/services/." /etc/systemd/system/ 2>/dev/null || true
         systemctl daemon-reload
@@ -5473,6 +5522,9 @@ restore_backup() {
     fi
     if [[ "$(get_installed_var "TOR_ENABLED")" == "true" ]]; then
         systemctl restart tor 2>/dev/null || true
+    fi
+    if [[ "$(get_installed_var "TELEMT_INSTALLED")" == "true" ]]; then
+        systemctl restart telemt 2>/dev/null || true
     fi
 
     echo -e "${GREEN}✅ Восстановление из резервной копии успешно завершено!${NC}"
@@ -6976,7 +7028,7 @@ EOF
             
             ui_section "📊  МОНИТОРИНГ И ДИАГНОСТИКА"
             ui_item "5" "📰 Просмотреть системные логи служб"
-            ui_item "6" "📈 Мониторинг активных соединений (порты 443 / 2053 / 8443)"
+            ui_item "6" "📈 Мониторинг активных соединений (порты 443 / 2053 / 8443 / 8444)"
             ui_item "7" "🛠️  Комплексная диагностика системы (Troubleshooting)"
             
             ui_section "⚙️  СЕРВЕР И БЕЗОПАСНОСТЬ"

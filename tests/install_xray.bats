@@ -272,3 +272,29 @@ print('OK')
     [ "$status" -eq 0 ]
 }
 
+@test "Скрипт поддерживает Telemt MTProto прокси на оптимальном порту 8444 с Fake-TLS" {
+    run grep "install_telemt()" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'default_port="8444"' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'telemt_menu()' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'TELEMT_FULL_SECRET' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Telemt интегрирован в резервное копирование и восстановление" {
+    run grep 'etc-telemt' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'systemctl stop xray hysteria-server xray-sub opera-proxy tor telemt' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+@test "Фаервол и AntiZapret поддерживают порт Telemt" {
+    run grep 'TELEMT_INSTALLED' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep 'tcp_ports=.*t_port' "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+}
+
+
