@@ -1263,7 +1263,6 @@ listen_addr_ipv4 = "0.0.0.0"
 
 [timeouts]
 client_handshake = 15
-tg_connect = 10
 client_keepalive = 60
 client_ack = 300
 
