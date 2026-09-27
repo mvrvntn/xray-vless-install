@@ -1332,29 +1332,55 @@ uninstall_psiphon() {
     echo -e "${GREEN}✅ Psiphon успешно удален из системы и маршрутизации!${NC}"
 }
 
-# === Проверка домена ===
+# === Проверка домена и привязки IP ===
 check_domain() {
-    echo "🔍 Проверка резолва домена..."
-    if ! getent hosts "$DOMAIN" >/dev/null; then
-        echo "⚠️ Локальное разрешение домена не удалось, выполняем резервную проверку через внешние DNS..."
-        local resolved_ip
-        
-        # Запрос к Cloudflare DNS-over-HTTPS напрямую по IP 1.1.1.1 (не требует работающего DNS на сервере)
-        resolved_ip=$(curl -sH "accept: application/dns-json" --connect-timeout 5 "https://1.1.1.1/dns-query?name=$DOMAIN&type=A" | python3 -c "import json, sys; print(json.load(sys.stdin).get('Answer', [{}])[0].get('data', ''))" 2>/dev/null)
-        if [[ "$resolved_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ℹ️ Внешняя проверка через 1.1.1.1 подтвердила IP домена: $resolved_ip"
-            return 0
-        fi
-        
-        # Запрос к Google DNS-over-HTTPS напрямую по IP 8.8.8.8
-        resolved_ip=$(curl -sH "accept: application/dns-json" --connect-timeout 5 "https://8.8.8.8/resolve?name=$DOMAIN&type=A" | python3 -c "import json, sys; print(json.load(sys.stdin).get('Answer', [{}])[0].get('data', ''))" 2>/dev/null)
-        if [[ "$resolved_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ℹ️ Внешняя проверка через 8.8.8.8 подтвердила IP домена: $resolved_ip"
-            return 0
-        fi
+    echo "🔍 Проверка резолва домена $DOMAIN..."
+    local resolved_ip=""
+    
+    # 1. Локальная попытка разрешения IPv4
+    resolved_ip=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1; exit}')
+    
+    # 2. Резервная проверка через DoH Cloudflare (1.1.1.1)
+    if [[ -z "$resolved_ip" || ! "$resolved_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        resolved_ip=$(curl -sH "accept: application/dns-json" --connect-timeout 5 "https://1.1.1.1/dns-query?name=$DOMAIN&type=A" 2>/dev/null | python3 -c "import json, sys; data=json.load(sys.stdin).get('Answer', []); print(next((x['data'] for x in data if x.get('type')==1), ''))" 2>/dev/null || true)
+    fi
+    
+    # 3. Резервная проверка через DoH Google (8.8.8.8)
+    if [[ -z "$resolved_ip" || ! "$resolved_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        resolved_ip=$(curl -sH "accept: application/dns-json" --connect-timeout 5 "https://8.8.8.8/resolve?name=$DOMAIN&type=A" 2>/dev/null | python3 -c "import json, sys; data=json.load(sys.stdin).get('Answer', []); print(next((x['data'] for x in data if x.get('type')==1), ''))" 2>/dev/null || true)
+    fi
 
-        echo "❌ Домен '$DOMAIN' не резолвится. Проверьте DNS-записи (A-запись должна указывать на IP этого сервера)."
+    if [[ -z "$resolved_ip" || ! "$resolved_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}❌ Домен '$DOMAIN' не резолвится в IPv4 адрес.${NC}"
+        echo -e "Проверьте DNS-записи (A-запись должна указывать на IP этого сервера) и подождите обновления DNS."
         exit 1
+    fi
+
+    echo -e "ℹ️ IP домена $DOMAIN: ${GREEN}$resolved_ip${NC}"
+
+    # Определение публичного IP сервера
+    local server_ip=""
+    server_ip=$(curl -s4 --connect-timeout 3 https://api.ipify.org 2>/dev/null \
+      || curl -s4 --connect-timeout 3 https://ifconfig.me 2>/dev/null \
+      || curl -s4 --connect-timeout 3 https://icanhazip.com 2>/dev/null \
+      || hostname -I 2>/dev/null | awk '{print $1}')
+    server_ip=$(echo "$server_ip" | tr -d '[:space:]')
+
+    if [[ -n "$server_ip" && "$server_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        if [[ "$resolved_ip" != "$server_ip" ]]; then
+            echo -e "\n${BOLD}${YELLOW}⚠️  ВНИМАНИЕ: Несовпадение IP адреса!${NC}"
+            echo -e "IP адрес в DNS ($DOMAIN): ${RED}$resolved_ip${NC}"
+            echo -e "Публичный IP этого сервера:   ${GREEN}$server_ip${NC}"
+            echo -e "${YELLOW}Если домен подключен через Cloudflare Proxy (оранжевое облако), Certbot завершится ошибкой."
+            echo -e "Для выпуска сертификата переключите режим в Cloudflare на 'DNS only' (серое облако).${NC}"
+            read -r -p "Продолжить выпуск сертификата на ваш страх и риск? [y/N]: " ip_override
+            if [[ ! "$ip_override" =~ ^[Yy]$ ]]; then
+                echo -e "${RED}❌ Прервано пользователем. Направьте A-запись $DOMAIN на $server_ip.${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${GREEN}✅ IP домена полностью совпадает с публичным IP сервера ($server_ip)${NC}"
+        fi
     fi
 }
 
@@ -3037,179 +3063,90 @@ CONFIG_DIR = "/etc/xray/client_configs"
 INSTALLED_FILE = "/etc/xray/.installed"
 
 DECOY_HTML = """<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Вход в Confluence</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ApexCloud Global Edge Networks | Distributed Cloud Infrastructure</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
-            background-color: #f4f5f7;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
+        :root {
+            --bg: #0b0f19;
+            --surface: #111827;
+            --border: #1f2937;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent: #2563eb;
+            --success: #10b981;
         }
-        .login-container {
-            background-color: white;
-            padding: 40px;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
-            width: 350px;
-            text-align: center;
-        }
-        .logo { margin-bottom: 20px; }
-        .logo img { width: 120px; }
-        h2 { margin-bottom: 20px; font-size: 24px; color: #0052cc; }
-        input[type="text"], input[type="password"] {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #dfe1e6;
-            border-radius: 4px;
-            box-sizing: border-box;
-            font-size: 16px;
-        }
-        .error { border-color: red; }
-        .error-message { color: red; font-size: 14px; display: none; margin-top: 10px; }
-        button {
-            width: 100%;
-            padding: 10px;
-            background-color: #0052cc;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            margin-top: 20px;
-        }
-        button:hover { background-color: #0747a6; }
-        .help-links { margin-top: 20px; font-size: 14px; }
-        .help-links a { color: #0052cc; text-decoration: none; }
-        .help-links a:hover { text-decoration: underline; }
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            overflow: auto;
-            background-color: rgba(0,0,0,0.4);
-            padding-top: 60px;
-        }
-        .modal-content {
-            background-color: white;
-            margin: 5% auto;
-            padding: 20px;
-            border: 1px solid #888;
-            width: 80%;
-            max-width: 400px;
-            border-radius: 8px;
-            text-align: center;
-        }
-        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
-        .close:hover, .close:focus { color: black; text-decoration: none; cursor: pointer; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        body { background: var(--bg); color: var(--text-main); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+        header { border-bottom: 1px solid var(--border); background: rgba(17,24,39,0.85); backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 100; }
+        .nav-wrap { max-width: 1200px; margin: 0 auto; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; text-decoration: none; }
+        .logo-badge { width: 12px; height: 12px; background: var(--accent); border-radius: 3px; }
+        .nav-links { display: flex; gap: 24px; list-style: none; }
+        .nav-links a { color: var(--text-muted); text-decoration: none; font-size: 0.95rem; }
+        .nav-links a:hover { color: #fff; }
+        main { flex: 1; max-width: 1200px; margin: 0 auto; padding: 60px 24px; }
+        .hero { text-align: center; max-width: 780px; margin: 0 auto 64px; }
+        .status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25); border-radius: 9999px; font-size: 0.85rem; font-weight: 500; color: #34d399; margin-bottom: 24px; }
+        .pulse { width: 8px; height: 8px; background: var(--success); border-radius: 50%; box-shadow: 0 0 8px var(--success); }
+        h1 { font-size: 2.5rem; font-weight: 800; line-height: 1.2; margin-bottom: 18px; letter-spacing: -0.02em; }
+        .hero-desc { font-size: 1.15rem; color: var(--text-muted); margin-bottom: 32px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 64px; }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; }
+        .card-icon { font-size: 1.5rem; margin-bottom: 14px; }
+        .card h3 { font-size: 1.15rem; font-weight: 600; margin-bottom: 8px; }
+        .card p { font-size: 0.92rem; color: var(--text-muted); }
+        .terminal-box { background: #06090e; border: 1px solid var(--border); border-radius: 10px; padding: 20px; font-family: ui-monospace, monospace; font-size: 0.88rem; color: #a5b4fc; text-align: left; }
+        footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; color: #6b7280; font-size: 0.85rem; background: var(--surface); }
     </style>
 </head>
 <body>
-<div class="login-container">
-    <div class="logo">
-        <img src="https://cdn.icon-icons.com/icons2/2429/PNG/512/confluence_logo_icon_147305.png" alt="Confluence">
-    </div>
-    <h2 id="login-title">Войти в Confluence</h2>
-    <form id="login-form">
-        <input type="text" id="username" name="username" placeholder="Адрес электронной почты">
-        <input type="password" id="password" name="password" placeholder="Введите пароль">
-        <button type="submit" id="login-button">Войти</button>
-    </form>
-    <div id="error-message" class="error-message">Неправильное имя пользователя или пароль.</div>
-    <div class="help-links">
-        <a href="#" id="forgot-link">Не удается войти?</a> • <a href="#" id="create-link">Создать аккаунт</a>
-    </div>
-</div>
-<div id="myModal" class="modal">
-    <div class="modal-content">
-        <span class="close">&times;</span>
-        <p id="modal-text">Для создания аккаунта обратитесь к администратору.</p>
-    </div>
-</div>
-<script>
-    function setLanguage(lang) {
-        const elements = {
-            "ru": {
-                loginTitle: "Войти в Confluence",
-                usernamePlaceholder: "Адрес электронной почты",
-                passwordPlaceholder: "Введите пароль",
-                loginButton: "Войти",
-                forgotLink: "Не удается войти?",
-                createLink: "Создать аккаунт",
-                createAccountText: "Для создания аккаунта обратитесь к администратору.",
-                forgotPasswordText: "Для восстановления доступа обратитесь к администратору.",
-                errorMessage: "Неправильное имя пользователя или пароль."
-            },
-            "en": {
-                loginTitle: "Login to Confluence",
-                usernamePlaceholder: "Email address",
-                passwordPlaceholder: "Enter password",
-                loginButton: "Login",
-                forgotLink: "Can't log in?",
-                createLink: "Create an account",
-                createAccountText: "To create an account, please contact your administrator.",
-                forgotPasswordText: "To recover access, please contact your administrator.",
-                errorMessage: "Incorrect username or password."
-            }
-        };
-        document.getElementById('login-title').innerText = elements[lang].loginTitle;
-        document.getElementById('username').placeholder = elements[lang].usernamePlaceholder;
-        document.getElementById('password').placeholder = elements[lang].passwordPlaceholder;
-        document.getElementById('login-button').innerText = elements[lang].loginButton;
-        document.getElementById('forgot-link').innerText = elements[lang].forgotLink;
-        document.getElementById('create-link').innerText = elements[lang].createLink;
-        document.getElementById('create-link').dataset.modalText = elements[lang].createAccountText;
-        document.getElementById('forgot-link').dataset.modalText = elements[lang].forgotPasswordText;
-        document.getElementById('error-message').innerText = elements[lang].errorMessage;
-    }
-    function detectLanguage() {
-        const userLang = navigator.language || navigator.userLanguage;
-        if (userLang.startsWith('ru')) { setLanguage('ru'); } else { setLanguage('en'); }
-    }
-    document.addEventListener('DOMContentLoaded', detectLanguage);
-    var modal = document.getElementById("myModal");
-    var span = document.getElementsByClassName("close")[0];
-    function openModal(text) {
-        document.getElementById('modal-text').innerText = text;
-        modal.style.display = "block";
-    }
-    document.getElementById("create-link").onclick = function(event) {
-        event.preventDefault();
-        openModal(this.dataset.modalText);
-    }
-    document.getElementById("forgot-link").onclick = function(event) {
-        event.preventDefault();
-        openModal(this.dataset.modalText);
-    }
-    span.onclick = function() { modal.style.display = "none"; }
-    window.onclick = function(event) {
-        if (event.target == modal) { modal.style.display = "none"; }
-    }
-    document.getElementById('login-form').onsubmit = function(event) {
-        event.preventDefault();
-        var username = document.getElementById('username');
-        var password = document.getElementById('password');
-        var errorMessage = document.getElementById('error-message');
-        username.classList.remove('error');
-        password.classList.remove('error');
-        errorMessage.style.display = 'none';
-        var hasError = false;
-        if (username.value.trim() === '') { username.classList.add('error'); hasError = true; }
-        if (password.value.trim() === '') { password.classList.add('error'); hasError = true; }
-        if (hasError) { return; }
-        errorMessage.style.display = 'block';
-    };
-</script>
+    <header>
+        <div class="nav-wrap">
+            <a href="/" class="logo"><div class="logo-badge"></div> ApexCloud Networks</a>
+            <ul class="nav-links">
+                <li><a href="#services">Services</a></li>
+                <li><a href="#status">Live Status</a></li>
+            </ul>
+        </div>
+    </header>
+    <main>
+        <div class="hero">
+            <div class="status-pill"><div class="pulse"></div> Tier 4 Edge PoP &bull; 100% SLA Operational</div>
+            <h1>Next-Generation Anycast Edge & Distributed Infrastructure</h1>
+            <p class="hero-desc">Ultra-low latency global transport fabric, automated TLS edge termination, and hardware-accelerated packet filtering designed for mission-critical enterprise workloads.</p>
+        </div>
+        <div class="grid" id="services">
+            <div class="card">
+                <div class="card-icon">&#9889;</div>
+                <h3>Anycast BGP Edge Routing</h3>
+                <p>Global multi-homed BGP routing with sub-millisecond edge response, automatic failover, and carrier-grade transit integration.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon">&#128737;</div>
+                <h3>Hardware Layer 4/7 Shield</h3>
+                <p>Real-time autonomous threat filtering with stateful SYN flood mitigation, automated TLS handshake validation, and line-rate inspection.</p>
+            </div>
+            <div class="card">
+                <div class="card-icon">&#128279;</div>
+                <h3>Zero-Trust Telemetry</h3>
+                <p>High-frequency telemetry pipelines providing end-to-end trace collection, latency profiling, and encrypted service meshes.</p>
+            </div>
+        </div>
+        <div class="terminal-box">
+            $ curl -I https://edge-node.internal/v1/health<br>
+            HTTP/2 200 OK<br>
+            server: nginx/1.24.0<br>
+            x-pop-region: global-anycast<br>
+            x-acceleration: kernel-ebpf<br>
+            x-health-status: healthy
+        </div>
+    </main>
+    <footer>
+        &copy; 2026 ApexCloud Global Networks LLC. All rights reserved. ISO/IEC 27001 Certified Infrastructure.
+    </footer>
 </body>
 </html>"""
 
@@ -4891,6 +4828,7 @@ HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:20443?sni=${DOMAIN}&hop=20000-50
 VLESS_XHTTP="vless://${UUID}@${DOMAIN}:8443?encryption=none&security=tls&type=xhttp&path=%2Fxhttp&mode=auto&fp=${FINGERPRINT}&alpn=h2%2Chttp%2F1.1&sni=${DOMAIN}&host=${DOMAIN}#${encoded_remark_xhttp}"
 VLESS_GRPC="vless://${UUID}@${DOMAIN}:2053?encryption=none&security=tls&type=grpc&serviceName=vless-grpc&service_name=vless-grpc&mode=multi&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
+HAPP_URL="happ://add/${SUBSCRIPTION_URL}"
 
 if [[ "$REALITY_ENABLED" = "true" ]]; then
   VLESS_REALITY="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=reality&sni=${REALITY_SNI}&pbk=${REALITY_PBK}&sid=${REALITY_SID}&fp=${FINGERPRINT}&type=tcp#${encoded_remark_reality}"
@@ -4911,11 +4849,13 @@ echo -e " ${BOLD}${YELLOW}5. VLESS Reality (Маскировка ${REALITY_SNI})
 echo -e "    ${GREEN}$VLESS_REALITY${NC}"
 fi
 
-echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (импорт в клиент):${NC}"
+echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (универсальная):${NC}"
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
+echo -e " ${BOLD}${YELLOW}⚡ Быстрое добавление в HAPP (1 клик):${NC}"
+echo -e "    ${GREEN}$HAPP_URL${NC}"
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}💡 Рекомендации по настройке клиентов:${NC}"
-echo -e "   • ${YELLOW}INCY:${NC} В Настройки → Туннель → VPN DNS выберите 'Google' или 'Cloudflare'"
+echo -e "   • ${YELLOW}INCY / HAPP:${NC} В Настройки → Туннель → VPN DNS выберите 'Google' или 'Cloudflare'"
 echo -e "     (не 'Internal'), чтобы корректно применялись правила роутинга и анти-реклама."
 echo -e "   • ${YELLOW}Мобильные сети (LTE/5G):${NC} Если зависают тяжелые видео (TG/Insta),"
 echo -e "     выставите в настройках туннеля MTU = 1280 (фикс PMTU black hole)."
@@ -4930,9 +4870,11 @@ echo -e " ${BOLD}${YELLOW}3.${NC} VLESS XHTTP TLS (порт 8443)"
 echo -e " ${BOLD}${YELLOW}4.${NC} VLESS gRPC TLS (порт 2053)"
 if [[ "$REALITY_ENABLED" = "true" ]]; then
 echo -e " ${BOLD}${YELLOW}5.${NC} VLESS Reality"
-echo -e " ${BOLD}${YELLOW}6.${NC} Ссылка подписки"
+echo -e " ${BOLD}${YELLOW}6.${NC} Ссылка подписки (https://)"
+echo -e " ${BOLD}${YELLOW}7.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
 else
-echo -e " ${BOLD}${YELLOW}5.${NC} Ссылка подписки"
+echo -e " ${BOLD}${YELLOW}5.${NC} Ссылка подписки (https://)"
+echo -e " ${BOLD}${YELLOW}6.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
 fi
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 read -r -p "Ваш выбор: " qr_choice
@@ -4944,6 +4886,7 @@ if [[ "$REALITY_ENABLED" = "true" ]]; then
     4) qrencode -t UTF8 "$VLESS_GRPC" ;;
     5) qrencode -t UTF8 "$VLESS_REALITY" ;;
     6) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    7) qrencode -t UTF8 "$HAPP_URL" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
 else
@@ -4953,6 +4896,7 @@ else
     3) qrencode -t UTF8 "$VLESS_XHTTP" ;;
     4) qrencode -t UTF8 "$VLESS_GRPC" ;;
     5) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    6) qrencode -t UTF8 "$HAPP_URL" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
 fi
@@ -5947,7 +5891,7 @@ EOF
 
         manage_decoy_menu() {
             local decoy_file="/etc/xray/decoy.html"
-            local decoy_status="${CYAN}Стандартная страница Confluence (Java-заглушка)${NC}"
+            local decoy_status="${CYAN}Стандартный облачный лендинг (ApexCloud)${NC}"
             if [[ -s "$decoy_file" ]]; then
                 local decoy_size; decoy_size=$(du -h "$decoy_file" 2>/dev/null | cut -f1)
                 decoy_status="${GREEN}Пользовательский HTML ($decoy_size)${NC}"
@@ -5959,7 +5903,7 @@ EOF
             ui_divider
             ui_item "1" "📥 Клонировать реальный сайт по URL в камуфляж"
             ui_item "2" "✍️  Сгенерировать стильную визитку/лендинг (ввод названия и описания)"
-            ui_item "3" "🧹 Сбросить на стандартную страницу Confluence"
+            ui_item "3" "🧹 Сбросить на стандартный облачный лендинг ApexCloud"
             ui_item "4" "🚀 Установить готовый реалистичный бизнес/tech-шаблон Selfsteal"
             ui_divider
             ui_item "0" "↩️ Назад в меню SSL и домена" "${CYAN}"
@@ -6032,7 +5976,7 @@ EOF
                 3)
                     rm -f "$decoy_file"
                     systemctl restart xray-sub 2>/dev/null || true
-                    echo -e "${GREEN}✅ Камуфляж сброшен на стандартную страницу Confluence.${NC}"
+                    echo -e "${GREEN}✅ Камуфляж сброшен на стандартный облачный лендинг ApexCloud.${NC}"
                     sleep 1.5
                     manage_decoy_menu
                     ;;
