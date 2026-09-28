@@ -3305,6 +3305,14 @@ EOF
     mkdir -p /etc/xray
     ln -sf "$config_file" /etc/xray/config.json 2>/dev/null || true
 
+    # Обеспечиваем корректные права на SSL-директорию и ключи
+    if [[ -d "$SSL_DIR" ]]; then
+        chown -R nobody:nogroup "$SSL_DIR" 2>/dev/null || true
+        chmod 755 "$SSL_DIR" 2>/dev/null || true
+        [[ -f "$SSL_DIR/fullchain.cer" ]] && chmod 644 "$SSL_DIR/fullchain.cer" 2>/dev/null || true
+        [[ -f "$SSL_DIR/private.key" ]] && chmod 644 "$SSL_DIR/private.key" 2>/dev/null || true
+    fi
+
     if command -v /usr/local/bin/xray &>/dev/null; then
         if ! /usr/local/bin/xray run -test -config "$config_file" >/dev/null 2>&1; then
             echo -e "${RED}❌ Ошибка в сгенерированной конфигурации Xray!${NC}"
@@ -5308,8 +5316,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=nobody
-Group=nogroup
+User=root
 ExecStart=$py_path $SUB_SERVER_SCRIPT
 Restart=always
 
