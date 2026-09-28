@@ -1971,9 +1971,10 @@ create_directories() {
     chmod 755 "$CLIENT_CONFIG_DIR"
     mkdir -p "/etc/xray"
     chmod 755 /etc/xray
-    touch /var/log/xray/{access.log,error.log}
-    chown -R nobody:nogroup /var/log/xray
-    chmod -R 755 /var/log/xray
+    touch /var/log/xray/access.log /var/log/xray/error.log
+    chown -R nobody:nogroup /var/log/xray 2>/dev/null || true
+    chmod 777 /var/log/xray 2>/dev/null || true
+    chmod 666 /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
 }
 
 # === Установка зависимостей ===
@@ -2012,6 +2013,42 @@ EOF
         echo "net.ipv4.tcp_notsent_lowat=16384" >> /etc/sysctl.conf
     fi
     sysctl -p > /dev/null 2>&1 || true
+}
+
+# === Гарантированная конфигурация службы Xray (Systemd) ===
+ensure_xray_service() {
+    # Удаляем любые дроп-ины systemd, навязывающие User=nobody или конфликтующие с чистым запуском
+    rm -rf /etc/systemd/system/xray.service.d /etc/systemd/system/xray@.service.d /lib/systemd/system/xray.service.d 2>/dev/null || true
+
+    # Обеспечиваем права на логи Xray (777 на директорию, 666 на файлы)
+    mkdir -p /var/log/xray
+    touch /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
+    chmod 777 /var/log/xray 2>/dev/null || true
+    chmod 666 /var/log/xray/access.log /var/log/xray/error.log 2>/dev/null || true
+    chown -R root:root /var/log/xray 2>/dev/null || true
+
+    cat << 'EOF' > /etc/systemd/system/xray.service
+[Unit]
+Description=Xray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=root
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable xray >/dev/null 2>&1 || true
 }
 
 # === Установка Xray (Официальное XTLS или Оптимизированный форк Jolymmiles) ===
@@ -2057,10 +2094,9 @@ install_xray() {
                     [[ -f "$tmp_dir/geoip.dat" ]] && mv -f "$tmp_dir/geoip.dat" /usr/local/share/xray/
                     [[ -f "$tmp_dir/geosite.dat" ]] && mv -f "$tmp_dir/geosite.dat" /usr/local/share/xray/
                     update_marker_val "XRAY_CORE_SOURCE" "jolymmiles"
-                    systemctl start xray >/dev/null 2>&1 || systemctl restart xray >/dev/null 2>&1 || true
-                    systemctl enable xray >/dev/null 2>&1 || true
+                    ensure_xray_service
                     local xray_v; xray_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
-                    echo -e "${GREEN}✅ Xray ядро (Jolymmiles fork) успешно установлено и запущено: $xray_v${NC}"
+                    echo -e "${GREEN}✅ Xray ядро (Jolymmiles fork) успешно установлено: $xray_v${NC}"
                 else
                     echo -e "${RED}❌ Ошибка валидации бинарного файла Xray. Откат...${NC}"
                 fi
@@ -2080,34 +2116,15 @@ install_xray() {
         bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --beta
         bash -c "$(curl -fsSL --connect-timeout 15 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install-geodata >/dev/null 2>&1 || true
         update_marker_val "XRAY_CORE_SOURCE" "xtls"
-        systemctl enable xray >/dev/null 2>&1 || true
+        ensure_xray_service
         local xray_v; xray_v=$(/usr/local/bin/xray version 2>/dev/null | head -n 1)
         echo -e "${GREEN}✅ Официальное ядро Xray обновлено: $xray_v${NC}"
     fi
 
-    # Гарантируем наличие корректного systemd сервиса
-    cat << 'EOF' > /etc/systemd/system/xray.service
-[Unit]
-Description=Xray Service
-Documentation=https://github.com/xtls
-After=network.target nss-lookup.target
-
-[Service]
-User=root
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
-Restart=on-failure
-RestartPreventExitStatus=23
-LimitNPROC=10000
-LimitNOFILE=1000000
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        systemctl daemon-reload >/dev/null 2>&1 || true
-        systemctl enable xray >/dev/null 2>&1 || true
+    ensure_xray_service
+    if [[ -f "/usr/local/etc/xray/config.json" ]]; then
+        systemctl restart xray >/dev/null 2>&1 || true
+    fi
 }
 
 # === Установка Hysteria 2 ===
@@ -3313,6 +3330,9 @@ EOF
         [[ -f "$SSL_DIR/private.key" ]] && chmod 644 "$SSL_DIR/private.key" 2>/dev/null || true
     fi
 
+    # Обеспечиваем корректную службу и права на логи Xray
+    ensure_xray_service
+
     if command -v /usr/local/bin/xray &>/dev/null; then
         if ! /usr/local/bin/xray run -test -config "$config_file" >/dev/null 2>&1; then
             echo -e "${RED}❌ Ошибка в сгенерированной конфигурации Xray!${NC}"
@@ -3322,6 +3342,7 @@ EOF
     fi
 
     systemctl restart xray
+    sleep 1
     if ! systemctl is-active --quiet xray; then
         echo -e "${RED}❌ Служба Xray не смогла запуститься после применения конфигурации!${NC}"
         journalctl -u xray -n 25 --no-pager 2>/dev/null || true
