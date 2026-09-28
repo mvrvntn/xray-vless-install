@@ -21,16 +21,13 @@ jobs:
           scandir: '.'
           severity: warning
 
+      - name: Validate Bash Syntax
+        run: |
+          bash -n install_xray.sh
+
       - name: Validate Embedded Python Syntax
         run: |
-          python3 -c "
-          import re, ast
-          with open('install_xray.sh', 'r', encoding='utf-8') as f:
-              content = f.read()
-          blocks = re.findall(r'python3\s+<<\s*[\'\"]?EOF[\'\"]?\s*\n(.*?)\nEOF', content, re.DOTALL)
-          for i, block in enumerate(blocks):
-              ast.parse(block)
-          "
+          python3 tests/validate_embedded_python.py
 
       - name: Setup Bats and Run Tests
         run: |

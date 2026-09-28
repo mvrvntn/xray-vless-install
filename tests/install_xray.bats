@@ -48,8 +48,16 @@ setup() {
 }
 
 @test "Скрипт содержит строго LF окончания строк (без CRLF)" {
-    run grep -U $'\r' "$SCRIPT_PATH"
+    run grep -q $'\r' "$SCRIPT_PATH"
     [ "$status" -ne 0 ]
+}
+
+@test "Встроенный Python-код подписок проходит валидацию AST" {
+    if ! command -v python3 &> /dev/null; then
+        skip "python3 не установлен"
+    fi
+    run python3 "${BATS_TEST_DIRNAME}/validate_embedded_python.py"
+    [ "$status" -eq 0 ]
 }
 
 @test "Скрипт содержит конфигурацию VLESS XHTTP на порту 8443" {

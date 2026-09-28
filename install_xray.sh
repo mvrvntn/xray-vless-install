@@ -61,12 +61,18 @@ log_error() {
 }
 
 cleanup() {
+    local sig="${1:-INT}"
     trap - SIGINT SIGTERM
     echo -ne "${NC}\n" # Сброс цвета консоли
-    log_info "Скрипт прерван сигналом (SIGINT/SIGTERM)."
+    log_info "Скрипт прерван сигналом SIG$sig."
+    pkill -P $$ 2>/dev/null || true
+    if [[ "$sig" == "TERM" ]]; then
+        exit 143
+    fi
     exit 130
 }
-trap 'cleanup' SIGINT SIGTERM
+trap 'cleanup INT' SIGINT
+trap 'cleanup TERM' SIGTERM
 
 usage() {
     cat <<EOF
@@ -197,16 +203,24 @@ EOF
             local free_space_mb
             free_space_mb="$(LANG=C df -BM / 2>/dev/null | awk 'NR==2 {gsub(/M/,"",$4); print $4}')"
             if [[ "${free_space_mb:-0}" -ge 4000 ]]; then
+                local swap_ok=false
                 if [[ ! -f /swapfile ]]; then
                     if ! fallocate -l 2G /swapfile 2>/dev/null; then
-                        dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+                        dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none 2>/dev/null || true
                     fi
                     chmod 600 /swapfile
-                    mkswap /swapfile >/dev/null 2>&1
+                    if mkswap /swapfile >/dev/null 2>&1; then
+                        swap_ok=true
+                    fi
+                else
+                    swap_ok=true
                 fi
-                swapon -p -2 /swapfile 2>/dev/null || true
-                echo "/swapfile   none    swap    sw,pri=-2    0   0" >> /etc/fstab
-                echo -e "${GREEN}[✓] Disk Swap 2GB создан с приоритетом -2.${NC}"
+                if [[ "$swap_ok" == "true" ]] && swapon -p -2 /swapfile 2>/dev/null; then
+                    echo "/swapfile   none    swap    sw,pri=-2    0   0" >> /etc/fstab
+                    echo -e "${GREEN}[✓] Disk Swap 2GB создан с приоритетом -2.${NC}"
+                else
+                    echo -e "${YELLOW}[!] Не удалось инициализировать или подключить swapfile.${NC}"
+                fi
             else
                 echo -e "${YELLOW}[!] Свободного места на диске менее 4GB (${free_space_mb:-0}MB). Создание swapfile пропущено.${NC}"
             fi
@@ -391,14 +405,8 @@ EOF
     tcp_mem_def=$(( total_pages * 3 / 8 ))
     tcp_mem_max=$(( total_pages * 3 / 4 ))
 
-    # Удаляем все старые и конфликтующие файлы от прошлых оптимизаторов
-    rm -f /etc/sysctl.d/99-*.conf /etc/sysctl.d/98-*.conf 2>/dev/null || true
-    if [[ -f /etc/sysctl.conf ]]; then
-        local bak_sysctl
-        bak_sysctl="/etc/sysctl.conf.bak.$(date +%Y%m%d%H%M%S)"
-        cp /etc/sysctl.conf "$bak_sysctl" 2>/dev/null || true
-    fi
-    echo "# Все оптимизации перенесены в /etc/sysctl.d/99-zzz-node-optimization.conf" > /etc/sysctl.conf
+    # Обновляем только собственный конфигурационный файл оптимизаций
+    rm -f /etc/sysctl.d/99-zzz-node-optimization.conf 2>/dev/null || true
 
     cat << EOF > /etc/sysctl.d/99-zzz-node-optimization.conf
 # Forwarding
@@ -409,6 +417,7 @@ net.ipv4.conf.default.forwarding = 1
 # QDisc & BBR
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_notsent_lowat = 16384
 
 # Limits & Buffers (До 32MB на сокет под Reality, Vision и Hysteria2)
 fs.file-max = 67108864
@@ -520,15 +529,19 @@ EOF
     # Внедряем персистентность PMTU Clamp в /etc/ufw/before.rules (сохраняется при перезагрузке)
     UFW_BEFORE="/etc/ufw/before.rules"
     if [[ -f "$UFW_BEFORE" ]]; then
-        sed -i -E '/^\*mangle/,/^COMMIT/d' "$UFW_BEFORE" 2>/dev/null || true
-        cat << 'EOF' >> "$UFW_BEFORE"
+        local begin_pmtu="# BEGIN TCP MSS CLAMPING"
+        local end_pmtu="# END TCP MSS CLAMPING"
+        local tmp_pmtu; tmp_pmtu=$(mktemp)
+        awk -v b="$begin_pmtu" -v e="$end_pmtu" '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$UFW_BEFORE" > "$tmp_pmtu" && mv "$tmp_pmtu" "$UFW_BEFORE"
 
+        cat << EOF >> "$UFW_BEFORE"
+
+$begin_pmtu
 *mangle
-:FORWARD ACCEPT [0:0]
 :POSTROUTING ACCEPT [0:0]
--A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 COMMIT
+$end_pmtu
 EOF
     fi
     echo -e "${GREEN}[✓] TCP MSS Clamping применен и сохранен в автозагрузку UFW.${NC}"
@@ -799,7 +812,7 @@ case "${1:-}" in
         echo "$SCRIPT_NAME version 1.0.0"
         exit 0
         ;;
-    --optimize|--renew-cert|--update-core|--update-geoblocks|--auto-tune|--clean-disk|--disk-analysis|--headless|--backup|--restore|"")
+    --optimize|--renew-cert|--update-script|--update-core|--update-geoblocks|--auto-tune|--clean-disk|--disk-analysis|--headless|--backup|--restore|"")
         # Допустимые режимы работы (требуют root)
         ;;
     -*)
@@ -1370,7 +1383,7 @@ uninstall_telemt() {
     update_marker_val "TELEMT_ENABLED" "false"
     update_marker_val "TELEMT_FULL_SECRET" ""
 
-    install_generate_script
+    [[ "${1:-}" != "--skip-gen" ]] && install_generate_script
     echo -e "${GREEN}✅ Telemt полностью удален с сервера!${NC}"
     sleep 1.5
 }
@@ -1787,7 +1800,7 @@ check_domain() {
     if [[ -z "$resolved_ip" || ! "$resolved_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo -e "${RED}❌ Домен '$DOMAIN' не резолвится в IPv4 адрес.${NC}"
         echo -e "Проверьте DNS-записи (A-запись должна указывать на IP этого сервера) и подождите обновления DNS."
-        exit 1
+        return 1
     fi
 
     echo -e "ℹ️ IP домена $DOMAIN: ${GREEN}$resolved_ip${NC}"
@@ -1810,7 +1823,7 @@ check_domain() {
             read -r -p "Продолжить выпуск сертификата на ваш страх и риск? [y/N]: " ip_override
             if [[ ! "$ip_override" =~ ^[Yy]$ ]]; then
                 echo -e "${RED}❌ Прервано пользователем. Направьте A-запись $DOMAIN на $server_ip.${NC}"
-                exit 1
+                return 1
             fi
         else
             echo -e "${GREEN}✅ IP домена полностью совпадает с публичным IP сервера ($server_ip)${NC}"
@@ -1822,7 +1835,7 @@ check_domain() {
 check_port_conflicts() {
     echo "🔍 Проверка конфликтов портов 80/443..."
     # Проверка порта 443
-    if ss -tln | grep -qE ':(443)(\s|$)'; then
+    if ss -tlnH 'sport = :443' 2>/dev/null | grep -q . || ss -tln 2>/dev/null | grep -qE ':(443)([[:space:]]|$)'; then
         local port_443_pid; port_443_pid=$(ss -tlnp 'sport = :443' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
         local port_443_process=""
         if [[ -n "$port_443_pid" ]]; then
@@ -1842,12 +1855,12 @@ check_port_conflicts() {
             fi
         else
             echo "Установка отменена пользователем."
-            exit 1
+            return 1
         fi
     fi
 
     # Проверка порта 80
-    if ss -tln | grep -qE ':(80)(\s|$)'; then
+    if ss -tlnH 'sport = :80' 2>/dev/null | grep -q . || ss -tln 2>/dev/null | grep -qE ':(80)([[:space:]]|$)'; then
         local port_80_pid; port_80_pid=$(ss -tlnp 'sport = :80' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
         local port_80_process=""
         if [[ -n "$port_80_pid" ]]; then
@@ -1866,12 +1879,12 @@ check_port_conflicts() {
             fi
         else
             echo "Установка отменена пользователем."
-            exit 1
+            return 1
         fi
     fi
 
     # Проверка порта 8443 (VLESS XHTTP)
-    if ss -tln | grep -qE ':(8443)(\s|$)'; then
+    if ss -tlnH 'sport = :8443' 2>/dev/null | grep -q . || ss -tln 2>/dev/null | grep -qE ':(8443)([[:space:]]|$)'; then
         local port_8443_pid; port_8443_pid=$(ss -tlnp 'sport = :8443' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
         local port_8443_process=""
         if [[ -n "$port_8443_pid" ]]; then
@@ -1890,12 +1903,12 @@ check_port_conflicts() {
             fi
         else
             echo "Установка отменена пользователем."
-            exit 1
+            return 1
         fi
     fi
 
     # Проверка порта 2053 (VLESS gRPC)
-    if ss -tln | grep -qE ':(2053)(\s|$)'; then
+    if ss -tlnH 'sport = :2053' 2>/dev/null | grep -q . || ss -tln 2>/dev/null | grep -qE ':(2053)([[:space:]]|$)'; then
         local port_2053_pid; port_2053_pid=$(ss -tlnp 'sport = :2053' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
         local port_2053_process=""
         if [[ -n "$port_2053_pid" ]]; then
@@ -1914,7 +1927,7 @@ check_port_conflicts() {
             fi
         else
             echo "Установка отменена пользователем."
-            exit 1
+            return 1
         fi
     fi
 }
@@ -2072,8 +2085,8 @@ install_xray() {
         echo -e "${GREEN}✅ Официальное ядро Xray обновлено: $xray_v${NC}"
     fi
 
-    # Гарантируем наличие systemd сервиса
-    if [[ ! -f /etc/systemd/system/xray.service ]]; then
+    # Гарантируем наличие корректного systemd сервиса
+    if [[ ! -f /etc/systemd/system/xray.service ]] || grep -q '/etc/xray/config.json' /etc/systemd/system/xray.service 2>/dev/null; then
         cat << 'EOF' > /etc/systemd/system/xray.service
 [Unit]
 Description=Xray Service
@@ -2085,7 +2098,7 @@ User=root
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
+ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
 Restart=on-failure
 RestartPreventExitStatus=23
 LimitNPROC=10000
@@ -2215,6 +2228,8 @@ setup_firewall() {
                 printf '%s\n*nat\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443\nCOMMIT\n%s\n' "$begin" "$end"
                 tail -n "+${ln}" "$rules"
             } > "$tmp" && mv "$tmp" "$rules"
+        else
+            printf '\n%s\n*nat\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443\nCOMMIT\n%s\n' "$begin" "$end" >> "$rules"
         fi
     }
     setup_hy2_port_hopping_ufw
@@ -2414,7 +2429,9 @@ generate_server_config() {
     else
         # Генерация уникальных UUID для каждого устройства (первоначальная установка)
         for ((i=1; i<=NUM_DEVICES; i++)); do
-            local uuid; uuid=$(xray uuid)
+            local uuid; uuid=$(/usr/local/bin/xray uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || true)
+            uuid=$(echo "$uuid" | tr -d '[:space:]')
+            [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo -e "${RED}❌ Не удалось сгенерировать валидный UUID${NC}"; return 1; }
             UUIDs[$i]="$uuid"
             
             vless_clients+=("{
@@ -2440,8 +2457,9 @@ generate_server_config() {
     local tor_enabled; tor_enabled=$(get_installed_var "TOR_ENABLED")
     local DOMAIN; DOMAIN=$(get_installed_var "DOMAIN" | tr -d '[:space:]')
     
-    # Загружаем настройки Reality (Принудительно отключено для стабильности)
-    local reality_enabled="false"
+    # Загружаем настройки Reality
+    local reality_enabled; reality_enabled=$(get_installed_var "REALITY_ENABLED")
+    [[ -z "$reality_enabled" ]] && reality_enabled="false"
     local reality_sni; reality_sni=$(get_installed_var "REALITY_SNI" | tr -d '[:space:]')
     local reality_dest; reality_dest=$(get_installed_var "REALITY_DEST" | tr -d '[:space:]')
     local reality_priv; reality_priv=$(get_installed_var "REALITY_PRIVATE_KEY" | tr -d '[:space:]')
@@ -2859,20 +2877,20 @@ EOF
       }")
             fi
         fi
+    fi
 
-        local check_domains=()
-        for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io ipinfo.net ip.sb whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me v4.ident.me checkip.amazonaws.com checkip.dyndns.org test-ipv6.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com webrtc.org; do
-            check_domains+=("\"domain:$dom\"")
-        done
-        local check_domains_joined; check_domains_joined=$(IFS=,; echo "${check_domains[*]}")
-        routing_rules_list+=("{
+    local check_domains=()
+    for dom in whoer.net browserleaks.com 2ip.io 2ip.ru 2ip.ua ipleak.net ipinfo.io ipinfo.net ip.sb whatismyip.com whatismyipaddress.com iplocation.net dnsleaktest.com dnsleak.com am.i.mullvad.net myip.com myip.ru ip.me ifconfig.me ident.me v4.ident.me checkip.amazonaws.com checkip.dyndns.org test-ipv6.com ip-api.com ipify.org icanhazip.com ip-score.com doileak.com bash.ws f.vision amiunique.org deviceinfo.me coveryourtracks.eff.org showmyip.com ip8.com webrtc.org; do
+        check_domains+=("\"domain:$dom\"")
+    done
+    local check_domains_joined; check_domains_joined=$(IFS=,; echo "${check_domains[*]}")
+    routing_rules_list+=("{
         \"type\": \"field\",
         \"domain\": [
           $check_domains_joined
         ],
         \"outboundTag\": \"DIRECT\"
       }")
-    fi
 
     local routing_rules_str; routing_rules_str=$(IFS=,; echo "${routing_rules_list[*]}")
     
@@ -3286,8 +3304,24 @@ EOF
 }
 EOF
 
+    mkdir -p /etc/xray
+    ln -sf "$config_file" /etc/xray/config.json 2>/dev/null || true
+
+    if command -v /usr/local/bin/xray &>/dev/null; then
+        if ! /usr/local/bin/xray run -test -config "$config_file" >/dev/null 2>&1; then
+            echo -e "${RED}❌ Ошибка в сгенерированной конфигурации Xray!${NC}"
+            /usr/local/bin/xray run -test -config "$config_file" || true
+            return 1
+        fi
+    fi
+
     systemctl restart xray
-    log_info "Restarted Xray service"
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}❌ Служба Xray не смогла запуститься после применения конфигурации!${NC}"
+        journalctl -u xray -n 25 --no-pager 2>/dev/null || true
+        return 1
+    fi
+    log_info "Restarted Xray service successfully"
 }
 
 # === Генерация конфигурации Hysteria 2 ===
@@ -3351,6 +3385,17 @@ EOF
     local iptables_path; iptables_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
     local ip6tables_path; ip6tables_path=$(command -v ip6tables 2>/dev/null || echo "/sbin/ip6tables")
 
+    local ip6_pre=""
+    local ip6_post=""
+    if [[ -x "$ip6tables_path" ]] && [[ -f /proc/net/if_inet6 ]] && [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)" != "1" ]]; then
+        ip6_pre=$(cat <<EOF6
+ExecStartPre=-/bin/sh -c "$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
+ExecStartPre=-$ip6tables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
+EOF6
+)
+        ip6_post="ExecStopPost=-/bin/sh -c \"$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true\""
+    fi
+
     cat > /etc/systemd/system/hysteria-server.service <<EOF
 [Unit]
 Description=Hysteria 2 Server
@@ -3361,12 +3406,11 @@ Type=simple
 User=root
 WorkingDirectory=/etc/hysteria
 ExecStartPre=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
-ExecStartPre=-/bin/sh -c "$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
+$ip6_pre
 ExecStartPre=-$iptables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
-ExecStartPre=-$ip6tables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
 ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/config.yaml
 ExecStopPost=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
-ExecStopPost=-/bin/sh -c "$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
+$ip6_post
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
@@ -3378,6 +3422,10 @@ EOF
     systemctl enable hysteria-server >/dev/null 2>&1
     
     systemctl restart hysteria-server
+    if ! systemctl is-active --quiet hysteria-server; then
+        echo -e "${YELLOW}⚠️ Служба Hysteria 2 не запустилась${NC}"
+        journalctl -u hysteria-server -n 15 --no-pager 2>/dev/null || true
+    fi
 }
 
 # === Генерация клиентских конфигов ===
@@ -4424,14 +4472,14 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                                 "visa.com",
                                 "mastercard.com"
                             ],
-                            "outbound": "→ Remnawave"
+                            "outbound": "PROXY"
                         },
                         {
                             "outbound": "direct",
                             "rule_set": ["ru-bundle"]
                         },
                         {
-                            "outbound": "→ Remnawave",
+                            "outbound": "PROXY",
                             "rule_set": [
                                 "discord-voice-ip-list",
                                 "geosite-tiktok",
@@ -4528,7 +4576,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 ],
                 "outbounds": [
                     {
-                        "tag": "→ Remnawave",
+                        "tag": "PROXY",
                         "type": "selector",
                         "outbounds": outbound_tags,
                         "interrupt_exist_connections": True
@@ -4552,9 +4600,9 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         "external_ui_download_detour": "direct"
                     },
                     "cache_file": {
-                        "path": "remnawave.db",
+                        "path": "singbox.db",
                         "enabled": True,
-                        "cache_id": "remnawave",
+                        "cache_id": "singbox",
                         "store_fakeip": True
                     }
                 }
@@ -4571,7 +4619,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     },
                     {
                         "tag": "ru-dns",
-                        "detour": "→ Remnawave",
+                        "detour": "PROXY",
                         "address": "https://77.88.8.8/dns-query",
                         "strategy": "ipv4_only",
                         "address_strategy": "prefer_ipv4"
@@ -4614,8 +4662,27 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     {"port": [25, 2525, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
                     {"outbound": "block", "rule_set": ["oisd-big"]},
                     {"port": [443], "network": ["udp"], "outbound": "block"},
-                    {"outbound": "→ Remnawave", "rule_set": ["ru-bundle"]},
+                    {"outbound": "PROXY", "rule_set": ["ru-bundle"]},
                     {"outbound": "direct"}
+                ]
+            elif routing_profile == "whitelist":
+                singbox_config["route"]["rules"] = [
+                    {"action": "sniff"},
+                    {
+                        "mode": "or",
+                        "type": "logical",
+                        "rules": [
+                            {"protocol": "dns"},
+                            {"port": 53}
+                        ],
+                        "action": "hijack-dns"
+                    },
+                    {"outbound": "direct", "ip_is_private": True},
+                    {"port": [25, 2525, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
+                    {"outbound": "block", "rule_set": ["oisd-big"]},
+                    {"port": [443], "network": ["udp"], "outbound": "block"},
+                    {"outbound": "PROXY", "rule_set": ["ru-bundle"]},
+                    {"outbound": "block"}
                 ]
             elif routing_profile == "off":
                 singbox_config["route"]["rules"] = [
@@ -4631,7 +4698,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     },
                     {"outbound": "direct", "ip_is_private": True},
                     {"port": [25, 2525, 135, 137, 138, 139, 445, 465, 587], "outbound": "block"},
-                    {"outbound": "→ Remnawave"}
+                    {"outbound": "PROXY"}
                 ]
 
             body = json.dumps(singbox_config, indent=2, ensure_ascii=False)
@@ -4823,7 +4890,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "balancers": [
                         {
                             "tag": "Super_Balancer",
-                            "selector": ["proxy"],
+                            "selector": ["proxy-", "proxy"],
                             "strategy": {
                                 "type": "leastPing"
                             },
@@ -4879,7 +4946,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         "protocol": "dns",
                         "streamSettings": {
                             "sockopt": {
-                                "dialerProxy": "proxy"
+                                "dialerProxy": outbounds_list[0]["tag"] if outbounds_list else "direct"
                             }
                         }
                     }
@@ -4895,6 +4962,16 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     {"type": "field", "domain": ["geosite:category-ru", "geosite:whitelist", "geosite:faceit"], "balancerTag": "Super_Balancer"},
                     {"type": "field", "ip": ["geoip:ru"], "balancerTag": "Super_Balancer"},
                     {"type": "field", "network": "tcp,udp", "outboundTag": "direct"}
+                ]
+            elif routing_profile == "whitelist":
+                xray_config["routing"]["rules"] = [
+                    {"port": 53, "type": "field", "outboundTag": "dns-out"},
+                    {"port": "25,2525,135,137,138,139,445,465,587", "type": "field", "network": "tcp,udp", "outboundTag": "block"},
+                    {"port": 443, "type": "field", "network": "udp", "outboundTag": "block"},
+                    {"type": "field", "domain": ["geosite:win-spy", "geosite:torrent", "geosite:category-ads"], "outboundTag": "block"},
+                    {"type": "field", "domain": ["geosite:category-ru", "geosite:whitelist"], "balancerTag": "Super_Balancer"},
+                    {"type": "field", "ip": ["geoip:ru"], "balancerTag": "Super_Balancer"},
+                    {"type": "field", "network": "tcp,udp", "outboundTag": "block"}
                 ]
             elif routing_profile == "off":
                 xray_config["routing"]["rules"] = [
@@ -5124,6 +5201,23 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                     "RULE-SET,category-ru,🛡️ VPN",
                     "GEOIP,RU,🛡️ VPN",
                     "MATCH,DIRECT"
+                ]
+            elif routing_profile == "whitelist":
+                clash_config["rules"] = [
+                    "DST-PORT,25,REJECT",
+                    "DST-PORT,2525,REJECT",
+                    "DST-PORT,135,REJECT",
+                    "DST-PORT,137,REJECT",
+                    "DST-PORT,138,REJECT",
+                    "DST-PORT,139,REJECT",
+                    "DST-PORT,445,REJECT",
+                    "DST-PORT,465,REJECT",
+                    "DST-PORT,587,REJECT",
+                    "AND,((NETWORK,udp),(PORT,443)),REJECT",
+                    "RULE-SET,private-domains,DIRECT",
+                    "RULE-SET,category-ru,🛡️ VPN",
+                    "GEOIP,RU,🛡️ VPN",
+                    "MATCH,REJECT"
                 ]
             elif routing_profile == "off":
                 clash_config["rules"] = [
@@ -5471,6 +5565,9 @@ create_backup() {
     [[ -d "/etc/hysteria" ]] && cp -a "/etc/hysteria" "$tmp_dir/etc-hysteria"
     [[ -f "/etc/tor/torrc" ]] && mkdir -p "$tmp_dir/etc-tor" && cp "/etc/tor/torrc" "$tmp_dir/etc-tor/"
     [[ -d "/etc/telemt" ]] && cp -a "/etc/telemt" "$tmp_dir/etc-telemt"
+    [[ -f "/etc/wireguard/warp.conf" ]] && mkdir -p "$tmp_dir/etc-wireguard" && cp -a "/etc/wireguard/warp.conf" "$tmp_dir/etc-wireguard/"
+    [[ -d "/etc/letsencrypt" ]] && cp -a "/etc/letsencrypt" "$tmp_dir/etc-letsencrypt"
+    crontab -l > "$tmp_dir/crontab.txt" 2>/dev/null || true
     
     mkdir -p "$tmp_dir/services"
     for s in xray hysteria-server xray-sub opera-proxy tor telemt; do
@@ -5542,6 +5639,9 @@ restore_backup() {
     [[ -d "$tmp_dir/ssl-vless" ]] && { mkdir -p "$SSL_DIR"; cp -a "$tmp_dir/ssl-vless/." "$SSL_DIR/"; chown -R nobody:nogroup "$SSL_DIR"; chmod 755 "$SSL_DIR"; chmod 600 "$SSL_DIR"/private.key 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-hysteria" ]] && { mkdir -p /etc/hysteria; cp -a "$tmp_dir/etc-hysteria/." /etc/hysteria/; chmod 600 /etc/hysteria/config.yaml 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-tor" ]] && { mkdir -p /etc/tor; cp -a "$tmp_dir/etc-tor/." /etc/tor/; }
+    [[ -d "$tmp_dir/etc-wireguard" ]] && { mkdir -p /etc/wireguard; cp -a "$tmp_dir/etc-wireguard/." /etc/wireguard/; chmod 600 /etc/wireguard/warp.conf 2>/dev/null || true; }
+    [[ -d "$tmp_dir/etc-letsencrypt" ]] && { mkdir -p /etc/letsencrypt; cp -a "$tmp_dir/etc-letsencrypt/." /etc/letsencrypt/; }
+    [[ -s "$tmp_dir/crontab.txt" ]] && crontab "$tmp_dir/crontab.txt" 2>/dev/null || true
     if [[ -d "$tmp_dir/etc-telemt" ]]; then
         if ! id -u telemt >/dev/null 2>&1; then
             useradd --system --no-create-home --shell /usr/sbin/nologin telemt 2>/dev/null || true
@@ -5570,6 +5670,15 @@ restore_backup() {
         systemctl restart telemt 2>/dev/null || true
     fi
 
+    echo "🔍 Проверка статуса служб после восстановления..."
+    for s in xray hysteria-server xray-sub; do
+        if systemctl is-active --quiet "$s" 2>/dev/null; then
+            echo -e "  • $s: 🟢 ${GREEN}ACTIVE${NC}"
+        else
+            echo -e "  • $s: 🔴 ${RED}FAILED / INACTIVE${NC}"
+        fi
+    done
+
     echo -e "${GREEN}✅ Восстановление из резервной копии успешно завершено!${NC}"
 }
 
@@ -5589,6 +5698,7 @@ main() {
             ;;
         --optimize)
             optimize_vps
+            exit 0
             ;;
         --renew-cert)
             renew_ssl_certificate --force
@@ -6113,7 +6223,9 @@ main() {
                 return
             fi
 
-            local new_uuid; new_uuid=$(xray uuid)
+            local new_uuid; new_uuid=$(/usr/local/bin/xray uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || true)
+            new_uuid=$(echo "$new_uuid" | tr -d '[:space:]')
+            [[ "$new_uuid" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "❌ Ошибка генерации UUID!"; return; }
             DOMAIN=$(get_installed_var "DOMAIN")
             local FINGERPRINT; FINGERPRINT=$(get_installed_var "FINGERPRINT")
             if [[ -z "$FINGERPRINT" ]]; then FINGERPRINT="random"; fi
@@ -6723,7 +6835,12 @@ EOF
                     
                     # Проверим резолв нового домена
                     local DOMAIN="$new_domain"
-                    check_domain
+                    if ! check_domain; then
+                        echo -e "\nНажмите Enter для возврата..."
+                        read -r
+                        ssl_and_domain_menu
+                        return
+                    fi
                     
                     # Временно остановим xray, чтобы освободить 80 порт для certbot
                     echo "🛑 Останавливаем службы для перевыпуска SSL..."
@@ -7672,11 +7789,19 @@ EOF
         uninstall_all() {
             echo "🧹 Удаление Xray и конфигураций..."
             
+            # Остановка и удаление службы подписок
             systemctl stop xray-sub >/dev/null 2>&1
             systemctl disable xray-sub >/dev/null 2>&1
             rm -f /etc/systemd/system/xray-sub.service
-            systemctl daemon-reload >/dev/null 2>&1
             rm -f "$SUB_SERVER_SCRIPT"
+
+            # Остановка и удаление Xray
+            systemctl stop xray >/dev/null 2>&1 || true
+            systemctl disable xray >/dev/null 2>&1 || true
+            rm -f /etc/systemd/system/xray.service
+            rm -f /usr/local/bin/xray
+            rm -rf /usr/local/share/xray
+            rm -f /usr/local/bin/xry
 
             # Удаление Cloudflare WARP
             systemctl stop wg-quick@warp >/dev/null 2>&1
@@ -7696,7 +7821,7 @@ EOF
             rm -f /etc/xray/opera.lst
 
             # Удаление Telemt MTProto proxy
-            uninstall_telemt >/dev/null 2>&1 || true
+            uninstall_telemt --skip-gen >/dev/null 2>&1 || true
 
             # Удаление Tor
             uninstall_tor >/dev/null 2>&1 || true
@@ -7715,7 +7840,11 @@ EOF
             [[ -n "${CLIENT_CONFIG_DIR:-}" ]] && rm -rf -- "$CLIENT_CONFIG_DIR"
             [[ -n "${SSL_DIR:-}" ]] && rm -rf -- "$SSL_DIR"
             [[ -n "${GENERATE_SCRIPT:-}" ]] && rm -f -- "$GENERATE_SCRIPT"
-            rm -f /var/log/xray/{access.log,error.log}
+            rm -rf /etc/xray
+            rm -rf /var/log/xray
+            rm -f /etc/sysctl.d/99-zzz-node-optimization.conf
+            rm -f /etc/sysctl.d/99-ipv6-toggle.conf
+            rm -f /etc/ssh/sshd_config.d/99-vpn-optimization.conf
             if crontab -l &>/dev/null; then
                 crontab -l | grep -v "certbot renew" | crontab -
             fi
@@ -7728,12 +7857,12 @@ EOF
             rm -f /usr/local/bin/hysteria
             systemctl daemon-reload >/dev/null 2>&1
 
-            ufw delete allow 443/tcp > /dev/null
-            ufw delete allow 2053/tcp > /dev/null
-            ufw delete allow 8443/tcp > /dev/null
-            ufw delete allow 443/udp > /dev/null
-            ufw delete allow 80/tcp > /dev/null
-            rm -f "$MARKER_FILE"
+            ufw delete allow 443/tcp > /dev/null 2>&1 || true
+            ufw delete allow 2053/tcp > /dev/null 2>&1 || true
+            ufw delete allow 8443/tcp > /dev/null 2>&1 || true
+            ufw delete allow 443/udp > /dev/null 2>&1 || true
+            ufw delete allow 80/tcp > /dev/null 2>&1 || true
+            rm -f "$MARKER_FILE" "$MARKER_FILE.bak"
             echo "✅ Удалено"
         }
 
@@ -7741,79 +7870,86 @@ EOF
         repaired=false
         if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
             repair_output=$(python3 -c '
-    import json, sys, os, uuid, re
-    domain = "domain.com"
-    try:
-        if os.path.exists("/etc/xray/.installed"):
-            with open("/etc/xray/.installed", "r") as inf:
-                for l in inf:
-                    if l.startswith("DOMAIN="):
-                        domain = l.split("=", 1)[1].strip()
-    except Exception:
-        pass
+import json, sys, os, uuid, re
+domain = "domain.com"
+try:
+    if os.path.exists("/etc/xray/.installed"):
+        with open("/etc/xray/.installed", "r") as inf:
+            for l in inf:
+                if l.startswith("DOMAIN="):
+                    domain = l.split("=", 1)[1].strip()
+except Exception:
+    pass
 
-    for filepath in sys.argv[1:]:
-        if not filepath.endswith(".json") or not os.path.exists(filepath):
-            continue
-        need_repair = False
-        data = {}
+for filepath in sys.argv[1:]:
+    if not filepath.endswith(".json") or not os.path.exists(filepath):
+        continue
+    need_repair = False
+    data = {}
+    try:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+        uid = data.get("id", "")
+        if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(uid), re.I):
+            need_repair = True
+    except Exception:
+        need_repair = True
+    
+    if not need_repair:
         try:
-            with open(filepath, "r") as f:
-                data = json.load(f)
-            uid = data.get("id", "")
-            if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(uid), re.I):
+            if "outbounds" not in data or not isinstance(data["outbounds"], list) or len(data["outbounds"]) == 0:
+                need_repair = True
+            elif data["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] != data["id"]:
                 need_repair = True
         except Exception:
             need_repair = True
-        
-        if not need_repair:
-            try:
-                if "outbounds" not in data or not isinstance(data["outbounds"], list) or len(data["outbounds"]) == 0:
-                    need_repair = True
-                elif data["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"] != data["id"]:
-                    need_repair = True
-            except Exception:
-                need_repair = True
-                
-        if need_repair:
-            try:
-                new_uuid = data.get("id", "")
-                if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(new_uuid), re.I):
-                    new_uuid = str(uuid.uuid4())
-                remarks = data.get("remarks", "")
-                if not remarks:
-                    remarks = os.path.splitext(os.path.basename(filepath))[0]
-                
-                data = {
-                  "remarks": remarks,
-                  "id": new_uuid,
-                  "outbounds": [{
-                    "protocol": "vless",
-                    "settings": {
-                      "vnext": [{
-                        "address": domain,
-                        "port": 443,
-                        "users": [{
-                          "id": new_uuid,
-                          "flow": "xtls-rprx-vision"
-                        }]
-                      }]
-                    },
-                    "streamSettings": {
-                      "network": "tcp",
-                      "security": "tls",
-                      "sockopt": {
-                        "tcpFastOpen": True
-                      }
-                    }
+            
+    if need_repair:
+        try:
+            new_uuid = data.get("id", "")
+            if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", str(new_uuid), re.I):
+                new_uuid = str(uuid.uuid4())
+            remarks = data.get("remarks", "")
+            if not remarks:
+                remarks = os.path.splitext(os.path.basename(filepath))[0]
+            
+            data = {
+              "remarks": remarks,
+              "id": new_uuid,
+              "outbounds": [{
+                "protocol": "vless",
+                "settings": {
+                  "vnext": [{
+                    "address": domain,
+                    "port": 443,
+                    "users": [{
+                      "id": new_uuid,
+                      "flow": "xtls-rprx-vision"
+                    }]
                   }]
+                },
+                "streamSettings": {
+                  "network": "tcp",
+                  "security": "tls",
+                  "tlsSettings": {
+                    "serverName": domain,
+                    "fingerprint": "chrome",
+                    "minVersion": "1.3"
+                  },
+                  "sockopt": {
+                    "tcpFastOpen": True,
+                    "tcpcongestion": "bbr",
+                    "tcpKeepAliveIdle": 300
+                  }
                 }
-                with open(filepath, "w") as f:
-                    json.dump(data, f, indent=2)
-                print(f"REPAIRED:{filepath}")
-            except Exception:
-                pass
-    ' "$CLIENT_CONFIG_DIR"/*.json 2>/dev/null)
+              }]
+            }
+            with open(filepath, "w") as f:
+                json.dump(data, f, indent=2)
+            print(f"REPAIRED:{filepath}")
+        except Exception:
+            pass
+' "$CLIENT_CONFIG_DIR"/*.json 2>/dev/null)
 
             if [[ -n "$repair_output" ]]; then
                 repaired=true
@@ -8018,8 +8154,8 @@ EOF
     : "${ROUTING_ENABLED:=true}"
 
     # === Запуск установки ===
-    check_domain
-    check_port_conflicts
+    check_domain || exit 1
+    check_port_conflicts || exit 1
     create_directories
     install_dependencies
     install_xray
@@ -8037,7 +8173,16 @@ EOF
     generate_client_configs
     install_generate_script
 
-    echo -e "DOMAIN=$DOMAIN\nEMAIL=$EMAIL\nNUM_DEVICES=$NUM_DEVICES\nEMOJI=$FLAG_EMOJI\nCOUNTRY_CODE=$COUNTRY_CODE\nCDN_DOMAIN=none\nROUTING_PROFILE=$ROUTING_PROFILE\nROUTING_ENABLED=$ROUTING_ENABLED" > "$MARKER_FILE"
+    mkdir -p "$(dirname "$MARKER_FILE")"
+    [[ -f "$MARKER_FILE" ]] && cp -f "$MARKER_FILE" "$MARKER_FILE.bak" 2>/dev/null || touch "$MARKER_FILE"
+    update_marker_val "DOMAIN" "$DOMAIN"
+    update_marker_val "EMAIL" "$EMAIL"
+    update_marker_val "NUM_DEVICES" "$NUM_DEVICES"
+    update_marker_val "EMOJI" "$FLAG_EMOJI"
+    update_marker_val "COUNTRY_CODE" "$COUNTRY_CODE"
+    update_marker_val "CDN_DOMAIN" "none"
+    update_marker_val "ROUTING_PROFILE" "$ROUTING_PROFILE"
+    update_marker_val "ROUTING_ENABLED" "$ROUTING_ENABLED"
     chmod 644 "$MARKER_FILE"
 
     # Регистрация быстрой команды xry
