@@ -2086,8 +2086,7 @@ install_xray() {
     fi
 
     # Гарантируем наличие корректного systemd сервиса
-    if [[ ! -f /etc/systemd/system/xray.service ]] || grep -q '/etc/xray/config.json' /etc/systemd/system/xray.service 2>/dev/null; then
-        cat << 'EOF' > /etc/systemd/system/xray.service
+    cat << 'EOF' > /etc/systemd/system/xray.service
 [Unit]
 Description=Xray Service
 Documentation=https://github.com/xtls
@@ -2109,7 +2108,6 @@ WantedBy=multi-user.target
 EOF
         systemctl daemon-reload >/dev/null 2>&1 || true
         systemctl enable xray >/dev/null 2>&1 || true
-    fi
 }
 
 # === Установка Hysteria 2 ===
@@ -2266,7 +2264,7 @@ setup_certificates() {
     chown -R nobody:nogroup "$SSL_DIR"
     chmod 755 "$SSL_DIR"
     chmod 644 "$SSL_DIR/fullchain.cer"
-    chmod 600 "$SSL_DIR/private.key"
+    chmod 644 "$SSL_DIR/private.key"
 
     setup_cert_renew_hook
 }
@@ -2292,7 +2290,7 @@ if [[ -n "$DOMAIN" && -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
     chown -R nobody:nogroup "$SSL_DIR"
     chmod 755 "$SSL_DIR"
     chmod 644 "$SSL_DIR/fullchain.cer"
-    chmod 600 "$SSL_DIR/private.key"
+    chmod 644 "$SSL_DIR/private.key"
     systemctl restart xray 2>/dev/null || true
     systemctl restart hysteria-server 2>/dev/null || true
     systemctl restart xray-sub 2>/dev/null || true
@@ -2365,7 +2363,7 @@ renew_ssl_certificate() {
         chown -R nobody:nogroup "$SSL_DIR"
         chmod 755 "$SSL_DIR"
         chmod 644 "$SSL_DIR/fullchain.cer"
-        chmod 600 "$SSL_DIR/private.key"
+        chmod 644 "$SSL_DIR/private.key"
 
         # Обновляем хук автопродления
         setup_cert_renew_hook
@@ -5636,7 +5634,7 @@ restore_backup() {
     echo "📥 Восстановление файлов..."
     [[ -d "$tmp_dir/etc-xray" ]] && { mkdir -p /etc/xray; cp -a "$tmp_dir/etc-xray/." /etc/xray/; }
     [[ -d "$tmp_dir/usr-local-etc-xray" ]] && { mkdir -p /usr/local/etc/xray; cp -a "$tmp_dir/usr-local-etc-xray/." /usr/local/etc/xray/; }
-    [[ -d "$tmp_dir/ssl-vless" ]] && { mkdir -p "$SSL_DIR"; cp -a "$tmp_dir/ssl-vless/." "$SSL_DIR/"; chown -R nobody:nogroup "$SSL_DIR"; chmod 755 "$SSL_DIR"; chmod 600 "$SSL_DIR"/private.key 2>/dev/null || true; }
+    [[ -d "$tmp_dir/ssl-vless" ]] && { mkdir -p "$SSL_DIR"; cp -a "$tmp_dir/ssl-vless/." "$SSL_DIR/"; chown -R nobody:nogroup "$SSL_DIR"; chmod 755 "$SSL_DIR"; chmod 644 "$SSL_DIR"/private.key 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-hysteria" ]] && { mkdir -p /etc/hysteria; cp -a "$tmp_dir/etc-hysteria/." /etc/hysteria/; chmod 600 /etc/hysteria/config.yaml 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-tor" ]] && { mkdir -p /etc/tor; cp -a "$tmp_dir/etc-tor/." /etc/tor/; }
     [[ -d "$tmp_dir/etc-wireguard" ]] && { mkdir -p /etc/wireguard; cp -a "$tmp_dir/etc-wireguard/." /etc/wireguard/; chmod 600 /etc/wireguard/warp.conf 2>/dev/null || true; }
@@ -6860,7 +6858,7 @@ EOF
                         chown -R nobody:nogroup "$SSL_DIR"
                         chmod 755 "$SSL_DIR"
                         chmod 644 "$SSL_DIR/fullchain.cer"
-                        chmod 600 "$SSL_DIR/private.key"
+                        chmod 644 "$SSL_DIR/private.key"
                         
                         # Удаляем старый сертификат из certbot, чтобы не засорять автопродление
                         if [[ -n "$current_domain" && "$current_domain" != "$new_domain" ]]; then
