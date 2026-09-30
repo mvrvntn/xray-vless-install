@@ -4286,8 +4286,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
-        tg_note = f", TG Proxy ({ivars['telemt_port']})" if ivars.get("telemt_installed") == "true" and ivars.get("telemt_secret") else ""
-        announce_text = f"Профиль: {client_name} • Локации: VLESS TCP (443), Hysteria2 (20443), VLESS XHTTP (8443), VLESS gRPC (2053){tg_note} • Коридор: https://mvrvntn.github.io/koridor/ • Нет сети? ➔ Обновите ↻"
+        announce_text = f"Профиль: {client_name}\nНет связи? ➔ ↻ Обновить подписку\nПроект разработчика: cabinet.mavrtun.ru | ТГ-бот: @mavrtunbot"
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
         support_url = "https://t.me/mavrtunbot"
@@ -4314,7 +4313,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             "profile-title": b64_client_display,
             "profile-update-interval": "1",
             "support-url": support_url,
-            "profile-web-page-url": "https://mvrvntn.github.io/koridor/",
+            "profile-web-page-url": "https://cabinet.mavrtun.ru",
             "announce": b64_announce,
             "subscription-auto-update-enable": "1",
             "subscription-ping-onopen-enabled": "1",
@@ -5277,7 +5276,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 f"#profile-title: {b64_client_display}\n"
                 f"#profile-update-interval: 1\n"
                 f"#support-url: {support_url}\n"
-                f"#profile-web-page-url: https://mvrvntn.github.io/koridor/\n"
+                f"#profile-web-page-url: https://cabinet.mavrtun.ru\n"
                 f"#announce: {b64_announce}\n"
                 f"#subscription-userinfo: 0\n"
                 f"#sort-order: ping\n"
