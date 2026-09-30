@@ -4281,11 +4281,6 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             vless_reality = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=reality&sni={ivars['reality_sni']}&pbk={ivars['reality_pbk']}&sid={ivars['reality_sid']}&fp={fp}&type=tcp#{encoded_remark_reality}"
             urls.append(vless_reality)
             
-        remark_info = "🚪 коридор • проект разработчика"
-        encoded_remark_info = urllib.parse.quote(remark_info)
-        info_node = f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:65535?encryption=none&security=none&type=tcp#{encoded_remark_info}"
-        urls.append(info_node)
-            
         sub_content_links = "\n".join(urls) + "\n"
             
         client_display = f"❯ {client_name}"
@@ -4744,7 +4739,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         elif format_param == "xray":
             outbounds_list = []
             for i, u in enumerate(urls, 1):
-                if u.startswith("vless://") and "@127.0.0.1" not in u:
+                if u.startswith("vless://"):
                     ob = vless_url_to_xray_outbound(u, i)
                     if ob:
                         outbounds_list.append(ob)
@@ -5050,13 +5045,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         proxies_list.append(pr)
                         proxy_names.append(name)
                         
-            testable_proxy_names = [p["name"] for p in proxies_list if p.get("server") != "127.0.0.1"]
-            if not testable_proxy_names:
-                testable_proxy_names = list(proxy_names)
-
             if not proxy_names:
                 proxy_names = ["DIRECT"]
-                testable_proxy_names = ["DIRECT"]
 
             clash_config = {
                 "mixed-port": 7890,
@@ -5109,25 +5099,25 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         "name": "📺 Youtube",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/YouTube.png",
                         "type": "select",
-                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + testable_proxy_names
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
                     },
                     {
                         "name": "💬 Discord",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Discord.png",
                         "type": "select",
-                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + testable_proxy_names
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
                     },
                     {
                         "name": "🎮 Игры",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Game.png",
                         "type": "select",
-                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + testable_proxy_names
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
                     },
                     {
                         "name": "⚡️ Авто",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Speed.png",
                         "type": "url-test",
-                        "proxies": list(testable_proxy_names),
+                        "proxies": list(proxy_names),
                         "url": "http://cp.cloudflare.com/generate_204",
                         "interval": 300,
                         "tolerance": 50
