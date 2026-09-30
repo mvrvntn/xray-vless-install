@@ -4281,12 +4281,17 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             vless_reality = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=reality&sni={ivars['reality_sni']}&pbk={ivars['reality_pbk']}&sid={ivars['reality_sid']}&fp={fp}&type=tcp#{encoded_remark_reality}"
             urls.append(vless_reality)
             
+        remark_info = "🚪 коридор • проект разработчика"
+        encoded_remark_info = urllib.parse.quote(remark_info)
+        info_node = f"vless://00000000-0000-0000-0000-000000000000@127.0.0.1:65535?encryption=none&security=none&type=tcp#{encoded_remark_info}"
+        urls.append(info_node)
+            
         sub_content_links = "\n".join(urls) + "\n"
             
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
         
-        announce_text = f"Профиль: {client_name}\nНет связи? ➔ ↻ Обновить подписку\nПроект разработчика: cabinet.mavrtun.ru | ТГ-бот: @mavrtunbot"
+        announce_text = f"Профиль: {client_name}\nНет связи? ➔ ↻ Обновить подписку\nкоридор: cabinet.mavrtun.ru | ТГ-бот: @mavrtunbot"
         b64_announce = "base64:" + base64.b64encode(announce_text.encode('utf-8')).decode('utf-8')
         
         support_url = "https://t.me/mavrtunbot"
@@ -4313,7 +4318,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             "profile-title": b64_client_display,
             "profile-update-interval": "1",
             "support-url": support_url,
-            "profile-web-page-url": "https://cabinet.mavrtun.ru",
+            "profile-web-page-url": "https://mvrvntn.github.io/koridor/",
             "announce": b64_announce,
             "subscription-auto-update-enable": "1",
             "subscription-ping-onopen-enabled": "1",
@@ -4739,7 +4744,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         elif format_param == "xray":
             outbounds_list = []
             for i, u in enumerate(urls, 1):
-                if u.startswith("vless://"):
+                if u.startswith("vless://") and "@127.0.0.1" not in u:
                     ob = vless_url_to_xray_outbound(u, i)
                     if ob:
                         outbounds_list.append(ob)
@@ -5045,8 +5050,13 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         proxies_list.append(pr)
                         proxy_names.append(name)
                         
+            testable_proxy_names = [p["name"] for p in proxies_list if p.get("server") != "127.0.0.1"]
+            if not testable_proxy_names:
+                testable_proxy_names = list(proxy_names)
+
             if not proxy_names:
                 proxy_names = ["DIRECT"]
+                testable_proxy_names = ["DIRECT"]
 
             clash_config = {
                 "mixed-port": 7890,
@@ -5099,25 +5109,25 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                         "name": "📺 Youtube",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/YouTube.png",
                         "type": "select",
-                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + testable_proxy_names
                     },
                     {
                         "name": "💬 Discord",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Discord.png",
                         "type": "select",
-                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + testable_proxy_names
                     },
                     {
                         "name": "🎮 Игры",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Game.png",
                         "type": "select",
-                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + proxy_names
+                        "proxies": ["🛡️ VPN", "⚡️ Авто", "DIRECT"] + testable_proxy_names
                     },
                     {
                         "name": "⚡️ Авто",
                         "icon": "https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Speed.png",
                         "type": "url-test",
-                        "proxies": list(proxy_names),
+                        "proxies": list(testable_proxy_names),
                         "url": "http://cp.cloudflare.com/generate_204",
                         "interval": 300,
                         "tolerance": 50
@@ -5276,7 +5286,7 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 f"#profile-title: {b64_client_display}\n"
                 f"#profile-update-interval: 1\n"
                 f"#support-url: {support_url}\n"
-                f"#profile-web-page-url: https://cabinet.mavrtun.ru\n"
+                f"#profile-web-page-url: https://mvrvntn.github.io/koridor/\n"
                 f"#announce: {b64_announce}\n"
                 f"#subscription-userinfo: 0\n"
                 f"#sort-order: ping\n"

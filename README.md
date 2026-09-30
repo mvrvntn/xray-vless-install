@@ -7,11 +7,16 @@
   <img src="https://img.shields.io/badge/Security-TLS%201.3%20%2F%20Fake--TLS-brightgreen?style=for-the-badge" alt="Security Protocols">
   <img src="https://img.shields.io/badge/Routing-Smart%20Split%20Tunnel-purple?style=for-the-badge" alt="Smart Routing">
   <img src="https://img.shields.io/badge/Edge--Proxy-Enterprise%20Ready-orange?style=for-the-badge" alt="Edge Proxy">
+  <a href="https://mvrvntn.github.io/koridor/"><img src="https://img.shields.io/badge/коридор-ready--to--use%20service-darkgreen?style=for-the-badge" alt="коридор"></a>
 </p>
 
 Скрипт `install_xray.sh` — решение «всё в одном» (All-in-One) для автоматизированного развертывания и администрирования многопротокольного защищенного сетевого шлюза (**VLESS TCP XTLS-Vision**, **VLESS gRPC**, **VLESS XHTTP**, **Hysteria 2** и **Telegram MTProto Telemt**) на Linux VPS/VDS.
 
 Проект разработан для организации надежных зашифрованных каналов связи, снижения сетевых задержек (Jitter/Latency) в мобильных и корпоративных сетях, а также централизованного управления конфигурациями устройств. Архитектура скрипта изолирована и безопасна для параллельной работы с другими сетевыми комплексами (например, **AntiZapret**).
+
+> [!TIP]
+> **Ищете готовое подключение без аренды и настройки собственного VPS?**  
+> Обратите внимание на авторское решение [коридор](https://mvrvntn.github.io/koridor/) — готовые управляемые приватные шлюзы на базе аналогичной оптимизированной архитектуры.
 
 ---
 
@@ -149,6 +154,7 @@
 | **Hysteria 2** | `🇳🇱⚡ Hysteria2` | `20443/udp` (QUIC, hopping `20000:50000`) | Низкие задержки и высокий CPS в мобильных и нестабильных сетях |
 | **Telegram MTProto** | `✈️ Telegram MTProto` | `8444/tcp` (Telemt Fake-TLS) | ⭐️ Прямой доступ к Telegram без VPN на лучшем альтернативном HTTPS-порту |
 | **VLESS Reality** | `🇳🇱🪞 VLESS-Reality` | `443/tcp` (Reality) | Режим маскировки под внешние веб-ресурсы (опционально) |
+| **Инфо-нода** | `🚪 коридор • проект разработчика` | — | Информационная карточка авторского проекта [коридор](https://mvrvntn.github.io/koridor/) в списке серверов |
 
 ---
 
