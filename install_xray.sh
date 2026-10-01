@@ -4281,7 +4281,9 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             vless_reality = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=reality&sni={ivars['reality_sni']}&pbk={ivars['reality_pbk']}&sid={ivars['reality_sid']}&fp={fp}&type=tcp#{encoded_remark_reality}"
             urls.append(vless_reality)
             
-        sub_content_links = "\n".join(urls) + "\n"
+        # Standard proxy links for base64 subscriptions
+        base64_links = [u for u in urls if u.startswith(("vless://", "hysteria2://", "trojan://", "ss://", "vmess://"))]
+        sub_content_links = "\n".join(base64_links) + "\n"
             
         client_display = f"❯ {client_name}"
         b64_client_display = "base64:" + base64.b64encode(client_display.encode('utf-8')).decode('utf-8')
@@ -4300,12 +4302,14 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             user_agent += f" {client_param}"
 
         if not format_param:
-            if "sing-box" in user_agent or "singbox" in user_agent or "sfa" in user_agent or "sfi" in user_agent:
+            if any(s in user_agent for s in ("sing-box", "singbox", "sfa", "sfi", "hiddify", "karing")):
                 format_param = "singbox"
-            elif any(c in user_agent for c in ("clash", "mihomo", "meta", "flclash", "stash")):
+            elif any(c in user_agent for c in ("clash", "mihomo", "meta", "flclash", "stash", "verge")):
                 format_param = "clash"
-            elif "xray" in user_agent or "v2ray" in user_agent:
+            elif any(x in user_agent for x in ("xray", "v2ray", "nekobox", "matsuridayo")):
                 format_param = "xray"
+            elif "xkeen" in user_agent or "keenetic" in user_agent:
+                format_param = "xkeen"
 
         resp_headers = {
             "Cache-Control": "no-store",
@@ -4319,7 +4323,6 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             "subscription-ping-onopen-enabled": "1",
             "subscription-autoconnect": "1",
             "subscription-autoconnect-type": "lastused",
-            "subscription-userinfo": "0",
             "sort-order": "ping",
             "hide-url": "1",
             "noises-enable": "0",
@@ -5268,6 +5271,29 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body.encode("utf-8"))
             return
 
+        elif format_param in ("xkeen", "keenetic"):
+            xkeen_outbounds = []
+            vless_urls = [u for u in urls if u.startswith("vless://")]
+            # Sort: Reality first if present, then Vision, then others
+            vless_urls.sort(key=lambda u: 0 if "security=reality" in u else (1 if "flow=xtls-rprx-vision" in u else 2))
+            for i, u in enumerate(vless_urls):
+                ob = vless_url_to_xray_outbound(u, i + 1)
+                if ob:
+                    # In XKeen routing, primary outbound must have tag 'proxy'
+                    ob["tag"] = "proxy" if i == 0 else f"proxy-{i + 1}"
+                    xkeen_outbounds.append(ob)
+            xkeen_outbounds.append({"tag": "direct", "protocol": "freedom", "settings": {}})
+            xkeen_outbounds.append({"tag": "block", "protocol": "blackhole", "settings": {}})
+            xkeen_config = {"outbounds": xkeen_outbounds}
+            body = json.dumps(xkeen_config, indent=2, ensure_ascii=False)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            for k, v in resp_headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+
         # Default raw link list formatted base64
         if format_param in ("raw", "txt") or any(r in user_agent for r in ("v2ray", "clash", "zeroblock", "openwrt", "passwall")):
             sub_content = sub_content_links
@@ -5278,7 +5304,6 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
                 f"#support-url: {support_url}\n"
                 f"#profile-web-page-url: https://mvrvntn.github.io/koridor/\n"
                 f"#announce: {b64_announce}\n"
-                f"#subscription-userinfo: 0\n"
                 f"#sort-order: ping\n"
                 f"#fragmentation-enable: 1\n"
                 f"#fragmentation-packets: tlshello\n"
@@ -5482,6 +5507,9 @@ echo -e "\n ${BOLD}${YELLOW}Ссылка подписки (универсаль�
 echo -e "    ${CYAN}$SUBSCRIPTION_URL${NC}"
 echo -e " ${BOLD}${YELLOW}⚡ Быстрое добавление в HAPP (1 клик):${NC}"
 echo -e "    ${GREEN}$HAPP_URL${NC}"
+echo -e " ${BOLD}${YELLOW}📶 Конфигурация для Keenetic (XKeen / Entware):${NC}"
+echo -e "    ${CYAN}${SUBSCRIPTION_URL}?format=xkeen${NC}"
+echo -e "    ${GRAY}Команда для роутера: curl -fsSL \"${SUBSCRIPTION_URL}?format=xkeen\" -o /opt/etc/xray/configs/04_outbounds.json && xkeen -r${NC}"
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}💡 Рекомендации по настройке клиентов:${NC}"
 echo -e "   • ${YELLOW}INCY / HAPP:${NC} В Настройки → Туннель → VPN DNS выберите 'Google' или 'Cloudflare'"
@@ -5501,9 +5529,11 @@ if [[ "$REALITY_ENABLED" = "true" ]]; then
 echo -e " ${BOLD}${YELLOW}5.${NC} VLESS Reality"
 echo -e " ${BOLD}${YELLOW}6.${NC} Ссылка подписки (https://)"
 echo -e " ${BOLD}${YELLOW}7.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
+echo -e " ${BOLD}${YELLOW}8.${NC} 📶 Ссылка для Keenetic (XKeen)"
 else
 echo -e " ${BOLD}${YELLOW}5.${NC} Ссылка подписки (https://)"
 echo -e " ${BOLD}${YELLOW}6.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
+echo -e " ${BOLD}${YELLOW}7.${NC} 📶 Ссылка для Keenetic (XKeen)"
 fi
 if [[ "$TELEMT_INSTALLED" = "true" && -n "$TELEMT_LINK" ]]; then
 echo -e " ${BOLD}${YELLOW}T.${NC} ✈️  Telegram MTProto (tg://proxy, порт ${TELEMT_PORT})"
@@ -5519,6 +5549,7 @@ if [[ "$REALITY_ENABLED" = "true" ]]; then
     5) qrencode -t UTF8 "$VLESS_REALITY" ;;
     6) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
     7) qrencode -t UTF8 "$HAPP_URL" ;;
+    8) qrencode -t UTF8 "${SUBSCRIPTION_URL}?format=xkeen" ;;
     T|t) [[ -n "$TELEMT_LINK" ]] && qrencode -t UTF8 "$TELEMT_LINK" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
@@ -5530,6 +5561,7 @@ else
     4) qrencode -t UTF8 "$VLESS_GRPC" ;;
     5) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
     6) qrencode -t UTF8 "$HAPP_URL" ;;
+    7) qrencode -t UTF8 "${SUBSCRIPTION_URL}?format=xkeen" ;;
     T|t) [[ -n "$TELEMT_LINK" ]] && qrencode -t UTF8 "$TELEMT_LINK" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
