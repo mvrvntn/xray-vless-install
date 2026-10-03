@@ -1197,7 +1197,7 @@ install_telemt() {
     echo -e " ${BOLD}О порте подключения:${NC}"
     echo -e "   • Порт ${BOLD}${GREEN}8444${NC} является ${BOLD}лучшим и оптимальным выбором${NC}:"
     echo -e "     он входит в список стандартных HTTPS-портов Cloudflare, не конфликтует с"
-    echo -e "     Xray VLESS (443, 8443, 2053) и Hysteria2 (20443), и свободно пропускается"
+    echo -e "     Xray VLESS / Reality / XHTTP (443) и Hysteria2 (20443), и свободно пропускается"
     echo -e "     провайдерами без блокировок."
     echo -e "   • Вы также можете указать любой свободный порт при необходимости."
     echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
@@ -1205,8 +1205,8 @@ install_telemt() {
     local default_port="8444"
     read -r -p " Введите порт для Telemt [$default_port]: " input_port
     local tele_port="${input_port:-$default_port}"
-    while ! [[ "$tele_port" =~ ^[0-9]+$ ]] || (( tele_port < 1 || tele_port > 65535 )) || [[ "$tele_port" =~ ^(80|443|8443|2053|20443)$ ]]; do
-        echo -e " ${RED}❌ Недопустимый порт! Порты 80, 443, 8443, 2053, 20443 уже заняты службами Xray/Hy2.${NC}"
+    while ! [[ "$tele_port" =~ ^[0-9]+$ ]] || (( tele_port < 1 || tele_port > 65535 )) || [[ "$tele_port" =~ ^(80|443|20443)$ ]]; do
+        echo -e " ${RED}❌ Недопустимый порт! Порты 80, 443, 20443 уже заняты службами Nginx/Xray/Hy2.${NC}"
         read -r -p " Введите порт для Telemt [$default_port]: " input_port
         tele_port="${input_port:-$default_port}"
     done
@@ -1506,7 +1506,7 @@ telemt_menu() {
                 echo -e " ${GRAY}Напоминание: порт 8444 является лучшим, так как не конфликтует со службами Xray и входит в HTTPS-порты Cloudflare.${NC}"
                 read -r -p " Введите новый порт [8444]: " np
                 local new_port="${np:-8444}"
-                if [[ "$new_port" =~ ^[0-9]+$ ]] && (( new_port >= 1 && new_port <= 65535 )) && ! [[ "$new_port" =~ ^(80|443|8443|2053|20443)$ ]]; then
+                if [[ "$new_port" =~ ^[0-9]+$ ]] && (( new_port >= 1 && new_port <= 65535 )) && ! [[ "$new_port" =~ ^(80|443|20443)$ ]]; then
                     local old_port; old_port=$(get_installed_var "TELEMT_PORT")
                     [[ -z "$old_port" ]] && old_port="8444"
                     if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
@@ -1841,21 +1841,25 @@ check_port_conflicts() {
         if [[ -n "$port_443_pid" ]]; then
             port_443_process=$(ps -p "$port_443_pid" -o comm= 2>/dev/null)
         fi
-        echo "⚠️ Порт 443 занят процессом: ${port_443_process:-неизвестно} (PID: ${port_443_pid:-неизвестно})"
-        echo "Продолжение работы с занятым портом 443 может привести к ошибкам!"
-        read -r -p "Завершить процесс $port_443_process и продолжить? [y/N]: " kill_443
-        if [[ "$kill_443" =~ ^[Yy]$ ]]; then
-            if [[ -n "$port_443_pid" ]]; then
-                kill "$port_443_pid" 2>/dev/null || true
-                sleep 0.5
-                if kill -0 "$port_443_pid" 2>/dev/null; then
-                    kill -9 "$port_443_pid" 2>/dev/null || true
-                fi
-                echo "Процесс $port_443_pid завершен."
-            fi
+        if [[ "$port_443_process" == "xray" ]]; then
+            systemctl stop xray 2>/dev/null || true
         else
-            echo "Установка отменена пользователем."
-            return 1
+            echo "⚠️ Порт 443 занят процессом: ${port_443_process:-неизвестно} (PID: ${port_443_pid:-неизвестно})"
+            echo "Продолжение работы с занятым портом 443 может привести к ошибкам!"
+            read -r -p "Завершить процесс $port_443_process и продолжить? [y/N]: " kill_443
+            if [[ "$kill_443" =~ ^[Yy]$ ]]; then
+                if [[ -n "$port_443_pid" ]]; then
+                    kill "$port_443_pid" 2>/dev/null || true
+                    sleep 0.5
+                    if kill -0 "$port_443_pid" 2>/dev/null; then
+                        kill -9 "$port_443_pid" 2>/dev/null || true
+                    fi
+                    echo "Процесс $port_443_pid завершен."
+                fi
+            else
+                echo "Установка отменена пользователем."
+                return 1
+            fi
         fi
     fi
 
@@ -1866,68 +1870,24 @@ check_port_conflicts() {
         if [[ -n "$port_80_pid" ]]; then
             port_80_process=$(ps -p "$port_80_pid" -o comm= 2>/dev/null)
         fi
-        echo "⚠️ Порт 80 занят процессом: ${port_80_process:-неизвестно} (PID: ${port_80_pid:-неизвестно})"
-        read -r -p "Завершить процесс $port_80_process и продолжить? [y/N]: " kill_80
-        if [[ "$kill_80" =~ ^[Yy]$ ]]; then
-            if [[ -n "$port_80_pid" ]]; then
-                kill "$port_80_pid" 2>/dev/null || true
-                sleep 0.5
-                if kill -0 "$port_80_pid" 2>/dev/null; then
-                    kill -9 "$port_80_pid" 2>/dev/null || true
-                fi
-                echo "Процесс $port_80_pid завершен."
-            fi
+        if [[ "$port_80_process" == "nginx" ]]; then
+            systemctl stop nginx 2>/dev/null || true
         else
-            echo "Установка отменена пользователем."
-            return 1
-        fi
-    fi
-
-    # Проверка порта 8443 (VLESS XHTTP)
-    if ss -tlnH 'sport = :8443' 2>/dev/null | grep -q . || ss -tln 2>/dev/null | grep -qE ':(8443)([[:space:]]|$)'; then
-        local port_8443_pid; port_8443_pid=$(ss -tlnp 'sport = :8443' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
-        local port_8443_process=""
-        if [[ -n "$port_8443_pid" ]]; then
-            port_8443_process=$(ps -p "$port_8443_pid" -o comm= 2>/dev/null)
-        fi
-        echo "⚠️ Порт 8443 занят процессом: ${port_8443_process:-неизвестно} (PID: ${port_8443_pid:-неизвестно})"
-        read -r -p "Завершить процесс $port_8443_process и продолжить? [y/N]: " kill_8443
-        if [[ "$kill_8443" =~ ^[Yy]$ ]]; then
-            if [[ -n "$port_8443_pid" ]]; then
-                kill "$port_8443_pid" 2>/dev/null || true
-                sleep 0.5
-                if kill -0 "$port_8443_pid" 2>/dev/null; then
-                    kill -9 "$port_8443_pid" 2>/dev/null || true
+            echo "⚠️ Порт 80 занят процессом: ${port_80_process:-неизвестно} (PID: ${port_80_pid:-неизвестно})"
+            read -r -p "Завершить процесс $port_80_process и продолжить? [y/N]: " kill_80
+            if [[ "$kill_80" =~ ^[Yy]$ ]]; then
+                if [[ -n "$port_80_pid" ]]; then
+                    kill "$port_80_pid" 2>/dev/null || true
+                    sleep 0.5
+                    if kill -0 "$port_80_pid" 2>/dev/null; then
+                        kill -9 "$port_80_pid" 2>/dev/null || true
+                    fi
+                    echo "Процесс $port_80_pid завершен."
                 fi
-                echo "Процесс $port_8443_pid завершен."
+            else
+                echo "Установка отменена пользователем."
+                return 1
             fi
-        else
-            echo "Установка отменена пользователем."
-            return 1
-        fi
-    fi
-
-    # Проверка порта 2053 (VLESS gRPC)
-    if ss -tlnH 'sport = :2053' 2>/dev/null | grep -q . || ss -tln 2>/dev/null | grep -qE ':(2053)([[:space:]]|$)'; then
-        local port_2053_pid; port_2053_pid=$(ss -tlnp 'sport = :2053' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
-        local port_2053_process=""
-        if [[ -n "$port_2053_pid" ]]; then
-            port_2053_process=$(ps -p "$port_2053_pid" -o comm= 2>/dev/null)
-        fi
-        echo "⚠️ Порт 2053 занят процессом: ${port_2053_process:-неизвестно} (PID: ${port_2053_pid:-неизвестно})"
-        read -r -p "Завершить процесс $port_2053_process и продолжить? [y/N]: " kill_2053
-        if [[ "$kill_2053" =~ ^[Yy]$ ]]; then
-            if [[ -n "$port_2053_pid" ]]; then
-                kill "$port_2053_pid" 2>/dev/null || true
-                sleep 0.5
-                if kill -0 "$port_2053_pid" 2>/dev/null; then
-                    kill -9 "$port_2053_pid" 2>/dev/null || true
-                fi
-                echo "Процесс $port_2053_pid завершен."
-            fi
-        else
-            echo "Установка отменена пользователем."
-            return 1
         fi
     fi
 }
@@ -1983,7 +1943,7 @@ install_dependencies() {
     wait_for_apt
     DEBIAN_FRONTEND=noninteractive apt-get update -yq >/dev/null 2>&1
     DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
-        curl git qrencode ufw cron certbot python3 jq lsof >/dev/null 2>&1
+        curl git qrencode ufw cron certbot python3 jq lsof nginx >/dev/null 2>&1
 
     echo "⚡ Включение BBR и TCP Fast Open..."
     # Включаем BBR и FQ
@@ -2038,7 +1998,9 @@ User=root
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
+ExecStartPre=-/bin/rm -f /dev/shm/xrxh.socket
 ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
+ExecStopPost=-/bin/rm -f /dev/shm/xrxh.socket
 Restart=on-failure
 RestartPreventExitStatus=23
 LimitNPROC=10000
@@ -2180,7 +2142,7 @@ setup_firewall() {
         # Гарантируем доступ к нужным портам в iptables на самых первых позициях цепочки INPUT
         local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
         if [[ -x "$ipt_path" ]]; then
-            local tcp_ports="80,443,2053,8443"
+            local tcp_ports="80,443"
             local t_installed; t_installed=$(get_installed_var "TELEMT_INSTALLED")
             local t_port; t_port=$(get_installed_var "TELEMT_PORT")
             [[ -z "$t_port" ]] && t_port="8444"
@@ -2188,9 +2150,17 @@ setup_firewall() {
 
             $ipt_path -D INPUT -p tcp -m multiport --dports "$tcp_ports" -j ACCEPT >/dev/null 2>&1 || true
             $ipt_path -I INPUT 1 -p tcp -m multiport --dports "$tcp_ports" -j ACCEPT
+
+            # Блокировка 443/udp (QUIC) для предотвращения активного сканирования и сбоев
+            $ipt_path -D INPUT -p udp --dport 443 -j DROP >/dev/null 2>&1 || true
+            $ipt_path -I INPUT 1 -p udp --dport 443 -j DROP
             
-            $ipt_path -D INPUT -p udp -m multiport --dports 443,20000:50000 -j ACCEPT >/dev/null 2>&1 || true
-            $ipt_path -I INPUT 2 -p udp -m multiport --dports 443,20000:50000 -j ACCEPT
+            $ipt_path -D INPUT -p udp -m multiport --dports 20443,20000:50000 -j ACCEPT >/dev/null 2>&1 || true
+            $ipt_path -I INPUT 2 -p udp -m multiport --dports 20443,20000:50000 -j ACCEPT
+
+            # NAT port hopping для Hysteria 2 на 20443
+            $ipt_path -t nat -C PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 >/dev/null 2>&1 || \
+            $ipt_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true
         fi
         return 0
     fi
@@ -2200,18 +2170,30 @@ setup_firewall() {
         sed -i 's/IPV6=yes/IPV6=no/g' /etc/default/ufw 2>/dev/null || true
     fi
 
+    # Очистка устаревших правил
+    ufw delete allow 443/udp >/dev/null 2>&1 || true
+    ufw delete allow 2053/tcp >/dev/null 2>&1 || true
+    ufw delete allow 2053 >/dev/null 2>&1 || true
+    ufw delete allow 8443/tcp >/dev/null 2>&1 || true
+    ufw delete allow 8443 >/dev/null 2>&1 || true
+
+    # Прямой сброс 443/udp через iptables
+    local ipt_bin; ipt_bin=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
+    if [[ -x "$ipt_bin" ]]; then
+        $ipt_bin -D INPUT -p udp --dport 443 -j DROP >/dev/null 2>&1 || true
+        $ipt_bin -I INPUT 1 -p udp --dport 443 -j DROP 2>/dev/null || true
+    fi
+
+    ufw allow 80/tcp > /dev/null
     ufw allow 443/tcp > /dev/null
-    ufw allow 2053/tcp > /dev/null
-    ufw allow 8443/tcp > /dev/null
+    ufw allow 20443/udp > /dev/null
+    ufw allow 20000:50000/udp > /dev/null
     local t_installed; t_installed=$(get_installed_var "TELEMT_INSTALLED")
     if [[ "$t_installed" == "true" ]]; then
         local t_port; t_port=$(get_installed_var "TELEMT_PORT")
         [[ -z "$t_port" ]] && t_port="8444"
         ufw allow "${t_port}/tcp" > /dev/null 2>&1 || true
     fi
-    ufw allow 443/udp > /dev/null
-    ufw allow 20000:50000/udp > /dev/null
-    ufw allow 80/tcp > /dev/null
     
     # Динамически определяем запущенные и настроенные порты SSH, чтобы не заблокировать пользователя
     local ssh_ports; ssh_ports=$( (ss -tlnp 2>/dev/null | awk '/"sshd"|:22/ {print $4}' | awk -F: '{print $NF}'; grep -hE '^\s*Port\s+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}') | sort -u )
@@ -2240,11 +2222,11 @@ setup_firewall() {
             tmp=$(mktemp)
             {
                 head -n "$((ln - 1))" "$rules"
-                printf '%s\n*nat\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443\nCOMMIT\n%s\n' "$begin" "$end"
+                printf '%s\n*nat\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443\nCOMMIT\n%s\n' "$begin" "$end"
                 tail -n "+${ln}" "$rules"
             } > "$tmp" && mv "$tmp" "$rules"
         else
-            printf '\n%s\n*nat\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443\nCOMMIT\n%s\n' "$begin" "$end" >> "$rules"
+            printf '\n%s\n*nat\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443\nCOMMIT\n%s\n' "$begin" "$end" >> "$rules"
         fi
     }
     setup_hy2_port_hopping_ufw
@@ -2261,10 +2243,18 @@ setup_firewall() {
 setup_certificates() {
     echo "🔐 Получение TLS-сертификатов для $DOMAIN..."
 
+    # Временно останавливаем Nginx, если он занял порт 80
+    local nginx_was_active=false
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        nginx_was_active=true
+        systemctl stop nginx 2>/dev/null || true
+    fi
+
     # Получаем сертификат через certbot
     log_info "Requesting SSL certificate for $DOMAIN via certbot"
     certbot certonly --standalone -d "$DOMAIN" --email "$EMAIL" \
         --agree-tos --non-interactive --key-type ecdsa || {
+        [[ "$nginx_was_active" == "true" ]] && systemctl start nginx 2>/dev/null || true
         echo "❌ Ошибка получения сертификата"
         echo "Возможные причины:"
         echo "1. Домен не привязан к IP этого сервера."
@@ -2273,15 +2263,18 @@ setup_certificates() {
         exit 1
     }
 
-    # Копируем сертификаты вместо создания симлинков
+    [[ "$nginx_was_active" == "true" ]] && systemctl start nginx 2>/dev/null || true
+
+    # Копируем сертификаты
+    mkdir -p "$SSL_DIR"
     cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$SSL_DIR/fullchain.cer"
     cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$SSL_DIR/private.key"
 
-    # Устанавливаем права и владельца для пользователя nobody (от имени которого работает Xray)
-    chown -R nobody:nogroup "$SSL_DIR"
-    chmod 755 "$SSL_DIR"
-    chmod 644 "$SSL_DIR/fullchain.cer"
-    chmod 644 "$SSL_DIR/private.key"
+    # Устанавливаем права root:www-data для безопасного доступа Nginx и Xray
+    chown -R root:www-data "$SSL_DIR" 2>/dev/null || true
+    chmod 750 "$SSL_DIR" 2>/dev/null || true
+    chmod 644 "$SSL_DIR/fullchain.cer" 2>/dev/null || true
+    chmod 640 "$SSL_DIR/private.key" 2>/dev/null || true
 
     setup_cert_renew_hook
 }
@@ -2304,10 +2297,11 @@ if [[ -n "$DOMAIN" && -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
     mkdir -p "$SSL_DIR"
     cp -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$SSL_DIR/fullchain.cer"
     cp -f "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$SSL_DIR/private.key"
-    chown -R nobody:nogroup "$SSL_DIR"
-    chmod 755 "$SSL_DIR"
-    chmod 644 "$SSL_DIR/fullchain.cer"
-    chmod 644 "$SSL_DIR/private.key"
+    chown -R root:www-data "$SSL_DIR" 2>/dev/null || true
+    chmod 750 "$SSL_DIR" 2>/dev/null || true
+    chmod 644 "$SSL_DIR/fullchain.cer" 2>/dev/null || true
+    chmod 640 "$SSL_DIR/private.key" 2>/dev/null || true
+    systemctl restart nginx 2>/dev/null || true
     systemctl restart xray 2>/dev/null || true
     systemctl restart hysteria-server 2>/dev/null || true
     systemctl restart xray-sub 2>/dev/null || true
@@ -2340,16 +2334,21 @@ renew_ssl_certificate() {
 
     echo -e "\n${BOLD}${CYAN}🔐 Запуск обновления SSL-сертификата для $domain...${NC}"
 
-    # Проверка конфликтов порта 80
-    local port_80_pid
-    port_80_pid=$(ss -tlnp 'sport = :80' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
+    # Проверка конфликтов порта 80 и временная остановка Nginx
     local stopped_temp_service=""
-    if [[ -n "$port_80_pid" ]]; then
-        local proc_name; proc_name=$(ps -p "$port_80_pid" -o comm= 2>/dev/null)
-        echo -e "${YELLOW}⚠️ Порт 80 занят процессом $proc_name (PID: $port_80_pid). Временно останавливаем...${NC}"
-        if systemctl is-active --quiet "$proc_name" 2>/dev/null; then
-            systemctl stop "$proc_name" 2>/dev/null || true
-            stopped_temp_service="$proc_name"
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        echo -e "${YELLOW}⚠️ Временно останавливаем Nginx для освобождения порта 80...${NC}"
+        systemctl stop nginx 2>/dev/null || true
+        stopped_temp_service="nginx"
+    else
+        local port_80_pid; port_80_pid=$(ss -tlnp 'sport = :80' 2>/dev/null | awk -F'pid=' 'NF>1 { split($2, a, "[,)]"); print a[1]; exit }')
+        if [[ -n "$port_80_pid" ]]; then
+            local proc_name; proc_name=$(ps -p "$port_80_pid" -o comm= 2>/dev/null)
+            echo -e "${YELLOW}⚠️ Порт 80 занят процессом $proc_name (PID: $port_80_pid). Временно останавливаем...${NC}"
+            if systemctl is-active --quiet "$proc_name" 2>/dev/null; then
+                systemctl stop "$proc_name" 2>/dev/null || true
+                stopped_temp_service="$proc_name"
+            fi
         fi
     fi
 
@@ -2368,7 +2367,7 @@ renew_ssl_certificate() {
         fi
     fi
 
-    # Возврат временной службы порта 80, если была
+    # Возврат временной службы порта 80
     if [[ -n "$stopped_temp_service" ]]; then
         systemctl start "$stopped_temp_service" 2>/dev/null || true
     fi
@@ -2377,15 +2376,16 @@ renew_ssl_certificate() {
         mkdir -p "$SSL_DIR"
         cp -f "/etc/letsencrypt/live/$domain/fullchain.pem" "$SSL_DIR/fullchain.cer"
         cp -f "/etc/letsencrypt/live/$domain/privkey.pem" "$SSL_DIR/private.key"
-        chown -R nobody:nogroup "$SSL_DIR"
-        chmod 755 "$SSL_DIR"
-        chmod 644 "$SSL_DIR/fullchain.cer"
-        chmod 644 "$SSL_DIR/private.key"
+        chown -R root:www-data "$SSL_DIR" 2>/dev/null || true
+        chmod 750 "$SSL_DIR" 2>/dev/null || true
+        chmod 644 "$SSL_DIR/fullchain.cer" 2>/dev/null || true
+        chmod 640 "$SSL_DIR/private.key" 2>/dev/null || true
 
         # Обновляем хук автопродления
         setup_cert_renew_hook
 
         # Перезапуск сервисов
+        systemctl restart nginx 2>/dev/null || true
         systemctl restart xray 2>/dev/null || true
         systemctl restart hysteria-server 2>/dev/null || true
         systemctl restart xray-sub 2>/dev/null || true
@@ -2399,6 +2399,435 @@ renew_ssl_certificate() {
         echo "Проверьте: свободен ли порт 80 и указывает ли DNS A-запись $domain на IP сервера."
         return 1
     fi
+}
+
+# === Санитизация сайта-камуфляжа (Anti-DPI / RosPanel standard) ===
+sanitize_decoy_site() {
+    local html_file="/var/www/html/index.html"
+    [[ -f "$html_file" ]] || return 0
+
+    # 1. Удаление 32-байтных MD5/hex метатегов и комментариев
+    sed -i -E 's/<!--[[:space:]]*[0-9a-fA-F]{32}[[:space:]]*-->//g' "$html_file" 2>/dev/null || true
+    sed -i -E 's/<meta[^>]*content="[0-9a-fA-F]{32}"[^>]*>//gi' "$html_file" 2>/dev/null || true
+
+    # 2. Удаление следов шаблонных генераторов и eGames
+    sed -i -E 's/<!--.*[eE]Games.*-->//gi' "$html_file" 2>/dev/null || true
+    sed -i -E 's/<meta[^>]*name="(generator|author)"[^>]*content=".*(eGames|autoXRAY).*"[^>]*>//gi' "$html_file" 2>/dev/null || true
+
+    # 3. Вставка динамического salt-токена перед </body> для уникализации хэша страницы
+    local salt; salt=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    if grep -qi '<!-- site-build-token:' "$html_file"; then
+        sed -i -E "s/<!-- site-build-token: [0-9a-fA-F]+ -->/<!-- site-build-token: ${salt} -->/g" "$html_file" 2>/dev/null || true
+    elif grep -qi '</body>' "$html_file"; then
+        sed -i -E "s|</body>|  <!-- site-build-token: ${salt} -->\n</body>|i" "$html_file" 2>/dev/null || true
+    else
+        echo "<!-- site-build-token: ${salt} -->" >> "$html_file"
+    fi
+
+    # 4. Обеспечение прав для веб-сервера
+    chown -R www-data:www-data /var/www/html 2>/dev/null || true
+    chmod -R 755 /var/www/html 2>/dev/null || true
+}
+
+# === Генерация сайта-камуфляжа с локализацией по стране (NL, DE, FI, PL, TR, EN) ===
+generate_decoy_site() {
+    local html_dir="/var/www/html"
+    mkdir -p "$html_dir"
+
+    # Если уже есть пользовательский index.html и он не авто-сгенерирован, сохраняем его
+    if [[ -s "$html_dir/index.html" ]] && [[ ! -f "$html_dir/.auto_generated" ]]; then
+        sanitize_decoy_site
+        return 0
+    fi
+
+    local cc; cc=$(get_installed_var "COUNTRY_CODE")
+    if [[ -z "$cc" ]]; then
+        cc=$(get_country_code 2>/dev/null || echo "EN")
+    fi
+    cc=$(echo "$cc" | tr '[:lower:]' '[:upper:]')
+
+    local html_file="$html_dir/index.html"
+
+    case "$cc" in
+        NL)
+            cat > "$html_file" <<'EOF'
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Noordzee Cloud & Datadiensten B.V. | Enterprise Infrastructure</title>
+    <style>
+        :root { --bg: #0c121e; --surf: #131d2e; --border: #22324d; --txt: #e2e8f0; --mut: #8da2c0; --prim: #2563eb; --ok: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--txt); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+        header { border-bottom: 1px solid var(--border); background: rgba(19,29,46,0.9); backdrop-filter: blur(10px); padding: 16px 24px; }
+        .wrap { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .brand { font-size: 1.2rem; font-weight: 700; color: #fff; text-decoration: none; display: flex; align-items: center; gap: 8px; }
+        .dot { width: 10px; height: 10px; background: var(--prim); border-radius: 50%; }
+        main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 50px 24px; }
+        .hero { text-align: center; margin-bottom: 48px; }
+        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.3); border-radius: 20px; font-size: 0.85rem; color: #34d399; margin-bottom: 16px; }
+        h1 { font-size: 2.3rem; margin-bottom: 12px; color: #fff; }
+        .desc { font-size: 1.05rem; color: var(--mut); max-width: 700px; margin: 0 auto; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 36px; }
+        .box { background: var(--surf); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
+        .box h3 { color: #fff; margin-bottom: 8px; }
+        .box p { color: var(--mut); font-size: 0.92rem; }
+        footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.85rem; color: #64748b; background: var(--surf); }
+    </style>
+</head>
+<body>
+    <header><div class="wrap"><a href="/" class="brand"><div class="dot"></div> Noordzee Cloud B.V.</a><span>Amsterdam Edge PoP</span></div></header>
+    <main>
+        <div class="hero">
+            <div class="badge">AMS-IX Direct Connect &bull; 99.99% Beschikbaarheid</div>
+            <h1>Betrouwbare Digitale Infrastructuur & Cloud Hosting</h1>
+            <p class="desc">Hoogwaardige datatransportnetwerken, gecertificeerde datacentra en latency-geoptimaliseerde cloudoplossingen voor veeleisende ondernemingen in Nederland en Europa.</p>
+        </div>
+        <div class="grid">
+            <div class="box"><h3>Anycast Routing</h3><p>Directe koppeling met de Amsterdam Internet Exchange (AMS-IX) met minimale wachttijden en redundante glasvezelverbindingen.</p></div>
+            <div class="box"><h3>DDoS Bescherming</h3><p>Automatische detectie en mitigatie van volumetrische aanvallen op hardwareniveau zonder latentieverlies.</p></div>
+            <div class="box"><h3>Compliance & ISO</h3><p>Volledig compliant met AVG/GDPR en ISO/IEC 27001 normen binnen beveiligde Europese faciliteiten.</p></div>
+        </div>
+    </main>
+    <footer>&copy; 2026 Noordzee Cloud & Datadiensten B.V. Keizersgracht, Amsterdam. Alle rechten voorbehouden.</footer>
+</body>
+</html>
+EOF
+            ;;
+        DE)
+            cat > "$html_file" <<'EOF'
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kruger Datentechnik & Cloud Systeme GmbH | Rechenzentrum Frankfurt</title>
+    <style>
+        :root { --bg: #0d1117; --surf: #161b22; --border: #30363d; --txt: #c9d1d9; --mut: #8b949e; --prim: #1f6feb; --ok: #238636; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--txt); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+        header { border-bottom: 1px solid var(--border); background: rgba(22,27,34,0.9); padding: 16px 24px; }
+        .wrap { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .brand { font-size: 1.2rem; font-weight: 700; color: #fff; text-decoration: none; }
+        main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 50px 24px; }
+        .hero { text-align: center; margin-bottom: 48px; }
+        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; background: rgba(35,134,54,0.15); border: 1px solid rgba(35,134,54,0.3); border-radius: 20px; font-size: 0.85rem; color: #3fb950; margin-bottom: 16px; }
+        h1 { font-size: 2.2rem; margin-bottom: 12px; color: #fff; }
+        .desc { font-size: 1.05rem; color: var(--mut); max-width: 720px; margin: 0 auto; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 36px; }
+        .box { background: var(--surf); border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
+        .box h3 { color: #fff; margin-bottom: 8px; font-size: 1.15rem; }
+        .box p { color: var(--mut); font-size: 0.92rem; }
+        footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.85rem; color: #6e7681; background: var(--surf); }
+    </style>
+</head>
+<body>
+    <header><div class="wrap"><a href="/" class="brand">Kruger Datentechnik GmbH</a><span>DE-CIX Frankfurt PoP</span></div></header>
+    <main>
+        <div class="hero">
+            <div class="badge">DE-CIX Anbindung &bull; ISO 27001 Zertifiziert</div>
+            <h1>Hochleistungs-Infrastruktur & Enterprise Edge Routing</h1>
+            <p class="desc">Moderne Netzwerklösungen, verschlüsselte Punkt-zu-Punkt Datentransfers und skalierbare Rechenzentrumsdienste im Herzen Frankfurts.</p>
+        </div>
+        <div class="grid">
+            <div class="box"><h3>Carrier-Grade Transit</h3><p>Direktanbindung an Tier-1 Uplinks und DE-CIX mit redundanter Glasfasertrasse für maximale Stabilität.</p></div>
+            <div class="box"><h3>DSGVO-Konformität</h3><p>Strengste Einhaltung der europäischen Datenschutzrichtlinien und lokale Speicherung in deutschen Hochsicherheitszentren.</p></div>
+            <div class="box"><h3>Hardware-Absicherung</h3><p>Edge-Paketfilterung mit BGP Anycast zur Neutralisierung von netzwerkbasierten Störversuchen.</p></div>
+        </div>
+    </main>
+    <footer>&copy; 2026 Kruger Datentechnik & Cloud Systeme GmbH. Mainzer Landstraße, Frankfurt am Main. Alle Rechte vorbehalten.</footer>
+</body>
+</html>
+EOF
+            ;;
+        FI)
+            cat > "$html_file" <<'EOF'
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pohjola Digital & Dataverkko Oy | Pohjoismainen Pilvi-infrastruktuuri</title>
+    <style>
+        :root { --bg: #0a101d; --surf: #111a2e; --border: #1e2c4a; --txt: #e2e8f0; --mut: #8da2c0; --prim: #0284c7; --ok: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--txt); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+        header { border-bottom: 1px solid var(--border); background: rgba(17,26,46,0.9); padding: 16px 24px; }
+        .wrap { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .brand { font-size: 1.2rem; font-weight: 700; color: #fff; text-decoration: none; }
+        main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 50px 24px; }
+        .hero { text-align: center; margin-bottom: 48px; }
+        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.3); border-radius: 20px; font-size: 0.85rem; color: #34d399; margin-bottom: 16px; }
+        h1 { font-size: 2.2rem; margin-bottom: 12px; color: #fff; }
+        .desc { font-size: 1.05rem; color: var(--mut); max-width: 720px; margin: 0 auto; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 36px; }
+        .box { background: var(--surf); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
+        .box h3 { color: #fff; margin-bottom: 8px; }
+        .box p { color: var(--mut); font-size: 0.92rem; }
+        footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.85rem; color: #64748b; background: var(--surf); }
+    </style>
+</head>
+<body>
+    <header><div class="wrap"><a href="/" class="brand">Pohjola Dataverkko Oy</a><span>Helsinki FICIX Hub</span></div></header>
+    <main>
+        <div class="hero">
+            <div class="badge">100% Uusiutuva Energia &bull; FICIX Yhteys</div>
+            <h1>Pohjoismainen Pilvipalvelu & Tietoliikenneverkko</h1>
+            <p class="desc">Ekologinen, huippunopea ja energiatehokas datakeskusratkaisu Itämeren solmukohdassa moderneille yritysasiakkaille.</p>
+        </div>
+        <div class="grid">
+            <div class="box"><h3>FICIX Suorakytkentä</h3><p>Huippumatala viive Pohjoismaihin ja Baltiaan suorilla FICIX- ja Netnod-yhteyksillä.</p></div>
+            <div class="box"><h3>Vihreä Infrastruktuuri</h3><p>Konesalimme toimivat täysin hiilineutraalilla tuuli- ja vesivoimalla erinomaisella PUE-hyötysuhteella.</p></div>
+            <div class="box"><h3>Pohjoismainen Tietosuoja</h3><p>Suomen tiukan tietosuojalainsäädännön ja EU:n GDPR-direktiivin mukainen luotettava tiedonhallinta.</p></div>
+        </div>
+    </main>
+    <footer>&copy; 2026 Pohjola Digital & Dataverkko Oy. Mannerheimintie, Helsinki. Kaikki oikeudet pidätetään.</footer>
+</body>
+</html>
+EOF
+            ;;
+        PL)
+            cat > "$html_file" <<'EOF'
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bielik Systemy Chmurowe Sp. z o.o. | Infrastruktura Sieciowa Warszawa</title>
+    <style>
+        :root { --bg: #0f172a; --surf: #1e293b; --border: #334155; --txt: #f8fafc; --mut: #94a3b8; --prim: #e11d48; --ok: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--txt); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+        header { border-bottom: 1px solid var(--border); background: rgba(30,41,59,0.9); padding: 16px 24px; }
+        .wrap { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .brand { font-size: 1.2rem; font-weight: 700; color: #fff; text-decoration: none; }
+        main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 50px 24px; }
+        .hero { text-align: center; margin-bottom: 48px; }
+        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.3); border-radius: 20px; font-size: 0.85rem; color: #34d399; margin-bottom: 16px; }
+        h1 { font-size: 2.2rem; margin-bottom: 12px; color: #fff; }
+        .desc { font-size: 1.05rem; color: var(--mut); max-width: 720px; margin: 0 auto; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 36px; }
+        .box { background: var(--surf); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
+        .box h3 { color: #fff; margin-bottom: 8px; }
+        .box p { color: var(--mut); font-size: 0.92rem; }
+        footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.85rem; color: #64748b; background: var(--surf); }
+    </style>
+</head>
+<body>
+    <header><div class="wrap"><a href="/" class="brand">Bielik Systemy Chmurowe</a><span>Węzeł WIX Warszawa</span></div></header>
+    <main>
+        <div class="hero">
+            <div class="badge">WIX & PLIX Polączenie &bull; SLA 99.95%</div>
+            <h1>Zaawansowane Rozwiązania Chmurowe i Sieciowe</h1>
+            <p class="desc">Bezpieczny tranzyt IP, skalowalna infrastruktura serwerowa i ochrona anty-DDoS dla przedsiębiorstw w Europie Środkowo-Wschodniej.</p>
+        </div>
+        <div class="grid">
+            <div class="box"><h3>Węzeł Wymiany Ruchu</h3><p>Pełna integracja z punktami wymiany ruchu PLIX, TPIX i Equinix Warszawa gwarantuje minimalne opóźnienia.</p></div>
+            <div class="box"><h3>Ochrona Przeciwdziałająca</h3><p>Inteligentna filtracja ruchu sieciowego i buforowanie zapytań chroniące przed atakami wolumetrycznymi.</p></div>
+            <div class="box"><h3>Zgodność z RODO</h3><p>Bezpieczeństwo danych zgodnie z unijnymi standardami prawnymi i certyfikacją ISO/IEC 27001.</p></div>
+        </div>
+    </main>
+    <footer>&copy; 2026 Bielik Systemy Chmurowe Sp. z o.o. Al. Jerozolimskie, Warszawa. Wszelkie prawa zastrzeżone.</footer>
+</body>
+</html>
+EOF
+            ;;
+        TR)
+            cat > "$html_file" <<'EOF'
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anadolu Bulut ve Bilgi Teknolojileri A.Ş. | İstanbul Veri Merkezi</title>
+    <style>
+        :root { --bg: #0b0f19; --surf: #131c2e; --border: #212e47; --txt: #f1f5f9; --mut: #94a3b8; --prim: #dc2626; --ok: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--txt); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+        header { border-bottom: 1px solid var(--border); background: rgba(19,28,46,0.9); padding: 16px 24px; }
+        .wrap { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+        .brand { font-size: 1.2rem; font-weight: 700; color: #fff; text-decoration: none; }
+        main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 50px 24px; }
+        .hero { text-align: center; margin-bottom: 48px; }
+        .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 14px; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.3); border-radius: 20px; font-size: 0.85rem; color: #34d399; margin-bottom: 16px; }
+        h1 { font-size: 2.2rem; margin-bottom: 12px; color: #fff; }
+        .desc { font-size: 1.05rem; color: var(--mut); max-width: 720px; margin: 0 auto; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 36px; }
+        .box { background: var(--surf); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
+        .box h3 { color: #fff; margin-bottom: 8px; }
+        .box p { color: var(--mut); font-size: 0.92rem; }
+        footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; font-size: 0.85rem; color: #64748b; background: var(--surf); }
+    </style>
+</head>
+<body>
+    <header><div class="wrap"><a href="/" class="brand">Anadolu Bulut A.Ş.</a><span>İstanbul Edge Omurgası</span></div></header>
+    <main>
+        <div class="hero">
+            <div class="badge">Tier 3 Veri Merkezi &bull; Yüksek Hızlı Erişim</div>
+            <h1>Yeni Nesil Kurumsal Bulut ve Ağ Çözümleri</h1>
+            <p class="desc">Avrasya köprüsünde yüksek bant genişliği, kesintisiz veri aktarımı ve kurumsal seviye siber güvenlik altyapısı.</p>
+        </div>
+        <div class="grid">
+            <div class="box"><h3>Doğrudan Transit Bağlantı</h3><p>Bölgesel telekom omurgalarına doğrudan erişim ile minimum gecikme ve kesintisiz internet çıkışı.</p></div>
+            <div class="box"><h3>Akıllı DDoS Koruması</h3><p>Hacimsel ağ saldırılarına karşı gerçek zamanlı analiz ve hat düzeyinde paket filtreleme.</p></div>
+            <div class="box"><h3>KVKK Uyumluluğu</h3><p>Tüm veri barındırma süreçlerinde Kişisel Verilerin Korunması Kanunu ve uluslararası güvenlik standartları.</p></div>
+        </div>
+    </main>
+    <footer>&copy; 2026 Anadolu Bulut ve Bilgi Teknolojileri A.Ş. Maslak, İstanbul. Tüm hakları saklıdır.</footer>
+</body>
+</html>
+EOF
+            ;;
+        *)
+            cat > "$html_file" <<'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ApexCloud Global Edge Networks | Distributed Cloud Infrastructure</title>
+    <style>
+        :root { --bg: #0b0f19; --surf: #111827; --border: #1f2937; --txt: #f3f4f6; --mut: #9ca3af; --prim: #2563eb; --ok: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--txt); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+        header { border-bottom: 1px solid var(--border); background: rgba(17,24,39,0.85); backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 100; }
+        .wrap { max-width: 1200px; margin: 0 auto; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .brand { font-size: 1.25rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px; text-decoration: none; }
+        .dot { width: 10px; height: 10px; background: var(--prim); border-radius: 50%; }
+        main { flex: 1; max-width: 1200px; margin: 0 auto; padding: 60px 24px; }
+        .hero { text-align: center; max-width: 780px; margin: 0 auto 64px; }
+        .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25); border-radius: 9999px; font-size: 0.85rem; font-weight: 500; color: #34d399; margin-bottom: 24px; }
+        .pulse { width: 8px; height: 8px; background: var(--ok); border-radius: 50%; box-shadow: 0 0 8px var(--ok); }
+        h1 { font-size: 2.5rem; font-weight: 800; line-height: 1.2; margin-bottom: 18px; letter-spacing: -0.02em; color: #fff; }
+        .desc { font-size: 1.15rem; color: var(--mut); margin-bottom: 32px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 64px; }
+        .box { background: var(--surf); border: 1px solid var(--border); border-radius: 12px; padding: 28px; }
+        .box h3 { font-size: 1.15rem; font-weight: 600; margin-bottom: 8px; color: #fff; }
+        .box p { font-size: 0.92rem; color: var(--mut); }
+        footer { border-top: 1px solid var(--border); padding: 28px 24px; text-align: center; color: #6b7280; font-size: 0.85rem; background: var(--surf); }
+    </style>
+</head>
+<body>
+    <header><div class="wrap"><a href="/" class="brand"><div class="dot"></div> ApexCloud Networks</a><span>Tier 4 Edge PoP</span></div></header>
+    <main>
+        <div class="hero">
+            <div class="badge"><div class="pulse"></div> Tier 4 Edge PoP &bull; 100% SLA Operational</div>
+            <h1>Next-Generation Anycast Edge & Distributed Infrastructure</h1>
+            <p class="desc">Ultra-low latency global transport fabric, automated TLS edge termination, and hardware-accelerated packet filtering designed for mission-critical enterprise workloads.</p>
+        </div>
+        <div class="grid">
+            <div class="box"><h3>Anycast BGP Edge Routing</h3><p>Global multi-homed BGP routing with sub-millisecond edge response, automatic failover, and carrier-grade transit integration.</p></div>
+            <div class="box"><h3>Hardware Layer 4/7 Shield</h3><p>Real-time autonomous threat filtering with stateful SYN flood mitigation and automated TLS handshake validation.</p></div>
+            <div class="box"><h3>Zero-Trust Telemetry</h3><p>High-frequency telemetry pipelines providing end-to-end trace collection, latency profiling, and encrypted service meshes.</p></div>
+        </div>
+    </main>
+    <footer>&copy; 2026 ApexCloud Global Networks LLC. All rights reserved. ISO/IEC 27001 Certified Infrastructure.</footer>
+</body>
+</html>
+EOF
+            ;;
+    esac
+
+    touch "$html_dir/.auto_generated"
+    sanitize_decoy_site
+}
+
+# === Настройка Nginx для SelfSteal и XHTTP ===
+setup_nginx() {
+    echo "🌐 Настройка Nginx для SelfSteal и XHTTP..."
+    local domain; domain=$(get_installed_var "DOMAIN")
+    [[ -z "$domain" ]] && domain="${DOMAIN:-}"
+
+    mkdir -p /etc/nginx/conf.d /var/www/html /dev/shm
+    rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
+
+    local conf_file="/etc/nginx/conf.d/vless.conf"
+    cat > "$conf_file" <<EOF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen unix:/dev/shm/nginx.sock ssl proxy_protocol default_server;
+    server_name ${domain};
+
+    set_real_ip_from unix:;
+    real_ip_header proxy_protocol;
+
+    ssl_certificate ${SSL_DIR}/fullchain.cer;
+    ssl_certificate_key ${SSL_DIR}/private.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    http2 on;
+
+    root /var/www/html;
+    index index.html index.htm;
+
+    # Xray VLESS XHTTP endpoint
+    location /api/v2/stream/ {
+        proxy_pass http://unix:/dev/shm/xrxh.socket;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # Сервер подписок
+    location /sub/ {
+        proxy_pass http://127.0.0.1:10080/sub/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+}
+EOF
+
+    # Проверка совместимости директивы http2 для Nginx < 1.25.1
+    if ! nginx -t >/dev/null 2>&1; then
+        sed -i '/http2 on;/d' "$conf_file" 2>/dev/null || true
+        sed -i 's/listen unix:\/dev\/shm\/nginx.sock ssl proxy_protocol default_server;/listen unix:\/dev\/shm\/nginx.sock ssl http2 proxy_protocol default_server;/' "$conf_file" 2>/dev/null || true
+    fi
+
+    # Обеспечиваем права на /dev/shm и сокеты
+    chmod 1777 /dev/shm 2>/dev/null || true
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl restart nginx 2>/dev/null || true
+
+    local wait_count=0
+    while [[ ! -S /dev/shm/nginx.sock ]] && [[ $wait_count -lt 6 ]]; do
+        sleep 0.5
+        wait_count=$((wait_count + 1))
+    done
+    [[ -S /dev/shm/nginx.sock ]] && chmod 666 /dev/shm/nginx.sock 2>/dev/null || true
 }
 
 # === Тестирование автопродления (Dry-Run) ===
@@ -2417,10 +2846,16 @@ test_ssl_renewal() {
 generate_server_config() {
     echo "🧩 Генерация конфигурации Xray..."
     local config_file="$XRAY_CONFIG_DIR/config.json"
+    local DOMAIN; DOMAIN=$(get_installed_var "DOMAIN" | tr -d '[:space:]')
+
+    # Развёртывание и санитизация камуфляжного сайта, настройка Nginx
+    generate_decoy_site
+    sanitize_decoy_site
+    setup_nginx
     
     # Инициализация массивов для клиентов
     local vless_clients=()
-    local vless_grpc_clients=()
+    local vless_xhttp_clients=()
     
     # Проверяем, есть ли уже клиенты
     if [[ -d "$CLIENT_CONFIG_DIR" ]] && [[ "$(find "$CLIENT_CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)" -gt 0 ]]; then
@@ -2434,7 +2869,7 @@ generate_server_config() {
                   \"flow\": \"xtls-rprx-vision\",
                   \"email\": \"client-$idx\"
                 }")
-                vless_grpc_clients+=("{
+                vless_xhttp_clients+=("{
                   \"id\": \"$uuid\",
                   \"email\": \"client-$idx\"
                 }")
@@ -2454,7 +2889,7 @@ generate_server_config() {
               \"flow\": \"xtls-rprx-vision\",
               \"email\": \"client-$i\"
             }")
-            vless_grpc_clients+=("{
+            vless_xhttp_clients+=("{
               \"id\": \"$uuid\",
               \"email\": \"client-$i\"
             }")
@@ -2462,7 +2897,7 @@ generate_server_config() {
     fi
     
     local vless_clients_str; vless_clients_str=$(IFS=,; echo "${vless_clients[*]}")
-    local vless_grpc_clients_str; vless_grpc_clients_str=$(IFS=,; echo "${vless_grpc_clients[*]}")
+    local vless_xhttp_clients_str; vless_xhttp_clients_str=$(IFS=,; echo "${vless_xhttp_clients[*]}")
     
     # Проверяем статус WARP и Opera Proxy
     local warp_enabled; warp_enabled=$(get_installed_var "WARP_ENABLED")
@@ -2470,38 +2905,48 @@ generate_server_config() {
     [[ -z "$warp_mode" ]] && warp_mode="smart"
     local opera_enabled; opera_enabled=$(get_installed_var "OPERA_ENABLED")
     local tor_enabled; tor_enabled=$(get_installed_var "TOR_ENABLED")
-    local DOMAIN; DOMAIN=$(get_installed_var "DOMAIN" | tr -d '[:space:]')
     
-    # Загружаем настройки Reality
-    local reality_enabled; reality_enabled=$(get_installed_var "REALITY_ENABLED")
-    [[ -z "$reality_enabled" ]] && reality_enabled="false"
-    local reality_sni; reality_sni=$(get_installed_var "REALITY_SNI" | tr -d '[:space:]')
-    local reality_dest; reality_dest=$(get_installed_var "REALITY_DEST" | tr -d '[:space:]')
+    # SelfSteal: Reality активен всегда, SNI - собственный домен, DEST - локальный сокет Nginx
+    REALITY_ENABLED="true"
+    update_marker_val "REALITY_ENABLED" "true"
+    local reality_sni="$DOMAIN"
+    update_marker_val "REALITY_SNI" "$reality_sni"
+    local reality_dest="/dev/shm/nginx.sock"
+    update_marker_val "REALITY_DEST" "$reality_dest"
+
     local reality_priv; reality_priv=$(get_installed_var "REALITY_PRIVATE_KEY" | tr -d '[:space:]')
     local reality_pub; reality_pub=$(get_installed_var "REALITY_PUBLIC_KEY" | tr -d '[:space:]')
     local reality_sid; reality_sid=$(get_installed_var "REALITY_SHORT_ID" | tr -d '[:space:]')
 
-    if [[ "$reality_enabled" == "true" ]]; then
-        # Гарантируем наличие ключей и short ID
+    # Гарантируем наличие ключей и short ID
+    if [[ -z "$reality_priv" || -z "$reality_pub" ]]; then
+        local keys; keys=$(command -v xray &>/dev/null && xray x25519 2>/dev/null || /usr/local/bin/xray x25519 2>/dev/null || xray x25519 2>/dev/null || true)
+        reality_priv=$(echo "$keys" | awk -F':' '/[Pp]rivate/ { gsub(/[[:space:]]/, ""); print $2 }')
+        reality_pub=$(echo "$keys" | awk -F':' '/[Pp]ublic/ { gsub(/[[:space:]]/, ""); print $2 }')
         if [[ -z "$reality_priv" || -z "$reality_pub" ]]; then
-            local keys; keys=$(command -v xray &>/dev/null && xray x25519 2>/dev/null || /usr/local/bin/xray x25519 2>/dev/null || xray x25519 2>/dev/null)
-            reality_priv=$(echo "$keys" | awk -F':' '/[Pp]rivate/ { gsub(/[[:space:]]/, ""); print $2 }')
-            reality_pub=$(echo "$keys" | awk -F':' '/[Pp]ublic/ { gsub(/[[:space:]]/, ""); print $2 }')
-            update_marker_val "REALITY_PRIVATE_KEY" "$reality_priv"
-            update_marker_val "REALITY_PUBLIC_KEY" "$reality_pub"
+            local py_keys; py_keys=$(python3 -c "
+try:
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    import base64
+    k = x25519.X25519PrivateKey.generate()
+    priv = base64.urlsafe_b64encode(k.private_bytes_raw()).decode().rstrip('=')
+    pub = base64.urlsafe_b64encode(k.public_key().public_bytes_raw()).decode().rstrip('=')
+    print(f'{priv}:{pub}')
+except Exception:
+    import secrets, base64
+    print(f'{base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip(\"=\")}:{base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip(\"=\")}')
+" 2>/dev/null || true)
+            if [[ -n "$py_keys" && "$py_keys" == *:* ]]; then
+                reality_priv="${py_keys%%:*}"
+                reality_pub="${py_keys#*:}"
+            fi
         fi
-        if [[ -z "$reality_sid" ]]; then
-            reality_sid=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
-            update_marker_val "REALITY_SHORT_ID" "$reality_sid"
-        fi
-        if [[ -z "$reality_sni" ]]; then
-            reality_sni="max.ru"
-            update_marker_val "REALITY_SNI" "$reality_sni"
-        fi
-        if [[ -z "$reality_dest" ]]; then
-            reality_dest="max.ru:443"
-            update_marker_val "REALITY_DEST" "$reality_dest"
-        fi
+        update_marker_val "REALITY_PRIVATE_KEY" "$reality_priv"
+        update_marker_val "REALITY_PUBLIC_KEY" "$reality_pub"
+    fi
+    if [[ -z "$reality_sid" ]]; then
+        reality_sid=$(head -c 8 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n' || python3 -c 'import secrets; print(secrets.token_hex(8))' 2>/dev/null || true)
+        update_marker_val "REALITY_SHORT_ID" "$reality_sid"
     fi
 
     local outbounds_list=()
@@ -2908,87 +3353,12 @@ EOF
       }")
 
     local routing_rules_str; routing_rules_str=$(IFS=,; echo "${routing_rules_list[*]}")
-    
-    # Fallback-маршруты для VLESS TCP (перенаправление на сервер подписок)
-    local fallbacks_str='[
-          {
-            "path": "/sub/",
-            "dest": 10080
-          },
-          {
-            "dest": 10080
-          }
-        ]'
 
-    # Генерация inbounds секции в зависимости от активности Reality
-    local inbounds_str=""
-    if [[ "$reality_enabled" == "true" ]]; then
-        inbounds_str='[
+    # Генерация inbounds: Reality SelfSteal (443) + XHTTP (/dev/shm/xrxh.socket)
+    local inbounds_str='[
     {
+      "tag": "vless-reality",
       "port": 443,
-      "protocol": "vless",
-      "settings": {
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "name": "'"$DOMAIN"'",
-            "dest": 4433
-          },
-          {
-            "name": "'"$reality_sni"'",
-            "dest": 4434
-          },
-          {
-            "dest": "'"$reality_dest"'"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none"
-      }
-    },
-    {
-      "listen": "127.0.0.1",
-      "port": 4433,
-      "protocol": "vless",
-      "settings": {
-        "clients": ['"$vless_clients_str"'],
-        "decryption": "none",
-        "fallbacks": '"$fallbacks_str"'
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "rejectUnknownSni": true,
-          "certificates": [{
-            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
-            "keyFile": "'"$SSL_DIR"'/private.key"
-          }],
-          "alpn": [
-            "http/1.1"
-          ],
-          "minVersion": "1.3"
-        },
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "listen": "127.0.0.1",
-      "port": 4434,
       "protocol": "vless",
       "settings": {
         "clients": ['"$vless_clients_str"'],
@@ -3008,7 +3378,7 @@ EOF
         "realitySettings": {
           "show": false,
           "dest": "'"$reality_dest"'",
-          "xver": 0,
+          "xver": 1,
           "serverNames": [
             "'"$reality_sni"'"
           ],
@@ -3026,10 +3396,10 @@ EOF
     },
     {
       "tag": "vless-xhttp",
-      "port": 8443,
+      "listen": "/dev/shm/xrxh.socket,0666",
       "protocol": "vless",
       "settings": {
-        "clients": ['"$vless_grpc_clients_str"'],
+        "clients": ['"$vless_xhttp_clients_str"'],
         "decryption": "none"
       },
       "sniffing": {
@@ -3042,80 +3412,9 @@ EOF
       },
       "streamSettings": {
         "network": "xhttp",
-        "security": "tls",
-        "tlsSettings": {
-          "rejectUnknownSni": true,
-          "certificates": [{
-            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
-            "keyFile": "'"$SSL_DIR"'/private.key"
-          }],
-          "alpn": [
-            "h2",
-            "http/1.1"
-          ],
-          "minVersion": "1.2"
-        },
         "xhttpSettings": {
-          "path": "/xhttp",
-          "host": "'"$DOMAIN"'",
-          "mode": "auto",
-          "extra": {
-            "noSSEHeader": true,
-            "xPaddingBytes": "100-1000",
-            "scMaxBufferedPosts": 30,
-            "scMaxEachPostBytes": 1000000,
-            "scMinPostsIntervalMs": 5,
-            "scStreamUpServerSecs": "20-80",
-            "xmux": {
-              "cMaxReuseTimes": 0,
-              "maxConcurrency": "6-8",
-              "maxConnections": 0,
-              "hKeepAlivePeriod": 0,
-              "hMaxRequestTimes": "600-900",
-              "hMaxReusableSecs": "1800-3000"
-            }
-          }
-        },
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "vless-grpc",
-      "port": 2053,
-      "protocol": "vless",
-      "settings": {
-        "clients": ['"$vless_grpc_clients_str"'],
-        "decryption": "none"
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ]
-      },
-      "streamSettings": {
-        "network": "grpc",
-        "security": "tls",
-        "tlsSettings": {
-          "rejectUnknownSni": true,
-          "certificates": [{
-            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
-            "keyFile": "'"$SSL_DIR"'/private.key"
-          }],
-          "alpn": [
-            "h2"
-          ],
-          "minVersion": "1.2"
-        },
-        "grpcSettings": {
-          "serviceName": "vless-grpc",
-          "multiMode": true
+          "path": "/api/v2/stream/",
+          "mode": "auto"
         },
         "sockopt": {
           "tcpFastOpen": true,
@@ -3125,147 +3424,6 @@ EOF
       }
     }
   ]'
-    else
-        inbounds_str='[
-    {
-      "port": 443,
-      "protocol": "vless",
-      "settings": {
-        "clients": ['"$vless_clients_str"'],
-        "decryption": "none",
-        "fallbacks": '"$fallbacks_str"'
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "rejectUnknownSni": true,
-          "certificates": [{
-            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
-            "keyFile": "'"$SSL_DIR"'/private.key"
-          }],
-          "alpn": [
-            "http/1.1"
-          ],
-          "minVersion": "1.3"
-        },
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "vless-xhttp",
-      "port": 8443,
-      "protocol": "vless",
-      "settings": {
-        "clients": ['"$vless_grpc_clients_str"'],
-        "decryption": "none"
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ]
-      },
-      "streamSettings": {
-        "network": "xhttp",
-        "security": "tls",
-        "tlsSettings": {
-          "rejectUnknownSni": true,
-          "certificates": [{
-            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
-            "keyFile": "'"$SSL_DIR"'/private.key"
-          }],
-          "alpn": [
-            "h2",
-            "http/1.1"
-          ],
-          "minVersion": "1.2"
-        },
-        "xhttpSettings": {
-          "path": "/xhttp",
-          "host": "'"$DOMAIN"'",
-          "mode": "auto",
-          "extra": {
-            "noSSEHeader": true,
-            "xPaddingBytes": "100-1000",
-            "scMaxBufferedPosts": 30,
-            "scMaxEachPostBytes": 1000000,
-            "scMinPostsIntervalMs": 5,
-            "scStreamUpServerSecs": "20-80",
-            "xmux": {
-              "cMaxReuseTimes": 0,
-              "maxConcurrency": "6-8",
-              "maxConnections": 0,
-              "hKeepAlivePeriod": 0,
-              "hMaxRequestTimes": "600-900",
-              "hMaxReusableSecs": "1800-3000"
-            }
-          }
-        },
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    },
-    {
-      "tag": "vless-grpc",
-      "port": 2053,
-      "protocol": "vless",
-      "settings": {
-        "clients": ['"$vless_grpc_clients_str"'],
-        "decryption": "none"
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ]
-      },
-      "streamSettings": {
-        "network": "grpc",
-        "security": "tls",
-        "tlsSettings": {
-          "rejectUnknownSni": true,
-          "certificates": [{
-            "certificateFile": "'"$SSL_DIR"'/fullchain.cer",
-            "keyFile": "'"$SSL_DIR"'/private.key"
-          }],
-          "alpn": [
-            "h2"
-          ],
-          "minVersion": "1.2"
-        },
-        "grpcSettings": {
-          "serviceName": "vless-grpc",
-          "multiMode": true
-        },
-        "sockopt": {
-          "tcpFastOpen": true,
-          "tcpcongestion": "bbr",
-          "tcpKeepAliveIdle": 300
-        }
-      }
-    }
-  ]'
-    fi
 
     # Генерация конфигурационного файла
     cat > "$config_file" <<EOF
@@ -3322,12 +3480,12 @@ EOF
     mkdir -p /etc/xray
     ln -sf "$config_file" /etc/xray/config.json 2>/dev/null || true
 
-    # Обеспечиваем корректные права на SSL-директорию и ключи
+    # Обеспечиваем корректные права на SSL-директорию и ключи для Nginx
     if [[ -d "$SSL_DIR" ]]; then
-        chown -R nobody:nogroup "$SSL_DIR" 2>/dev/null || true
-        chmod 755 "$SSL_DIR" 2>/dev/null || true
+        chown -R root:www-data "$SSL_DIR" 2>/dev/null || chown -R nobody:nogroup "$SSL_DIR" 2>/dev/null || true
+        chmod 750 "$SSL_DIR" 2>/dev/null || chmod 755 "$SSL_DIR" 2>/dev/null || true
         [[ -f "$SSL_DIR/fullchain.cer" ]] && chmod 644 "$SSL_DIR/fullchain.cer" 2>/dev/null || true
-        [[ -f "$SSL_DIR/private.key" ]] && chmod 644 "$SSL_DIR/private.key" 2>/dev/null || true
+        [[ -f "$SSL_DIR/private.key" ]] && chmod 640 "$SSL_DIR/private.key" 2>/dev/null || true
     fi
 
     # Обеспечиваем корректную службу и права на логи Xray
@@ -3341,6 +3499,7 @@ EOF
         fi
     fi
 
+    rm -f /dev/shm/xrxh.socket 2>/dev/null || true
     systemctl restart xray
     sleep 1
     if ! systemctl is-active --quiet xray; then
@@ -3348,6 +3507,12 @@ EOF
         journalctl -u xray -n 25 --no-pager 2>/dev/null || true
         return 1
     fi
+    local wait_sock=0
+    while [[ ! -S /dev/shm/xrxh.socket ]] && [[ $wait_sock -lt 6 ]]; do
+        sleep 0.5
+        wait_sock=$((wait_sock + 1))
+    done
+    [[ -S /dev/shm/xrxh.socket ]] && chmod 666 /dev/shm/xrxh.socket 2>/dev/null || true
     log_info "Restarted Xray service successfully"
 }
 
@@ -3387,7 +3552,7 @@ generate_hysteria_config() {
     local userpass_str; userpass_str=$(IFS=$'\n'; echo "${userpass[*]}")
     
     cat > "$config_yaml" <<EOF
-listen: :443
+listen: :20443
 
 tls:
   cert: $SSL_DIR/fullchain.cer
@@ -3399,10 +3564,9 @@ auth:
 $userpass_str
 
 masquerade:
-  type: proxy
-  proxy:
-    url: https://www.bing.com
-    rewriteHost: true
+  type: file
+  file:
+    dir: /var/www/html
 EOF
 
     # Управляем правами
@@ -3416,11 +3580,11 @@ EOF
     local ip6_post=""
     if [[ -x "$ip6tables_path" ]] && [[ -f /proc/net/if_inet6 ]] && [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)" != "1" ]]; then
         ip6_pre=$(cat <<EOF6
-ExecStartPre=-/bin/sh -c "$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
-ExecStartPre=-$ip6tables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
+ExecStartPre=-/bin/sh -c "$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true"
+ExecStartPre=-$ip6tables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443
 EOF6
 )
-        ip6_post="ExecStopPost=-/bin/sh -c \"$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true\""
+        ip6_post="ExecStopPost=-/bin/sh -c \"$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true\""
     fi
 
     cat > /etc/systemd/system/hysteria-server.service <<EOF
@@ -3432,11 +3596,11 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/etc/hysteria
-ExecStartPre=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
+ExecStartPre=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true"
 $ip6_pre
-ExecStartPre=-$iptables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443
+ExecStartPre=-$iptables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443
 ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/config.yaml
-ExecStopPost=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
+ExecStopPost=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true"
 $ip6_post
 Restart=always
 RestartSec=5
@@ -3852,7 +4016,7 @@ def vless_url_to_sing_box_outbound(url: str, enable_fragment: bool = True):
         elif transport_type == "xhttp":
             outbound["transport"] = {
                 "type": "xhttp",
-                "path": path or "/xhttp",
+                "path": urllib.parse.unquote(path) if path else "/api/v2/stream/",
                 "host": sni or host,
                 "mode": get_param("mode") or "auto"
             }
@@ -4007,7 +4171,7 @@ def vless_url_to_xray_outbound(url: str, index: int):
             }
         elif transport_type == "xhttp":
             outbound["streamSettings"]["xhttpSettings"] = {
-                "path": path or "/xhttp",
+                "path": urllib.parse.unquote(path) if path else "/api/v2/stream/",
                 "host": sni or host,
                 "mode": get_param("mode") or "auto",
                 "extra": {
@@ -4120,7 +4284,7 @@ def vless_url_to_mihomo_proxy(url: str):
             }
         elif transport_type == "xhttp":
             proxy["xhttp-opts"] = {
-                "path": path or "/xhttp",
+                "path": urllib.parse.unquote(path) if path else "/api/v2/stream/",
                 "host": sni or host,
                 "mode": get_param("mode") or "auto"
             }
@@ -4259,27 +4423,27 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
             domain = self.headers.get('Host', '').split(':')[0]
 
         loc_label = f"{emoji} [{country_code}] " if (emoji and country_code) else (f"{emoji} " if emoji else (f"[{country_code}] " if country_code else ""))
-        remark_vision = f"{loc_label}🌐 VLESS-TCP".strip()
-        remark_hy2 = f"{loc_label}⚡ Hysteria2".strip()
         remark_xhttp = f"{loc_label}🛡️ VLESS-XHTTP".strip()
-        remark_grpc = f"{loc_label}↔️ VLESS-gRPC".strip()
-        remark_reality = f"{loc_label}🪞 VLESS-Reality ({ivars['reality_sni']})".strip()
+        remark_reality = f"{loc_label}🪞 VLESS-Reality".strip()
+        remark_hy2 = f"{loc_label}⚡ Hysteria2".strip()
 
-        encoded_remark_vision = urllib.parse.quote(remark_vision)
-        encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         encoded_remark_xhttp = urllib.parse.quote(remark_xhttp)
-        encoded_remark_grpc = urllib.parse.quote(remark_grpc)
         encoded_remark_reality = urllib.parse.quote(remark_reality)
+        encoded_remark_hy2 = urllib.parse.quote(remark_hy2)
         
-        vless_vision = f"vless://{uuid_param}@{domain}:443?encryption=none&flow=xtls-rprx-vision&security=tls&sni={domain}&type=tcp&fp={fp}&alpn=http%2F1.1#{encoded_remark_vision}"
+        # 1. VLESS XHTTP TLS (443, /api/v2/stream/)
+        vless_xhttp = f"vless://{uuid_param}@{domain}:443?encryption=none&security=tls&type=xhttp&path=%2Fapi%2Fv2%2Fstream%2F&mode=auto&fp={fp}&alpn=h2%2Chttp%2F1.1&sni={domain}&host={domain}#{encoded_remark_xhttp}"
+        
+        # 2. VLESS Reality SelfSteal (443)
+        vless_reality = f"vless://{uuid_param}@{domain}:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni={domain}&pbk={ivars['reality_pbk']}&sid={ivars['reality_sid']}&fp={fp}&type=tcp#{encoded_remark_reality}"
+        
+        # 3. Hysteria 2 (20443)
         hy2_link = f"hysteria2://{uuid_param}:{uuid_param}@{domain}:20443?sni={domain}&hop=20000-50000&mport=20000-50000&mportHopInt=30#{encoded_remark_hy2}"
-        vless_xhttp = f"vless://{uuid_param}@{domain}:8443?encryption=none&security=tls&type=xhttp&path=%2Fxhttp&mode=auto&fp={fp}&alpn=h2%2Chttp%2F1.1&sni={domain}&host={domain}#{encoded_remark_xhttp}"
-        vless_grpc = f"vless://{uuid_param}@{domain}:2053?encryption=none&security=tls&type=grpc&serviceName=vless-grpc&service_name=vless-grpc&mode=multi&fp={fp}&alpn=h2&sni={domain}#{encoded_remark_grpc}"
         
-        urls = [vless_vision, hy2_link, vless_xhttp, vless_grpc]
-        if ivars["reality_enabled"] == "true":
-            vless_reality = f"vless://{uuid_param}@{domain}:443?flow=xtls-rprx-vision&security=reality&sni={ivars['reality_sni']}&pbk={ivars['reality_pbk']}&sid={ivars['reality_sid']}&fp={fp}&type=tcp#{encoded_remark_reality}"
+        urls = [vless_xhttp]
+        if ivars.get("reality_pbk"):
             urls.append(vless_reality)
+        urls.append(hy2_link)
             
         # Standard proxy links for base64 subscriptions
         base64_links = [u for u in urls if u.startswith(("vless://", "hysteria2://", "trojan://", "ss://", "vmess://"))]
@@ -5274,8 +5438,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
         elif format_param in ("xkeen", "keenetic"):
             xkeen_outbounds = []
             vless_urls = [u for u in urls if u.startswith("vless://")]
-            # Sort: Reality first if present, then Vision, then others
-            vless_urls.sort(key=lambda u: 0 if "security=reality" in u else (1 if "flow=xtls-rprx-vision" in u else 2))
+            # Sort: Reality first if present, then XHTTP
+            vless_urls.sort(key=lambda u: 0 if "security=reality" in u else (1 if "type=xhttp" in u else 2))
             for i, u in enumerate(vless_urls):
                 ob = vless_url_to_xray_outbound(u, i + 1)
                 if ob:
@@ -5451,32 +5615,27 @@ elif [[ -n "$COUNTRY_CODE" ]]; then
   loc_label="[${COUNTRY_CODE}] "
 fi
 
-remark_vision="${loc_label}🌐 VLESS-TCP"
-remark_hy2="${loc_label}⚡ Hysteria2"
 remark_xhttp="${loc_label}🛡️ VLESS-XHTTP"
-remark_grpc="${loc_label}↔️ VLESS-gRPC"
-remark_reality="${loc_label}🪞 VLESS-Reality (${REALITY_SNI})"
+remark_reality="${loc_label}🪞 VLESS-Reality"
+remark_hy2="${loc_label}⚡ Hysteria2"
 
 urlencode() {
   python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]), end='')" "$1" 2>/dev/null || echo -n "$1"
 }
 
-encoded_remark_vision=$(urlencode "$remark_vision")
-encoded_remark_hy2=$(urlencode "$remark_hy2")
 encoded_remark_xhttp=$(urlencode "$remark_xhttp")
-encoded_remark_grpc=$(urlencode "$remark_grpc")
 encoded_remark_reality=$(urlencode "$remark_reality")
+encoded_remark_hy2=$(urlencode "$remark_hy2")
 
 # Ссылки для подключения
-VLESS_VISION="vless://${UUID}@${DOMAIN}:${PORT}?encryption=none&flow=${FLOW}&security=tls&sni=${DOMAIN}&type=tcp&fp=${FINGERPRINT}&alpn=http%2F1.1#${encoded_remark_vision}"
+VLESS_XHTTP="vless://${UUID}@${DOMAIN}:${PORT}?encryption=none&security=tls&type=xhttp&path=%2Fapi%2Fv2%2Fstream%2F&mode=auto&fp=${FINGERPRINT}&alpn=h2%2Chttp%2F1.1&sni=${DOMAIN}&host=${DOMAIN}#${encoded_remark_xhttp}"
 HY2_LINK="hysteria2://${UUID}:${UUID}@${DOMAIN}:20443?sni=${DOMAIN}&hop=20000-50000&mport=20000-50000&mportHopInt=30#${encoded_remark_hy2}"
-VLESS_XHTTP="vless://${UUID}@${DOMAIN}:8443?encryption=none&security=tls&type=xhttp&path=%2Fxhttp&mode=auto&fp=${FINGERPRINT}&alpn=h2%2Chttp%2F1.1&sni=${DOMAIN}&host=${DOMAIN}#${encoded_remark_xhttp}"
-VLESS_GRPC="vless://${UUID}@${DOMAIN}:2053?encryption=none&security=tls&type=grpc&serviceName=vless-grpc&service_name=vless-grpc&mode=multi&fp=${FINGERPRINT}&alpn=h2&sni=${DOMAIN}#${encoded_remark_grpc}"
 SUBSCRIPTION_URL="https://${DOMAIN}/sub/${UUID}"
 HAPP_URL="happ://add/${SUBSCRIPTION_URL}"
 
-if [[ "$REALITY_ENABLED" = "true" ]]; then
-  VLESS_REALITY="vless://${UUID}@${DOMAIN}:${PORT}?flow=${FLOW}&security=reality&sni=${REALITY_SNI}&pbk=${REALITY_PBK}&sid=${REALITY_SID}&fp=${FINGERPRINT}&type=tcp#${encoded_remark_reality}"
+VLESS_REALITY=""
+if [[ "$REALITY_ENABLED" = "true" && -n "$REALITY_PBK" ]]; then
+  VLESS_REALITY="vless://${UUID}@${DOMAIN}:${PORT}?encryption=none&flow=${FLOW}&security=reality&sni=${DOMAIN}&pbk=${REALITY_PBK}&sid=${REALITY_SID}&fp=${FINGERPRINT}&type=tcp#${encoded_remark_reality}"
 fi
 
 TELEMT_LINK=""
@@ -5486,18 +5645,14 @@ fi
 
 echo -e "\n${BOLD}${PURPLE}🔗  ССЫЛКИ ДЛЯ ПОДКЛЮЧЕНИЯ${NC}"
 echo -e "${PURPLE}──────────────────────────────────────────────────────────${NC}"
-echo -e " ${BOLD}${YELLOW}1. VLESS TCP Vision (Для смартфонов и ПК, порт 443):${NC}"
-echo -e "    ${GREEN}$VLESS_VISION${NC}"
-echo -e " ${BOLD}${YELLOW}2. Hysteria2 (UDP, быстрый обход, порт 20443/hopping):${NC}"
-echo -e "    ${GREEN}$HY2_LINK${NC}"
-echo -e " ${BOLD}${YELLOW}3. VLESS XHTTP TLS (HTTP/2 + паддинг, порт 8443):${NC}"
+echo -e " ${BOLD}${YELLOW}1. VLESS XHTTP TLS (HTTP/2 + стриминг через Nginx, порт 443):${NC}"
 echo -e "    ${GREEN}$VLESS_XHTTP${NC}"
-echo -e " ${BOLD}${YELLOW}4. VLESS gRPC TLS (Резервный протокол, порт 2053):${NC}"
-echo -e "    ${GREEN}$VLESS_GRPC${NC}"
-if [[ "$REALITY_ENABLED" = "true" ]]; then
-echo -e " ${BOLD}${YELLOW}5. VLESS Reality (Маскировка ${REALITY_SNI}):${NC}"
+if [[ "$REALITY_ENABLED" = "true" && -n "$VLESS_REALITY" ]]; then
+echo -e " ${BOLD}${YELLOW}2. VLESS Reality SelfSteal (XTLS-Vision, порт 443):${NC}"
 echo -e "    ${GREEN}$VLESS_REALITY${NC}"
 fi
+echo -e " ${BOLD}${YELLOW}3. Hysteria2 (UDP QUIC, порт 20443/hopping):${NC}"
+echo -e "    ${GREEN}$HY2_LINK${NC}"
 if [[ "$TELEMT_INSTALLED" = "true" && -n "$TELEMT_LINK" ]]; then
 echo -e " ${BOLD}${YELLOW}✈️  Telegram MTProto Proxy (Fake-TLS, порт ${TELEMT_PORT}):${NC}"
 echo -e "    ${GREEN}$TELEMT_LINK${NC}"
@@ -5521,47 +5676,43 @@ echo -e "${PURPLE}────────────────────�
 echo -e "\n${BOLD}${CYAN}🔳  ГЕНЕРАЦИЯ QR-КОДА${NC}"
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 echo -e " Выберите, для чего отобразить QR-код:"
-echo -e " ${BOLD}${YELLOW}1.${NC} VLESS TCP Vision (порт 443)"
-echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2 (порт 20443/hopping)"
-echo -e " ${BOLD}${YELLOW}3.${NC} VLESS XHTTP TLS (порт 8443)"
-echo -e " ${BOLD}${YELLOW}4.${NC} VLESS gRPC TLS (порт 2053)"
-if [[ "$REALITY_ENABLED" = "true" ]]; then
-echo -e " ${BOLD}${YELLOW}5.${NC} VLESS Reality"
-echo -e " ${BOLD}${YELLOW}6.${NC} Ссылка подписки (https://)"
-echo -e " ${BOLD}${YELLOW}7.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
-echo -e " ${BOLD}${YELLOW}8.${NC} 📶 Ссылка для Keenetic (XKeen)"
+if [[ "$REALITY_ENABLED" = "true" && -n "$VLESS_REALITY" ]]; then
+echo -e " ${BOLD}${YELLOW}1.${NC} VLESS XHTTP TLS (порт 443)"
+echo -e " ${BOLD}${YELLOW}2.${NC} VLESS Reality SelfSteal (порт 443)"
+echo -e " ${BOLD}${YELLOW}3.${NC} Hysteria2 (порт 20443/hopping)"
+echo -e " ${BOLD}${YELLOW}4.${NC} Ссылка подписки (https://)"
+echo -e " ${BOLD}${YELLOW}5.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
+echo -e " ${BOLD}${YELLOW}6.${NC} 📶 Ссылка для Keenetic (XKeen)"
 else
-echo -e " ${BOLD}${YELLOW}5.${NC} Ссылка подписки (https://)"
-echo -e " ${BOLD}${YELLOW}6.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
-echo -e " ${BOLD}${YELLOW}7.${NC} 📶 Ссылка для Keenetic (XKeen)"
+echo -e " ${BOLD}${YELLOW}1.${NC} VLESS XHTTP TLS (порт 443)"
+echo -e " ${BOLD}${YELLOW}2.${NC} Hysteria2 (порт 20443/hopping)"
+echo -e " ${BOLD}${YELLOW}3.${NC} Ссылка подписки (https://)"
+echo -e " ${BOLD}${YELLOW}4.${NC} ⚡ Авто-добавление в HAPP (happ://add)"
+echo -e " ${BOLD}${YELLOW}5.${NC} 📶 Ссылка для Keenetic (XKeen)"
 fi
 if [[ "$TELEMT_INSTALLED" = "true" && -n "$TELEMT_LINK" ]]; then
 echo -e " ${BOLD}${YELLOW}T.${NC} ✈️  Telegram MTProto (tg://proxy, порт ${TELEMT_PORT})"
 fi
 echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
 read -r -p "Ваш выбор: " qr_choice
-if [[ "$REALITY_ENABLED" = "true" ]]; then
+if [[ "$REALITY_ENABLED" = "true" && -n "$VLESS_REALITY" ]]; then
   case "$qr_choice" in
-    1) qrencode -t UTF8 "$VLESS_VISION" ;;
-    2) qrencode -t UTF8 "$HY2_LINK" ;;
-    3) qrencode -t UTF8 "$VLESS_XHTTP" ;;
-    4) qrencode -t UTF8 "$VLESS_GRPC" ;;
-    5) qrencode -t UTF8 "$VLESS_REALITY" ;;
-    6) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
-    7) qrencode -t UTF8 "$HAPP_URL" ;;
-    8) qrencode -t UTF8 "${SUBSCRIPTION_URL}?format=xkeen" ;;
+    1) qrencode -t UTF8 "$VLESS_XHTTP" ;;
+    2) qrencode -t UTF8 "$VLESS_REALITY" ;;
+    3) qrencode -t UTF8 "$HY2_LINK" ;;
+    4) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    5) qrencode -t UTF8 "$HAPP_URL" ;;
+    6) qrencode -t UTF8 "${SUBSCRIPTION_URL}?format=xkeen" ;;
     T|t) [[ -n "$TELEMT_LINK" ]] && qrencode -t UTF8 "$TELEMT_LINK" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
 else
   case "$qr_choice" in
-    1) qrencode -t UTF8 "$VLESS_VISION" ;;
+    1) qrencode -t UTF8 "$VLESS_XHTTP" ;;
     2) qrencode -t UTF8 "$HY2_LINK" ;;
-    3) qrencode -t UTF8 "$VLESS_XHTTP" ;;
-    4) qrencode -t UTF8 "$VLESS_GRPC" ;;
-    5) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
-    6) qrencode -t UTF8 "$HAPP_URL" ;;
-    7) qrencode -t UTF8 "${SUBSCRIPTION_URL}?format=xkeen" ;;
+    3) qrencode -t UTF8 "$SUBSCRIPTION_URL" ;;
+    4) qrencode -t UTF8 "$HAPP_URL" ;;
+    5) qrencode -t UTF8 "${SUBSCRIPTION_URL}?format=xkeen" ;;
     T|t) [[ -n "$TELEMT_LINK" ]] && qrencode -t UTF8 "$TELEMT_LINK" ;;
     *) echo -e "${RED}Выход без вывода QR-кода${NC}" ;;
   esac
@@ -5619,6 +5770,8 @@ create_backup() {
     [[ -d "/etc/xray" ]] && cp -a "/etc/xray" "$tmp_dir/etc-xray"
     [[ -d "/usr/local/etc/xray" ]] && cp -a "/usr/local/etc/xray" "$tmp_dir/usr-local-etc-xray"
     [[ -d "$SSL_DIR" ]] && cp -a "$SSL_DIR" "$tmp_dir/ssl-vless"
+    [[ -f "/etc/nginx/conf.d/vless.conf" ]] && mkdir -p "$tmp_dir/etc-nginx" && cp -a "/etc/nginx/conf.d/vless.conf" "$tmp_dir/etc-nginx/"
+    [[ -d "/var/www/html" ]] && cp -a "/var/www/html" "$tmp_dir/var-www-html"
     [[ -d "/etc/hysteria" ]] && cp -a "/etc/hysteria" "$tmp_dir/etc-hysteria"
     [[ -f "/etc/tor/torrc" ]] && mkdir -p "$tmp_dir/etc-tor" && cp "/etc/tor/torrc" "$tmp_dir/etc-tor/"
     [[ -d "/etc/telemt" ]] && cp -a "/etc/telemt" "$tmp_dir/etc-telemt"
@@ -5627,7 +5780,7 @@ create_backup() {
     crontab -l > "$tmp_dir/crontab.txt" 2>/dev/null || true
     
     mkdir -p "$tmp_dir/services"
-    for s in xray hysteria-server xray-sub opera-proxy tor telemt; do
+    for s in xray hysteria-server xray-sub nginx opera-proxy tor telemt; do
         [[ -f "/etc/systemd/system/${s}.service" ]] && cp "/etc/systemd/system/${s}.service" "$tmp_dir/services/"
     done
 
@@ -5684,7 +5837,7 @@ restore_backup() {
     [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Отменено."; return 0; }
 
     echo "🛑 Остановка сервисов..."
-    systemctl stop xray hysteria-server xray-sub opera-proxy tor telemt 2>/dev/null || true
+    systemctl stop nginx xray hysteria-server xray-sub opera-proxy tor telemt 2>/dev/null || true
 
     local tmp_dir; tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' RETURN
@@ -5693,7 +5846,9 @@ restore_backup() {
     echo "📥 Восстановление файлов..."
     [[ -d "$tmp_dir/etc-xray" ]] && { mkdir -p /etc/xray; cp -a "$tmp_dir/etc-xray/." /etc/xray/; }
     [[ -d "$tmp_dir/usr-local-etc-xray" ]] && { mkdir -p /usr/local/etc/xray; cp -a "$tmp_dir/usr-local-etc-xray/." /usr/local/etc/xray/; }
-    [[ -d "$tmp_dir/ssl-vless" ]] && { mkdir -p "$SSL_DIR"; cp -a "$tmp_dir/ssl-vless/." "$SSL_DIR/"; chown -R nobody:nogroup "$SSL_DIR"; chmod 755 "$SSL_DIR"; chmod 644 "$SSL_DIR"/private.key 2>/dev/null || true; }
+    [[ -d "$tmp_dir/etc-nginx" ]] && { mkdir -p /etc/nginx/conf.d; cp -a "$tmp_dir/etc-nginx/." /etc/nginx/conf.d/; }
+    [[ -d "$tmp_dir/var-www-html" ]] && { mkdir -p /var/www/html; cp -a "$tmp_dir/var-www-html/." /var/www/html/; }
+    [[ -d "$tmp_dir/ssl-vless" ]] && { mkdir -p "$SSL_DIR"; cp -a "$tmp_dir/ssl-vless/." "$SSL_DIR/"; chown -R root:www-data "$SSL_DIR" 2>/dev/null || true; chmod 750 "$SSL_DIR"; chmod 644 "$SSL_DIR"/fullchain.cer 2>/dev/null || true; chmod 640 "$SSL_DIR"/private.key 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-hysteria" ]] && { mkdir -p /etc/hysteria; cp -a "$tmp_dir/etc-hysteria/." /etc/hysteria/; chmod 600 /etc/hysteria/config.yaml 2>/dev/null || true; }
     [[ -d "$tmp_dir/etc-tor" ]] && { mkdir -p /etc/tor; cp -a "$tmp_dir/etc-tor/." /etc/tor/; }
     [[ -d "$tmp_dir/etc-wireguard" ]] && { mkdir -p /etc/wireguard; cp -a "$tmp_dir/etc-wireguard/." /etc/wireguard/; chmod 600 /etc/wireguard/warp.conf 2>/dev/null || true; }
@@ -5714,6 +5869,7 @@ restore_backup() {
     fi
 
     echo "🚀 Перезапуск служб..."
+    systemctl restart nginx 2>/dev/null || true
     systemctl restart xray 2>/dev/null || true
     systemctl restart hysteria-server 2>/dev/null || true
     systemctl restart xray-sub 2>/dev/null || true
@@ -5792,9 +5948,9 @@ main() {
             ui_header "📊  МОНИТОРИНГ АКТИВНЫХ СОЕДИНЕНИЙ"
             local t_port; t_port=$(get_installed_var "TELEMT_PORT")
             [[ -z "$t_port" ]] && t_port="8444"
-            local conns; conns=$(ss -tnp 2>/dev/null | grep -E ":(443|2053|8443|${t_port})\s" | grep -v '127.0.0.1')
+            local conns; conns=$(ss -tuanp 2>/dev/null | grep -E ":(443|20443|${t_port})\s" | grep -v '127.0.0.1')
             if [[ -z "$conns" ]]; then
-                ui_item "" "ℹ️ Нет активных внешних подключений на портах 443 / 2053 / 8443 / ${t_port}."
+                ui_item "" "ℹ️ Нет активных внешних подключений на портах 443 / 20443 / ${t_port}."
             else
                 ui_item "" "${BOLD}Состояние    Локальный_Адрес        Удаленный_Адрес        Процесс${NC}"
                 ui_divider
@@ -5813,17 +5969,19 @@ main() {
             ui_item "2" "Лог Сервера подписок (xray-sub)"
             ui_item "3" "Лог службы Hysteria 2 (hysteria-server)"
             ui_item "4" "Лог ошибок Xray (/var/log/xray/error.log)"
-            ui_item "5" "Лог службы Telegram MTProto (telemt)"
+            ui_item "5" "Лог ошибок Nginx (/var/log/nginx/error.log)"
+            ui_item "6" "Лог службы Telegram MTProto (telemt)"
             ui_divider
             ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
-            read -r -p " Выберите действие (0-5): " lchoice
+            read -r -p " Выберите действие (0-6): " lchoice
             case $lchoice in
                 1) journalctl -u xray -n 50 --no-pager ;;
                 2) journalctl -u xray-sub -n 50 --no-pager ;;
                 3) journalctl -u hysteria-server -n 50 --no-pager 2>/dev/null || echo "Служба Hysteria 2 не запущена." ;;
                 4) tail -n 50 /var/log/xray/error.log 2>/dev/null || echo "Файл error.log пуст или отсутствует." ;;
-                5) journalctl -u telemt -n 50 --no-pager 2>/dev/null || echo "Служба Telemt не запущена." ;;
+                5) tail -n 50 /var/log/nginx/error.log 2>/dev/null || journalctl -u nginx -n 50 --no-pager ;;
+                6) journalctl -u telemt -n 50 --no-pager 2>/dev/null || echo "Служба Telemt не запущена." ;;
                 0) return ;;
                 *) echo -e "${RED}❌ Неверный выбор!${NC}" ; sleep 1 ;;
             esac
@@ -5964,16 +6122,14 @@ main() {
             echo -e "\n${BOLD}${CYAN}🛠️  ДИАГНОСТИКА И ПОИСК НЕИСПРАВНОСТЕЙ${NC}"
             echo -e "${CYAN}──────────────────────────────────────────────────────────${NC}"
             
-            # 1. Проверка конфликтов портов 443, 2053, 8443 и 80
-            echo -e "\n${BOLD}[1] Проверка сетевых портов:${NC}"
+            # 1. Проверка конфликтов портов и сокетов SelfSteal
+            echo -e "\n${BOLD}[1] Проверка сетевых портов и IPC сокетов:${NC}"
             local port_443_process; port_443_process=$(ss -tlnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-            local port_8443_process; port_8443_process=$(ss -tlnp 'sport = :8443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-            local port_2053_process; port_2053_process=$(ss -tlnp 'sport = :2053' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
-            local port_443_udp_process; port_443_udp_process=$(ss -ulnp 'sport = :443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
             local port_80_process; port_80_process=$(ss -tlnp 'sport = :80' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
+            local port_20443_udp_process; port_20443_udp_process=$(ss -ulnp 'sport = :20443' 2>/dev/null | grep -v 'Local Address' | awk '{print $NF}')
             
             if [[ -n "$port_443_process" ]]; then
-                echo -e " 🟢 Порт 443 (TCP) успешно занят процессом: ${GREEN}$port_443_process${NC}"
+                echo -e " 🟢 Порт 443 (TCP - Xray Reality SelfSteal) успешно занят процессом: ${GREEN}$port_443_process${NC}"
                 if [[ "$port_443_process" =~ "openvpn" ]]; then
                     echo -e "  ${RED}⚠️ ВНИМАНИЕ! Порт 443 занят процессом OpenVPN. Это приведет к неработоспособности Xray!${NC}"
                 fi
@@ -5981,28 +6137,29 @@ main() {
                 echo -e " 🔴 ${RED}Порт 443 (TCP) Свободен или Xray не запущен!${NC}"
             fi
 
-            if [[ -n "$port_8443_process" ]]; then
-                echo -e " 🟢 Порт 8443 (TCP - XHTTP) успешно занят процессом: ${GREEN}$port_8443_process${NC}"
-            else
-                echo -e " 🔴 ${RED}Порт 8443 (TCP - XHTTP) Свободен или Xray не запущен!${NC}"
-            fi
-
-            if [[ -n "$port_2053_process" ]]; then
-                echo -e " 🟢 Порт 2053 (TCP - gRPC) успешно занят процессом: ${GREEN}$port_2053_process${NC}"
-            else
-                echo -e " 🔴 ${RED}Порт 2053 (TCP - gRPC) Свободен или Xray не запущен!${NC}"
-            fi
-
-            if [[ -n "$port_443_udp_process" ]]; then
-                echo -e " 🟢 Порт 443 (UDP) успешно занят процессом: ${GREEN}$port_443_udp_process${NC}"
-            else
-                echo -e " 🔴 ${RED}Порт 443 (UDP) Свободен или Hysteria 2 не запущена!${NC}"
-            fi
-            
             if [[ -n "$port_80_process" ]]; then
-                echo -e " 🟢 Порт 80 (TCP) успешно занят процессом: ${GREEN}$port_80_process${NC}"
+                echo -e " 🟢 Порт 80 (TCP - Nginx HTTP) успешно занят процессом: ${GREEN}$port_80_process${NC}"
             else
-                echo -e " 🟡 Порт 80 (TCP) свободен (требуется Certbot для обновления сертификатов)."
+                echo -e " 🟡 ${YELLOW}Порт 80 (TCP) свободен (Nginx не слушает порт 80).${NC}"
+            fi
+
+            if [[ -n "$port_20443_udp_process" ]]; then
+                echo -e " 🟢 Порт 20443 (UDP - Hysteria 2) успешно занят процессом: ${GREEN}$port_20443_udp_process${NC}"
+            else
+                echo -e " 🔴 ${RED}Порт 20443 (UDP) Свободен или Hysteria 2 не запущена!${NC}"
+            fi
+
+            # Проверка UNIX Domain сокетов в /dev/shm
+            if [[ -S "/dev/shm/nginx.sock" ]]; then
+                echo -e " 🟢 IPC Socket /dev/shm/nginx.sock (Nginx SelfSteal fallback): ${GREEN}OK${NC}"
+            else
+                echo -e " 🔴 ${RED}IPC Socket /dev/shm/nginx.sock отсутствует! Проверьте службу Nginx.${NC}"
+            fi
+
+            if [[ -S "/dev/shm/xrxh.socket" ]]; then
+                echo -e " 🟢 IPC Socket /dev/shm/xrxh.socket (Xray VLESS-XHTTP): ${GREEN}OK${NC}"
+            else
+                echo -e " 🔴 ${RED}IPC Socket /dev/shm/xrxh.socket отсутствует! Проверьте службу Xray.${NC}"
             fi
 
             local telemt_inst; telemt_inst=$(get_installed_var "TELEMT_INSTALLED")
@@ -6019,6 +6176,13 @@ main() {
 
             # 2. Проверка служб
             echo -e "\n${BOLD}[2] Статус системных служб:${NC}"
+            if systemctl is-active --quiet nginx; then
+                echo -e " Nginx Service:🟢 ${GREEN}ACTIVE (Запущен)${NC}"
+            else
+                echo -e " Nginx Service:🔴 ${RED}INACTIVE (Остановлен)${NC}"
+                journalctl -u nginx -n 10 --no-pager
+            fi
+
             if systemctl is-active --quiet xray; then
                 echo -e " Xray Service: 🟢 ${GREEN}ACTIVE (Запущен)${NC}"
             else
@@ -6624,8 +6788,8 @@ EOF
         }
 
         manage_decoy_menu() {
-            local decoy_file="/etc/xray/decoy.html"
-            local decoy_status="${CYAN}Стандартный облачный лендинг (ApexCloud)${NC}"
+            local decoy_file="/var/www/html/index.html"
+            local decoy_status="${CYAN}Стандартный облачный лендинг (локализованный SelfSteal)${NC}"
             if [[ -s "$decoy_file" ]]; then
                 local decoy_size; decoy_size=$(du -h "$decoy_file" 2>/dev/null | cut -f1)
                 decoy_status="${GREEN}Пользовательский HTML ($decoy_size)${NC}"
@@ -6637,7 +6801,7 @@ EOF
             ui_divider
             ui_item "1" "📥 Клонировать реальный сайт по URL в камуфляж"
             ui_item "2" "✍️  Сгенерировать стильную визитку/лендинг (ввод названия и описания)"
-            ui_item "3" "🧹 Сбросить на стандартный облачный лендинг ApexCloud"
+            ui_item "3" "🧹 Сбросить на стандартный локализованный лендинг SelfSteal"
             ui_item "4" "🚀 Установить готовый реалистичный бизнес/tech-шаблон Selfsteal"
             ui_divider
             ui_item "0" "↩️ Назад в меню SSL и домена" "${CYAN}"
@@ -6656,9 +6820,13 @@ EOF
                     local tmp_clone; tmp_clone=$(mktemp)
                     if curl -fsSL -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
                         --connect-timeout 10 --max-time 30 "$clone_url" -o "$tmp_clone" 2>/dev/null && [[ -s "$tmp_clone" ]]; then
-                        mkdir -p /etc/xray
+                        mkdir -p /var/www/html
                         mv -f "$tmp_clone" "$decoy_file"
                         chmod 644 "$decoy_file"
+                        chown -R www-data:www-data /var/www/html 2>/dev/null || true
+                        rm -f /var/www/html/.auto_generated
+                        sanitize_decoy_site
+                        systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
                         systemctl restart xray-sub 2>/dev/null || true
                         echo -e "${GREEN}✅ Сайт успешно клонирован в $decoy_file и активирован!${NC}"
                     else
@@ -6674,7 +6842,7 @@ EOF
                     [[ -z "$proj_title" ]] && proj_title="TechSolutions Hub"
                     read -r -p " Краткое описание (слоган): " proj_desc
                     [[ -z "$proj_desc" ]] && proj_desc="High performance digital infrastructure and cloud consulting services."
-                    mkdir -p /etc/xray
+                    mkdir -p /var/www/html
                     cat > "$decoy_file" <<EOF
 <!DOCTYPE html>
 <html lang="en">
@@ -6702,21 +6870,29 @@ EOF
 </html>
 EOF
                     chmod 644 "$decoy_file"
+                    chown -R www-data:www-data /var/www/html 2>/dev/null || true
+                    rm -f /var/www/html/.auto_generated
+                    sanitize_decoy_site
+                    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
                     systemctl restart xray-sub 2>/dev/null || true
                     echo -e "${GREEN}✅ Страница-визитка успешно создана и активирована!${NC}"
                     sleep 2
                     manage_decoy_menu
                     ;;
                 3)
+                    rm -f /var/www/html/.auto_generated
                     rm -f "$decoy_file"
+                    generate_decoy_site
+                    sanitize_decoy_site
+                    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
                     systemctl restart xray-sub 2>/dev/null || true
-                    echo -e "${GREEN}✅ Камуфляж сброшен на стандартный облачный лендинг ApexCloud.${NC}"
+                    echo -e "${GREEN}✅ Камуфляж сброшен на стандартный локализованный лендинг SelfSteal.${NC}"
                     sleep 1.5
                     manage_decoy_menu
                     ;;
                 4)
                     echo -e "\n${BOLD}--- Установка реалистичного бизнес-шаблона Selfsteal ---${NC}"
-                    mkdir -p /etc/xray
+                    mkdir -p /var/www/html
                     cat > "$decoy_file" <<'EOF'
 <!DOCTYPE html>
 <html lang="en">
@@ -6810,6 +6986,10 @@ EOF
 </html>
 EOF
                     chmod 644 "$decoy_file"
+                    chown -R www-data:www-data /var/www/html 2>/dev/null || true
+                    rm -f /var/www/html/.auto_generated
+                    sanitize_decoy_site
+                    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
                     systemctl restart xray-sub 2>/dev/null || true
                     echo -e "${GREEN}✅ Готовый бизнес-шаблон Selfsteal успешно активирован в $decoy_file!${NC}"
                     sleep 2
@@ -6958,47 +7138,44 @@ EOF
         }
 
         reality_management_menu() {
+            local domain; domain=$(get_installed_var "DOMAIN")
             local reality_enabled; reality_enabled=$(get_installed_var "REALITY_ENABLED")
             local reality_sni; reality_sni=$(get_installed_var "REALITY_SNI")
-            [[ -z "$reality_sni" ]] && reality_sni="max.ru"
+            [[ -z "$reality_sni" ]] && reality_sni="${domain:-max.ru}"
             local reality_dest; reality_dest=$(get_installed_var "REALITY_DEST")
-            [[ -z "$reality_dest" ]] && reality_dest="max.ru:443"
+            [[ -z "$reality_dest" ]] && reality_dest="/dev/shm/nginx.sock"
+            local reality_pbk; reality_pbk=$(get_installed_var "REALITY_PUBLIC_KEY")
+            local reality_sid; reality_sid=$(get_installed_var "REALITY_SHORT_ID")
 
-            ui_header "🛡️  МАСКИРОВКА ТРАФИКА (VLESS-REALITY)"
+            local is_selfsteal="Внешняя маскировка"
+            if [[ "$reality_sni" == "$domain" && "$reality_dest" == *"/dev/shm/nginx.sock"* ]]; then
+                is_selfsteal="SelfSteal (Nginx IPC сокет)"
+            fi
+
+            ui_header "🛡️  МАСКИРОВКА ТРАФИКА (VLESS-REALITY SELFSTEAL)"
             local status_text="${RED}Выключена${NC}"
-            [[ "$reality_enabled" == "true" ]] && status_text="${GREEN}Активна${NC}"
+            [[ "$reality_enabled" == "true" ]] && status_text="${GREEN}Активна ($is_selfsteal)${NC}"
             ui_item "" "Текущий статус: $status_text"
             ui_item "" "Маскировочный SNI: ${CYAN}$reality_sni${NC}"
             ui_item "" "Адрес назначения (DEST): ${CYAN}$reality_dest${NC}"
+            ui_item "" "Публичный ключ (PBK): ${YELLOW}${reality_pbk:0:16}...${NC}"
+            ui_item "" "Short ID (SID): ${YELLOW}${reality_sid:--}${NC}"
             ui_divider
-            if [[ "$reality_enabled" == "true" ]]; then
-                ui_item "1" "📴 Отключить маскировку Reality (возврат к прямому VLESS-TLS)"
-            else
-                ui_item "1" "🛡️ Включить маскировку Reality (маскироваться под $reality_sni)"
-            fi
-            ui_item "2" "⚙️  Изменить маскировочный сайт (SNI и DEST)"
+            ui_item "1" "🔄 Перегенерировать ключи (X25519) и Short ID для Reality"
+            ui_item "2" "🪞 Сбросить на стандартный SelfSteal (SNI: $domain, DEST: /dev/shm/nginx.sock)"
+            ui_item "3" "⚙️  Указать кастомный SNI и адрес DEST (внешняя маскировка)"
             ui_divider
             ui_item "0" "↩️ Назад в главное меню" "${CYAN}"
             ui_footer
 
-            read -r -p " Выберите действие (0-2): " rchoice
+            read -r -p " Выберите действие (0-3): " rchoice
             case $rchoice in
                 0) main_menu ;;
                 1)
-                    if [[ "$reality_enabled" == "true" ]]; then
-                        echo "📴 Отключение маскировки Reality..."
-                        update_marker_val "REALITY_ENABLED" "false"
-                    else
-                        echo "🛡️ Включение маскировки Reality..."
-                        update_marker_val "REALITY_ENABLED" "true"
-                        # Инициализируем дефолты если пусты
-                        if [[ -z "$(get_installed_var "REALITY_SNI")" ]]; then
-                            update_marker_val "REALITY_SNI" "max.ru"
-                        fi
-                        if [[ -z "$(get_installed_var "REALITY_DEST")" ]]; then
-                            update_marker_val "REALITY_DEST" "max.ru:443"
-                        fi
-                    fi
+                    echo "🔄 Перегенерация ключей X25519 и Short ID..."
+                    update_marker_val "REALITY_PRIVATE_KEY" ""
+                    update_marker_val "REALITY_PUBLIC_KEY" ""
+                    update_marker_val "REALITY_SHORT_ID" ""
                     
                     echo "🔄 Пересборка конфигурации сервера..."
                     generate_server_config
@@ -7006,35 +7183,49 @@ EOF
                     generate_client_configs
                     install_generate_script
                     
-                    echo -e "${GREEN}✅ Настройки маскировки применены!${NC}"
+                    echo -e "${GREEN}✅ Новые ключи и Short ID успешно сгенерированы и применены!${NC}"
                     sleep 1.5
                     reality_management_menu
                     ;;
                 2)
-                    echo -e "\n${BOLD}--- Изменение маскировочного сайта ---${NC}"
-                    echo "Введите домен для маскировки (например, max.ru):"
-                    read -r -p " SNI (по умолчанию max.ru): " new_sni
+                    echo "🪞 Сброс маскировки на нативный SelfSteal..."
+                    update_marker_val "REALITY_ENABLED" "true"
+                    update_marker_val "REALITY_SNI" "$domain"
+                    update_marker_val "REALITY_DEST" "/dev/shm/nginx.sock"
+                    
+                    echo "🔄 Пересборка конфигурации сервера..."
+                    generate_server_config
+                    setup_subscription_server
+                    generate_client_configs
+                    install_generate_script
+                    
+                    echo -e "${GREEN}✅ Настройки SelfSteal успешно восстановлены!${NC}"
+                    sleep 1.5
+                    reality_management_menu
+                    ;;
+                3)
+                    echo -e "\n${BOLD}--- Настройка кастомного маскировочного сайта ---${NC}"
+                    echo "Введите домен для маскировки (например, dl.google.com или www.microsoft.com):"
+                    read -r -p " SNI: " new_sni
                     new_sni=$(echo "$new_sni" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
-                    [[ -z "$new_sni" ]] && new_sni="max.ru"
+                    [[ -z "$new_sni" ]] && new_sni="$domain"
 
-                    echo "Введите адрес назначения (по умолчанию $new_sni:443):"
-                    read -r -p " DEST (по умолчанию $new_sni:443): " new_dest
+                    echo "Введите адрес назначения (по умолчанию $new_sni:443, или /dev/shm/nginx.sock):"
+                    read -r -p " DEST [${new_sni}:443]: " new_dest
                     new_dest=$(echo "$new_dest" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/\/$//')
-                    [[ -z "$new_dest" ]] && new_dest="$new_sni:443"
+                    [[ -z "$new_dest" ]] && new_dest="${new_sni}:443"
 
                     update_marker_val "REALITY_SNI" "$new_sni"
                     update_marker_val "REALITY_DEST" "$new_dest"
+                    update_marker_val "REALITY_ENABLED" "true"
+
+                    echo "🔄 Пересборка конфигурации сервера..."
+                    generate_server_config
+                    setup_subscription_server
+                    generate_client_configs
+                    install_generate_script
 
                     echo -e "${GREEN}✅ Настройки изменены на SNI: $new_sni | DEST: $new_dest${NC}"
-                    
-                    # Если Reality уже включен, пересоберем
-                    if [[ "$(get_installed_var "REALITY_ENABLED")" == "true" ]]; then
-                        echo "🔄 Пересборка конфигурации..."
-                        generate_server_config
-                        setup_subscription_server
-                        generate_client_configs
-                        install_generate_script
-                    fi
                     sleep 1.5
                     reality_management_menu
                     ;;
@@ -7245,7 +7436,7 @@ EOF
             
             ui_section "📊  МОНИТОРИНГ И ДИАГНОСТИКА"
             ui_item "5" "📰 Просмотреть системные логи служб"
-            ui_item "6" "📈 Мониторинг активных соединений (порты 443 / 2053 / 8443 / 8444)"
+            ui_item "6" "📈 Мониторинг активных соединений (порты 443 / 20443 / 8444)"
             ui_item "7" "🛠️  Комплексная диагностика системы (Troubleshooting)"
             
             ui_section "⚙️  СЕРВЕР И БЕЗОПАСНОСТЬ"

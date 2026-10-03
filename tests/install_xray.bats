@@ -60,13 +60,17 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "Скрипт содержит конфигурацию VLESS XHTTP на порту 8443" {
-    run grep "8443" "$SCRIPT_PATH"
+@test "Скрипт содержит конфигурацию VLESS XHTTP через сокет Nginx /dev/shm/xrxh.socket" {
+    run grep "/dev/shm/xrxh.socket" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "/api/v2/stream/" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
 
-@test "Скрипт содержит конфигурацию VLESS gRPC на порту 2053" {
-    run grep "2053" "$SCRIPT_PATH"
+@test "Скрипт содержит конфигурацию SelfSteal с fallback в сокет Nginx /dev/shm/nginx.sock" {
+    run grep "/dev/shm/nginx.sock" "$SCRIPT_PATH"
+    [ "$status" -eq 0 ]
+    run grep "setup_nginx" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
 
@@ -93,8 +97,8 @@ setup() {
     [[ "$output" =~ "--renew-cert" ]]
 }
 
-@test "VLESS ссылки содержат encryption=none и service_name для ZeroBlock" {
-    run grep "service_name=vless-grpc" "$SCRIPT_PATH"
+@test "VLESS ссылки содержат encryption=none и security=reality" {
+    run grep "security=reality" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
     run grep "encryption=none" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
@@ -240,7 +244,7 @@ print('OK')
 @test "Скрипт настраивает персистентный port hopping Hysteria 2 в UFW before.rules" {
     run grep "setup_hy2_port_hopping_ufw" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
-    run grep -- "-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443" "$SCRIPT_PATH"
+    run grep -- "-A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443" "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
 
@@ -291,10 +295,10 @@ print('OK')
     [ "$status" -eq 0 ]
 }
 
-@test "Telemt интегрирован в резервное копирование и восстановление" {
+@test "Telemt и Nginx интегрированы в резервное копирование и восстановление" {
     run grep 'etc-telemt' "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
-    run grep 'systemctl stop xray hysteria-server xray-sub opera-proxy tor telemt' "$SCRIPT_PATH"
+    run grep 'systemctl stop nginx xray hysteria-server' "$SCRIPT_PATH"
     [ "$status" -eq 0 ]
 }
 
