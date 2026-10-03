@@ -2158,6 +2158,9 @@ setup_firewall() {
             $ipt_path -D INPUT -p udp -m multiport --dports 20443,20000:50000 -j ACCEPT >/dev/null 2>&1 || true
             $ipt_path -I INPUT 2 -p udp -m multiport --dports 20443,20000:50000 -j ACCEPT
 
+            # Очистка устаревшего NAT перенаправления на 443 (если осталось от предыдущих версий)
+            $ipt_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 >/dev/null 2>&1 || true
+
             # NAT port hopping для Hysteria 2 на 20443
             $ipt_path -t nat -C PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 >/dev/null 2>&1 || \
             $ipt_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true
@@ -3580,6 +3583,7 @@ EOF
     local ip6_post=""
     if [[ -x "$ip6tables_path" ]] && [[ -f /proc/net/if_inet6 ]] && [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)" != "1" ]]; then
         ip6_pre=$(cat <<EOF6
+ExecStartPre=-/bin/sh -c "$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
 ExecStartPre=-/bin/sh -c "$ip6tables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true"
 ExecStartPre=-$ip6tables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443
 EOF6
@@ -3596,6 +3600,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/etc/hysteria
+ExecStartPre=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 443 2>/dev/null || true"
 ExecStartPre=-/bin/sh -c "$iptables_path -t nat -D PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443 2>/dev/null || true"
 $ip6_pre
 ExecStartPre=-$iptables_path -t nat -A PREROUTING -p udp --dport 20000:50000 -j REDIRECT --to-ports 20443
@@ -6380,16 +6385,20 @@ main() {
 
             # Проверка правил Port Hopping
             local ipt_path; ipt_path=$(command -v iptables 2>/dev/null || echo "/sbin/iptables")
-            if $ipt_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
-                echo -e " Port Hopping (IPv4 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
+            if $ipt_path -t nat -S 2>/dev/null | grep -q "20000:50000.*20443"; then
+                echo -e " Port Hopping (IPv4 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 20443)${NC}"
+            elif $ipt_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
+                echo -e " Port Hopping (IPv4 NAT): 🟡 ${YELLOW}УСТАРЕЛ (Перенаправление 20000-50000 -> 443)${NC}"
             else
                 echo -e " Port Hopping (IPv4 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
             fi
             
             local ipt6_path; ipt6_path=$(command -v ip6tables 2>/dev/null || echo "/sbin/ip6tables")
             if $ipt6_path -t nat -S &>/dev/null; then
-                if $ipt6_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
-                    echo -e " Port Hopping (IPv6 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 443)${NC}"
+                if $ipt6_path -t nat -S 2>/dev/null | grep -q "20000:50000.*20443"; then
+                    echo -e " Port Hopping (IPv6 NAT): 🟢 ${GREEN}АКТИВЕН (Перенаправление 20000-50000 -> 20443)${NC}"
+                elif $ipt6_path -t nat -S 2>/dev/null | grep -q "20000:50000"; then
+                    echo -e " Port Hopping (IPv6 NAT): 🟡 ${YELLOW}УСТАРЕЛ (Перенаправление 20000-50000 -> 443)${NC}"
                 else
                     echo -e " Port Hopping (IPv6 NAT): 🔴 ${RED}НЕАКТИВЕН${NC}"
                 fi
